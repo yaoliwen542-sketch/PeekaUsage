@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useI18n } from "../../i18n";
+import { windowLabels } from "../../i18n/messages";
 import type { ApiKeyUsageSummary, UsageSummary } from "../../types/provider";
 import type { WidgetDisplayMode } from "../../types/settings";
 import { calcUsagePercent, formatCurrency } from "../../utils/formatters";
@@ -23,7 +24,7 @@ export default function ProviderCard({
   isRefreshing = false,
   onRefresh,
 }: ProviderCardProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const hasSubscription = provider.subscriptions.length > 0;
   const hasApiUsage = provider.apiKeyUsages.length > 0;
   const hasMultipleApiKeys = provider.apiKeyUsages.length > 1;
@@ -41,6 +42,15 @@ export default function ProviderCard({
   });
   const useSubscriptionColorMarkers = useCompactColorMarkers && compactVisibleSubscriptions.length > 1;
   const useApiColorMarkers = useCompactColorMarkers && compactApiItems.length > 1;
+
+  /** 订阅窗口标签 i18n：先查映射表，找不到时原样返回 */
+  function getWindowLabel(label: string): string {
+    const messages = windowLabels[label];
+    if (messages && messages[language]) {
+      return messages[language] as string;
+    }
+    return label;
+  }
 
   function usagePercent(item: ApiKeyUsageSummary) {
     if (!item.usage) {
@@ -119,8 +129,8 @@ export default function ProviderCard({
                     )}
                     {subscription.usage.windows.map((window, index) => (
                       <div key={`${subscription.subscriptionId}-${window.label}-${index}`} className="compact-metric-row">
-                        <span className="compact-metric-label" title={window.label}>
-                          {formatCompactSubscriptionWindowLabel(window.label, t("widget.providerCard.subscriptionShort"))}
+                        <span className="compact-metric-label" title={getWindowLabel(window.label)}>
+                          {formatCompactSubscriptionWindowLabel(getWindowLabel(window.label), t("widget.providerCard.subscriptionShort"))}
                         </span>
                         <div className="compact-metric-bar">
                           <UsageProgressBar percent={window.utilization} />

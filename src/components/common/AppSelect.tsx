@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -15,11 +16,32 @@ export type SelectOption<T extends SelectValue = SelectValue> = {
   label: string;
   disabled?: boolean;
   providerId?: string;
+  // 新增：供应商图标名（用于分组下拉中渲染图标）
+  icon?: string;
+  // 新增：简短说明
+  description?: string;
+  // 新增：徽章文案，如"订阅" / "余额" / "网关"
+  badge?: string;
 };
+
+/** 分组下拉中的一组选项 */
+export interface AppSelectGroup<T extends SelectValue = SelectValue> {
+  /** 分组标题，如"官方订阅" */
+  label: string;
+  options: Array<SelectOption<T>>;
+}
+
+/** 面板渲染条目：分组标题或可选选项 */
+type PanelEntry<T extends SelectValue = SelectValue> =
+  | { kind: "group"; label: string }
+  | { kind: "option"; option: SelectOption<T>; optionIndex: number };
 
 type AppSelectProps<T extends SelectValue = SelectValue> = {
   modelValue: T | null;
-  options: Array<SelectOption<T>>;
+  // 扁平模式（与 groups 互斥，二者至少传一个）
+  options?: Array<SelectOption<T>>;
+  // 分组模式（与 options 互斥）
+  groups?: Array<AppSelectGroup<T>>;
   placeholder?: string;
   disabled?: boolean;
   ariaLabel?: string;
@@ -39,6 +61,7 @@ type AppSelectProps<T extends SelectValue = SelectValue> = {
 export default function AppSelect<T extends SelectValue = SelectValue>({
   modelValue,
   options,
+  groups,
   placeholder,
   disabled = false,
   ariaLabel,
@@ -57,7 +80,40 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  const selectedOption = options.find((option) => option.value === modelValue) ?? null;
+  // 归一化为扁平 options（分组模式下从 groups 展开）
+  const flatOptions: Array<SelectOption<T>> = useMemo(() => {
+    if (groups && groups.length > 0) {
+      return groups.flatMap((group) => group.options);
+    }
+    return options ?? [];
+  }, [groups, options]);
+
+  // 面板渲染条目（含分组标题分隔符）
+  const panelEntries: Array<PanelEntry<T>> = useMemo(() => {
+    if (groups && groups.length > 0) {
+      const entries: Array<PanelEntry<T>> = [];
+      let optionIndex = 0;
+      for (const group of groups) {
+        if (group.options.length === 0) {
+          continue;
+        }
+        entries.push({ kind: "group", label: group.label });
+        for (const option of group.options) {
+          entries.push({ kind: "option", option, optionIndex });
+          optionIndex += 1;
+        }
+      }
+      return entries;
+    }
+    return (options ?? []).map((option, optionIndex) => ({
+      kind: "option" as const,
+      option,
+      optionIndex,
+    }));
+  }, [groups, options]);
+
+  const hasAnyOption = flatOptions.length > 0;
+  const selectedOption = flatOptions.find((option) => option.value === modelValue) ?? null;
   const resolvedPlaceholder = placeholder ?? t("common.select");
   const resolvedAriaLabel = ariaLabel ?? t("common.selectOption");
 
@@ -71,11 +127,11 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
   }
 
   function getFirstEnabledIndex() {
-    return options.findIndex((option) => !option.disabled);
+    return flatOptions.findIndex((option) => !option.disabled);
   }
 
   function setActiveToSelected() {
-    const selectedIndex = options.findIndex((option) => option.value === modelValue && !option.disabled);
+    const selectedIndex = flatOptions.findIndex((option) => option.value === modelValue && !option.disabled);
     setActiveIndex(selectedIndex >= 0 ? selectedIndex : getFirstEnabledIndex());
   }
 
@@ -114,12 +170,12 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
       return;
     }
 
-    const activeOption = panel.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`);
+    const activeOption = panel.querySelector<HTMLElement>(`[data-option-index="${activeIndex}"]`);
     activeOption?.scrollIntoView({ block: "nearest" });
   }
 
   function openMenu() {
-    if (disabled || options.length === 0 || isOpen) {
+    if (disabled || !hasAnyOption || isOpen) {
       return;
     }
 
@@ -154,15 +210,15 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
   }
 
   function moveActive(step: 1 | -1) {
-    if (options.length === 0) {
+    if (flatOptions.length === 0) {
       return;
     }
 
     let nextIndex = activeIndex;
 
-    for (let index = 0; index < options.length; index += 1) {
-      nextIndex = (nextIndex + step + options.length) % options.length;
-      if (!options[nextIndex]?.disabled) {
+    for (let index = 0; index < flatOptions.length; index += 1) {
+      nextIndex = (nextIndex + step + flatOptions.length) % flatOptions.length;
+      if (!flatOptions[nextIndex]?.disabled) {
         setActiveIndex(nextIndex);
         window.requestAnimationFrame(scrollActiveOptionIntoView);
         return;
@@ -204,9 +260,9 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
 
     if (event.key === "End") {
       event.preventDefault();
-      const reversedIndex = [...options].reverse().findIndex((option) => !option.disabled);
+      const reversedIndex = [...flatOptions].reverse().findIndex((option) => !option.disabled);
       if (reversedIndex >= 0) {
-        setActiveIndex(options.length - reversedIndex - 1);
+        setActiveIndex(flatOptions.length - reversedIndex - 1);
         window.requestAnimationFrame(scrollActiveOptionIntoView);
       }
       return;
@@ -214,7 +270,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
 
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      const option = options[activeIndex];
+      const option = flatOptions[activeIndex];
       if (option) {
         selectOption(option);
       }
@@ -268,7 +324,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
       window.removeEventListener("resize", handleWindowChange);
       window.removeEventListener("scroll", handleWindowChange, true);
     };
-  }, [isOpen, activeIndex, options, listMaxHeight, modelValue]);
+  }, [isOpen, activeIndex, flatOptions, listMaxHeight, modelValue]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -316,9 +372,18 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
           role="listbox"
           aria-label={resolvedAriaLabel}
         >
-          {options.map((option, index) => {
+          {panelEntries.map((entry, index) => {
+            if (entry.kind === "group") {
+              return (
+                <div key={`group-${index}`} className="app-select-group-title" role="presentation">
+                  {entry.label}
+                </div>
+              );
+            }
+
+            const { option, optionIndex } = entry;
             const selected = option.value === modelValue;
-            const active = index === activeIndex;
+            const active = optionIndex === activeIndex;
 
             return (
               <button
@@ -330,13 +395,13 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
                   option.disabled ? "is-disabled" : "",
                 ].filter(Boolean).join(" ")}
                 aria-selected={selected}
-                data-index={index}
+                data-option-index={optionIndex}
                 disabled={option.disabled}
                 role="option"
                 tabIndex={-1}
                 type="button"
                 onClick={() => selectOption(option)}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseEnter={() => setActiveIndex(optionIndex)}
               >
                 {renderOption ? renderOption({ option, selected, active }) : (
                   <span className="select-option-label">{option.label}</span>

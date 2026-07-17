@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import {
   PROVIDER_MARKER_COLORS,
   normalizeProviderMarkerColor,
+  type CustomProviderConfig,
   type ProviderApiKeyItem,
   type ProviderConfigItem,
   type ProviderId,
@@ -15,10 +16,26 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ProviderIcon from "../common/ProviderIcon";
 import ApiKeyInput from "./ApiKeyInput";
 
-const OAUTH_METHOD_URLS: Partial<Record<ProviderId, string>> = {
+const OAUTH_METHOD_URLS: Partial<Record<string, string>> = {
   anthropic: "https://code.claude.com/docs/en/authentication",
   openai: "https://developers.openai.com/codex/auth",
 };
+
+/** 解析当前配置的 queryType（用于按字段动态显隐） */
+function resolveQueryType(config: ProviderConfigItem): "balance" | "script" | "subscription" | null {
+  if (config.customConfig) {
+    return config.customConfig.queryType;
+  }
+  // 订阅类供应商（如 anthropic / openai）
+  if (config.capabilities.hasSubscription && !config.capabilities.hasBalance) {
+    return "subscription";
+  }
+  // 余额类（如 deepseek / openrouter）
+  if (config.capabilities.hasBalance) {
+    return "balance";
+  }
+  return null;
+}
 
 type ProviderConfigProps = {
   config: ProviderConfigItem;
@@ -61,6 +78,12 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const selectedProvider = isCreateMode ? selectableProviders.find((item) => item.providerId === config.providerId) ?? config : config;
   const selectableProviderOptions: Array<SelectOption<ProviderId>> = selectableProviders.map((item) => ({ value: item.providerId, label: item.displayName, providerId: item.providerId }));
   const canDetectOAuth = selectedProvider.capabilities.hasSubscription;
+  // 当前配置的查询类型（用于按字段动态显隐）
+  const resolvedQueryType = resolveQueryType(selectedProvider);
+  // 自定义供应商的 customConfig（若存在）
+  const customConfig: CustomProviderConfig | null = selectedProvider.customConfig ?? null;
+  // 是否为脚本类自定义供应商（需要展示 Base URL 与脚本信息）
+  const isScriptProvider = resolvedQueryType === "script";
 
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
@@ -208,7 +231,15 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     setSaving(true);
     setSaveResult(null);
     try {
-      await saveProviderConfig({ providerId: config.providerId, apiKeys: sanitizedApiKeys(apiKeys), subscriptions: sanitizedSubscriptions(subscriptions), enabled: true });
+      await saveProviderConfig({
+        providerId: config.providerId,
+        apiKeys: sanitizedApiKeys(apiKeys),
+        subscriptions: sanitizedSubscriptions(subscriptions),
+        enabled: true,
+        // 透传模板 ID 与自定义配置（后端按需读取）
+        providerTemplateId: config.providerTemplateId ?? null,
+        customConfig: config.customConfig ?? null,
+      });
       if (isCreateMode) {
         onSaved?.();
         return;
@@ -302,6 +333,31 @@ export default function ProviderConfig(props: ProviderConfigProps) {
             <div className="provider-config-tabs" role="tablist" aria-label={t("settings.providerConfig.viewAriaLabel")}>
               <button className={`provider-config-tab${activeView === "apiKeys" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "apiKeys"} onClick={() => setActiveView("apiKeys")}>{t("settings.providerConfig.apiKeyTab")}</button>
               <button className={`provider-config-tab${activeView === "subscriptions" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "subscriptions"} onClick={() => setActiveView("subscriptions")}>{t("settings.providerConfig.subscriptionTab")}</button>
+            </div>
+          )}
+
+          {/* 脚本类供应商：展示只读 Base URL / 认证方式 / 查询类型信息 */}
+          {isScriptProvider && customConfig && (
+            <div className="field-group custom-provider-meta">
+              <div className="field-row">
+                <label className="field-label">{t("settings.providerConfig.customBaseUrl")}</label>
+              </div>
+              <div className="custom-provider-meta-value" title={customConfig.baseUrl}>
+                {customConfig.baseUrl || "-"}
+              </div>
+              <div className="custom-provider-meta-row">
+                <span className="custom-provider-meta-label">{t("settings.providerConfig.customQueryType")}</span>
+                <span className="custom-provider-meta-value-inline">
+                  {t(customConfig.queryType === "script" ? "settings.wizard.queryTypeScript" : "settings.wizard.queryTypeBalance")}
+                </span>
+              </div>
+              <div className="custom-provider-meta-row">
+                <span className="custom-provider-meta-label">{t("settings.providerConfig.customAuthScheme")}</span>
+                <span className="custom-provider-meta-value-inline">{customConfig.authScheme}</span>
+              </div>
+              {customConfig.allowHttp && (
+                <div className="field-hint">{t("settings.providerConfig.customAllowHttpEnabled")}</div>
+              )}
             </div>
           )}
 

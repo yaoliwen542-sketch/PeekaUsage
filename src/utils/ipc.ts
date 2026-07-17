@@ -5,6 +5,8 @@ import type {
   ProviderId,
   ProviderApiKeyItem,
   ProviderSubscriptionItem,
+  ProviderTemplate,
+  CustomProviderConfig,
 } from "../types/provider";
 import type { AppSettings } from "../types/settings";
 import type { StatsRange, UsageStatsSnapshot } from "../types/stats";
@@ -35,8 +37,35 @@ export async function saveProviderConfig(config: {
   apiKeys: Array<Pick<ProviderApiKeyItem, "id" | "name" | "color" | "value">>;
   subscriptions: Array<Pick<ProviderSubscriptionItem, "id" | "name" | "color" | "oauthToken" | "source">>;
   enabled: boolean;
+  providerTemplateId?: string | null;
+  customConfig?: CustomProviderConfig | null;
 }): Promise<void> {
   return invoke("save_provider_config", { config });
+}
+
+/** 获取所有可选供应商模板（含内置，用于设置页"新增供应商"下拉） */
+export async function getProviderTemplates(): Promise<ProviderTemplate[]> {
+  return invoke<ProviderTemplate[]>("get_provider_templates");
+}
+
+/** 获取 NewAPI 预置脚本模板 */
+export async function getNewApiScriptTemplate(): Promise<string> {
+  return invoke<string>("get_newapi_script_template");
+}
+
+/** 测试自定义供应商脚本（保存前预演） */
+export async function testCustomProviderScript(
+  code: string,
+  apiKey: string,
+  baseUrl: string | null,
+  allowHttp: boolean,
+): Promise<string> {
+  return invoke<string>("test_custom_provider_script", {
+    code,
+    apiKey,
+    baseUrl,
+    allowHttp,
+  });
 }
 
 /** 移除供应商配置 */
