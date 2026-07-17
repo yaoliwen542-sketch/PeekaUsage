@@ -243,21 +243,20 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
               </div>
 
               <div className="field-group">
-                <label className="field-label" htmlFor="wizard-auth-scheme">
-                  {t("settings.wizard.authScheme")}
-                </label>
-                <select
-                  id="wizard-auth-scheme"
-                  className="wizard-select"
-                  value={authScheme}
-                  onChange={(event) => setAuthScheme(event.target.value as AuthSchemeConfig)}
-                >
+                <label className="field-label">{t("settings.wizard.authScheme")}</label>
+                <div className="wizard-segment" role="group" aria-label={t("settings.wizard.authScheme")}>
                   {AUTH_SCHEME_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`wizard-segment-button${authScheme === option.value ? " is-active" : ""}`}
+                      aria-pressed={authScheme === option.value}
+                      onClick={() => setAuthScheme(option.value)}
+                    >
                       {t(option.labelKey)}
-                    </option>
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
             </>
           )}

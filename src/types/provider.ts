@@ -181,7 +181,11 @@ export type QueryType =
   | { kind: "script"; defaultTemplate: string | null };
 
 /** 认证方案（运行期，可能含自定义 header 集合） */
-export type AuthScheme = "bearer" | "x_api_key" | "raw_key" | [string, string][];
+export type AuthScheme =
+  | "bearer"
+  | "x_api_key"
+  | "raw_key"
+  | { custom: Array<[string, string]> };
 
 /** Balance 查询的字段映射（JSONPath） */
 export interface BalanceFieldMap {
