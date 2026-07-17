@@ -39,7 +39,7 @@ type SettingsMenuItem =
 function BackIcon() {
   return (
     <svg
-      className="back-icon"
+      className="h-4 w-4"
       viewBox="0 0 16 16"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
@@ -456,7 +456,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const sectionContent: Record<SettingsSectionId, ReactNode> = {
     general: (
       <section className="settings-section settings-section-page">
-        <h3 className="section-title">{t("settings.sections.general")}</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.general")}</h3>
         {generalNotice && (
           <div className="save-result is-success" role="status">
             {generalNotice}
@@ -538,10 +538,10 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
         <div className="setting-row setting-row-slider">
           <label htmlFor="window-opacity-range">{t("settings.opacity.label")}</label>
-          <div className="opacity-control">
+          <div className="flex items-center gap-2">
             <input
               id="window-opacity-range"
-              className="opacity-range"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border"
               type="range"
               min="10"
               max="100"
@@ -558,14 +558,14 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
                 void updateOpacity(value, true);
               }}
             />
-            <span className="opacity-value">{opacityDraft}%</span>
+            <span className="text-xs font-medium text-text-secondary w-10 text-right">{opacityDraft}%</span>
           </div>
         </div>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.launchAtStartup.label")}</span>
-            <span className="setting-hint">{t("settings.launchAtStartup.hint")}</span>
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.launchAtStartup.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.launchAtStartup.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -580,9 +580,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.hideTaskbarIcon.label")}</span>
-            <span className="setting-hint">
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.hideTaskbarIcon.label")}</span>
+            <span className="text-[11px] text-text-tertiary">
               {isWindows
                 ? t("settings.hideTaskbarIcon.hint")
                 : t("settings.hideTaskbarIcon.unsupportedHint")}
@@ -601,9 +601,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.refreshOnBack.label")}</span>
-            <span className="setting-hint">{t("settings.refreshOnBack.hint")}</span>
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.refreshOnBack.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.refreshOnBack.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -617,9 +617,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.autoExpandWindow.label")}</span>
-            <span className="setting-hint">{t("settings.autoExpandWindow.hint")}</span>
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.autoExpandWindow.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.autoExpandWindow.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -633,9 +633,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.edgeDockCollapse.label")}</span>
-            <span className="setting-hint">{t("settings.edgeDockCollapse.hint")}</span>
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.edgeDockCollapse.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.edgeDockCollapse.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -649,9 +649,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         <label className="setting-row setting-row-toggle">
-          <span className="setting-copy">
-            <span className="setting-label">{t("settings.compactColorMarkers.label")}</span>
-            <span className="setting-hint">{t("settings.compactColorMarkers.hint")}</span>
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.compactColorMarkers.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.compactColorMarkers.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -667,8 +667,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     ),
     providers: (
       <section className="settings-section settings-section-page">
-        <div className="section-header">
-          <h3 className="section-title">{t("settings.sections.providers")}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.providers")}</h3>
           {!draftProviderConfig && providerSelectGroups.some((group) => group.options.length > 0) && (
             <div className="add-provider-select">
               <AppSelect
@@ -729,7 +729,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         )}
 
         {providerConfigs.length === 0 && !draftProviderConfig && (
-          <div className="provider-empty-state">
+          <div className="border border-dashed border-primary/30 rounded-md p-4 text-xs text-text-secondary text-center">
             <span>{t("settings.providersSection.empty")}</span>
           </div>
         )}
@@ -764,14 +764,14 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     ),
     advanced: (
       <section className="settings-section settings-section-page">
-        <div className="section-header">
-          <h3 className="section-title">{t("settings.sections.advanced")}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.advanced")}</h3>
         </div>
 
-        <label className="advanced-toggle">
-          <span className="advanced-toggle-copy">
-            <span className="advanced-toggle-title">{t("settings.advancedSection.title")}</span>
-            <span className="advanced-toggle-hint">{t("settings.advancedSection.hint")}</span>
+        <label className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 transition-colors hover:border-border-strong">
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.advancedSection.title")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.advancedSection.hint")}</span>
           </span>
           <span className="switch">
             <input
@@ -785,7 +785,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </label>
 
         {settings.providerPollingOverridesEnabled && configuredPollingProviders.length === 0 && (
-          <div className="provider-empty-state">
+          <div className="border border-dashed border-primary/30 rounded-md p-4 text-xs text-text-secondary text-center">
             <span>{t("settings.advancedSection.empty")}</span>
           </div>
         )}
@@ -888,10 +888,10 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   };
 
   return (
-    <div className="settings-panel">
+    <div className="flex flex-1 flex-col overflow-hidden bg-background">
       <div className="settings-header">
         <button
-          className="back-btn"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text"
           type="button"
           aria-label={t("common.back")}
           onClick={onBack}
