@@ -1,12 +1,12 @@
 [package]
 name = "peeka-usage"
-version = "0.1.10"
+version = "0.2.0"
 description = "Desktop widget for tracking OpenAI, Anthropic, and OpenRouter usage."
 authors = ["Star Chen <cxsgdsg1@gmail.com>"]
 edition = "2021"
 license = "MIT"
-homepage = "https://github.com/StarChen4/PeekaUsage"
-repository = "https://github.com/StarChen4/PeekaUsage"
+homepage = "https://github.com/yaoliwen542-sketch/PeekaUsage"
+repository = "https://github.com/yaoliwen542-sketch/PeekaUsage"
 
 [lib]
 name = "peeka_usage_lib"
