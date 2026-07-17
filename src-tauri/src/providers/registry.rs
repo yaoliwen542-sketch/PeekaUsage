@@ -145,6 +145,84 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
+        // === Kimi（月之暗面，CodingPlan）===
+        // GET https://api.kimi.com/coding/v1/usages
+        // Bearer 认证。响应含 limits[0].detail（5 小时窗口）和 usage（周限额窗口）。
+        // 由 coding_plan::fetch_kimi 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "kimi".to_string(),
+            display_name: "Kimi".to_string(),
+            env_key_name: "KIMI_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "kimi".to_string(),
+            docs_url: Some("https://platform.moonshot.cn/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "kimi".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === GLM（智谱，个人版，CodingPlan）===
+        // GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
+        // 裸 key 认证（无 Bearer 前缀）+ Accept-Language: en-US,en。
+        // 响应 data.limits[] 中 unit==3 -> 5 小时窗口，unit==6 -> 周限额窗口。
+        // 由 coding_plan::fetch_glm 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "glm".to_string(),
+            display_name: "GLM".to_string(),
+            env_key_name: "GLM_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "glm".to_string(),
+            docs_url: Some("https://open.bigmodel.cn/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "glm".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === MiniMax（CodingPlan）===
+        // GET https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
+        // Bearer 认证。响应 model_remains[] 中 model_name=="general" 的条目：
+        // current_interval_remaining_percent -> 5 小时窗口（utilization = 100 - remain）；
+        // current_weekly_status==1 时 current_weekly_remaining_percent -> 周限额窗口。
+        // 由 coding_plan::fetch_minimax 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "minimax".to_string(),
+            display_name: "MiniMax".to_string(),
+            env_key_name: "MINIMAX_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "minimax".to_string(),
+            docs_url: Some("https://platform.minimaxi.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "minimax".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
     ]
 }
 

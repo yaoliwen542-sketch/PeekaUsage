@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod balance;
+pub mod coding_plan;
 pub mod openai;
 pub mod openrouter;
 pub mod registry;
@@ -232,11 +233,8 @@ impl ProviderManager {
                 balance::execute_balance_query(&self.http_client, url, auth, field_map, api_key)
                     .await
             }
-            QueryType::CodingPlan { provider: _ } => {
-                // 阶段 2 实现
-                Err(ProviderError::RequestError(
-                    "CodingPlan 查询将在阶段 2 实现".into(),
-                ))
+            QueryType::CodingPlan { provider } => {
+                coding_plan::execute_coding_plan_query(&self.http_client, provider, api_key).await
             }
             QueryType::Subscription { .. } => {
                 Err(ProviderError::RequestError("订阅查询不应走用量链路".into()))
