@@ -4,7 +4,6 @@ import { useI18n } from "../../i18n";
 import type {
   AuthSchemeConfig,
   CustomProviderConfig,
-  QueryTypeConfig,
   ScriptConfig,
 } from "../../types/provider";
 import { getNewApiScriptTemplate, testCustomProviderScript } from "../../utils/ipc";
@@ -23,11 +22,8 @@ const AUTH_SCHEME_OPTIONS: Array<{ value: AuthSchemeConfig; labelKey: string }> 
   { value: "raw_key", labelKey: "settings.wizard.authRawKey" },
 ];
 
-const QUERY_TYPE_OPTIONS: Array<{ value: QueryTypeConfig; labelKey: string }> = [
-  { value: "script", labelKey: "settings.wizard.queryTypeScript" },
-  { value: "balance", labelKey: "settings.wizard.queryTypeBalance" },
-];
-
+// 修复 I-3：阶段 1 自定义供应商只支持 Script 查询，向导 UI 不再暴露 Balance 选项
+// （QueryTypeConfig 枚举里保留 Balance，阶段 2 实现真正的 Balance 查询后开放）
 const ICON_CHOICES = ["custom", "deepseek", "newapi", "openai", "anthropic", "openrouter"];
 
 /** 自定义供应商 3 步创建向导 */
@@ -38,10 +34,15 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
   const [icon, setIcon] = useState<string>("custom");
   const [authScheme, setAuthScheme] = useState<AuthSchemeConfig>("bearer");
   const [baseUrl, setBaseUrl] = useState("");
-  const [queryType, setQueryType] = useState<QueryTypeConfig>("script");
+  // 修复 I-3：queryType 固定为 "script"（阶段 1 不开放 Balance）
+  const queryType = "script" as const;
   const [scriptCode, setScriptCode] = useState("");
   const [allowHttp, setAllowHttp] = useState(false);
   const [envKeyName, setEnvKeyName] = useState("");
+  // 修复 C-3：NewAPI 等 Script 模板需要的 accessToken / userId
+  // 阶段 1 临时方案：明文存储于 custom_config，阶段 2 迁移到 KeyStore
+  const [accessToken, setAccessToken] = useState("");
+  const [userId, setUserId] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -53,10 +54,11 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     setIcon("custom");
     setAuthScheme("bearer");
     setBaseUrl("");
-    setQueryType("script");
     setScriptCode("");
     setAllowHttp(false);
     setEnvKeyName("");
+    setAccessToken("");
+    setUserId("");
     setTesting(false);
     setTestResult(null);
     setLoadingTemplate(false);
@@ -92,7 +94,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     return null;
   }
 
-  // 预填 NewAPI 脚本模板
+  // 预填 NewAPI 脚本模板（一键填充 NewAPI 预设：脚本 + 提示用户填 accessToken/userId）
   async function fillNewApiTemplate() {
     if (loadingTemplate) {
       return;
@@ -101,7 +103,6 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     try {
       const code = await getNewApiScriptTemplate();
       setScriptCode(code);
-      setQueryType("script");
       setTestResult(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -119,7 +120,15 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await testCustomProviderScript(scriptCode, "test-key", baseUrl.trim() || null, allowHttp);
+      // 修复 C-3：测试时传入 accessToken / userId，与真实查询链路一致
+      const result = await testCustomProviderScript(
+        scriptCode,
+        "test-key",
+        baseUrl.trim() || null,
+        allowHttp,
+        accessToken.trim() || null,
+        userId.trim() || null,
+      );
       setTestResult({ ok: true, message: result });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -130,10 +139,9 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
   }
 
   // 校验：每步是否可继续
+  // 修复 I-3：queryType 固定为 script，校验条件简化
   const step1Valid = displayName.trim().length > 0;
-  const step2Valid = queryType === "balance"
-    ? baseUrl.trim().length > 0
-    : scriptCode.trim().length > 0 && baseUrl.trim().length > 0;
+  const step2Valid = scriptCode.trim().length > 0 && baseUrl.trim().length > 0;
 
   // 确认创建
   function handleConfirm() {
@@ -143,15 +151,14 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     const trimmedDisplayName = displayName.trim();
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedEnvKeyName = envKeyName.trim();
+    const trimmedAccessToken = accessToken.trim();
+    const trimmedUserId = userId.trim();
 
-    let script: ScriptConfig | undefined;
-    if (queryType === "script") {
-      script = {
-        code: scriptCode,
-        language: "javascript",
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-      };
-    }
+    const script: ScriptConfig = {
+      code: scriptCode,
+      language: "javascript",
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    };
 
     const config: CustomProviderConfig = {
       displayName: trimmedDisplayName,
@@ -162,6 +169,9 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
       queryType,
       script,
       allowHttp,
+      // 修复 C-3：accessToken / userId 随 custom_config 保存（阶段 1 临时方案）
+      accessToken: trimmedAccessToken || null,
+      userId: trimmedUserId || null,
     };
 
     onConfirm(config);
@@ -263,24 +273,20 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
 
           {step === 2 && (
             <>
+              {/* 修复 I-3：阶段 1 自定义供应商只支持 Script 查询，移除 Balance/Script 切换器 */}
               <div className="field-group">
                 <label className="field-label">{t("settings.wizard.queryType")}</label>
                 <div className="wizard-segment" role="group" aria-label={t("settings.wizard.queryType")}>
-                  {QUERY_TYPE_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`wizard-segment-button${queryType === option.value ? " is-active" : ""}`}
-                      aria-pressed={queryType === option.value}
-                      onClick={() => {
-                        setQueryType(option.value);
-                        setTestResult(null);
-                      }}
-                    >
-                      {t(option.labelKey)}
-                    </button>
-                  ))}
+                  <button
+                    type="button"
+                    className="wizard-segment-button is-active"
+                    aria-pressed={true}
+                    disabled
+                  >
+                    {t("settings.wizard.queryTypeScript")}
+                  </button>
                 </div>
+                <div className="field-hint">{t("settings.wizard.queryTypeScriptHint")}</div>
               </div>
 
               <div className="field-group">
@@ -298,33 +304,65 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                 <div className="field-hint">{t("settings.wizard.baseUrlHint")}</div>
               </div>
 
-              {queryType === "script" && (
-                <div className="field-group">
-                  <div className="field-row">
-                    <label className="field-label" htmlFor="wizard-script-code">
-                      {t("settings.wizard.script")}
-                    </label>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      disabled={loadingTemplate}
-                      onClick={() => void fillNewApiTemplate()}
-                    >
-                      {loadingTemplate ? t("settings.wizard.loading") : t("settings.wizard.fillNewApiTemplate")}
-                    </button>
-                  </div>
-                  <textarea
-                    id="wizard-script-code"
-                    className="wizard-textarea"
-                    value={scriptCode}
-                    rows={10}
-                    spellCheck={false}
-                    placeholder={t("settings.wizard.scriptPlaceholder")}
-                    onChange={(event) => setScriptCode(event.target.value)}
-                  />
-                  <div className="field-hint">{t("settings.wizard.scriptHint")}</div>
+              <div className="field-group">
+                <div className="field-row">
+                  <label className="field-label" htmlFor="wizard-script-code">
+                    {t("settings.wizard.script")}
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    disabled={loadingTemplate}
+                    onClick={() => void fillNewApiTemplate()}
+                  >
+                    {loadingTemplate ? t("settings.wizard.loading") : t("settings.wizard.fillNewApiTemplate")}
+                  </button>
                 </div>
-              )}
+                <textarea
+                  id="wizard-script-code"
+                  className="wizard-textarea"
+                  value={scriptCode}
+                  rows={10}
+                  spellCheck={false}
+                  placeholder={t("settings.wizard.scriptPlaceholder")}
+                  onChange={(event) => setScriptCode(event.target.value)}
+                />
+                <div className="field-hint">{t("settings.wizard.scriptHint")}</div>
+              </div>
+
+              {/* 修复 C-3：Script 模板可选的 accessToken / userId 输入框
+                  （NewAPI 等 API 网关需要这两个凭据，通过 {{accessToken}} / {{userId}} 注入脚本） */}
+              <div className="field-group">
+                <label className="field-label" htmlFor="wizard-access-token">
+                  {t("settings.wizard.accessToken")}
+                </label>
+                <input
+                  id="wizard-access-token"
+                  className="wizard-input"
+                  type="text"
+                  value={accessToken}
+                  placeholder={t("settings.wizard.accessTokenPlaceholder")}
+                  onChange={(event) => setAccessToken(event.target.value)}
+                  autoComplete="off"
+                />
+                <div className="field-hint">{t("settings.wizard.accessTokenHint")}</div>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="wizard-user-id">
+                  {t("settings.wizard.userId")}
+                </label>
+                <input
+                  id="wizard-user-id"
+                  className="wizard-input"
+                  type="text"
+                  value={userId}
+                  placeholder={t("settings.wizard.userIdPlaceholder")}
+                  onChange={(event) => setUserId(event.target.value)}
+                  autoComplete="off"
+                />
+                <div className="field-hint">{t("settings.wizard.userIdHint")}</div>
+              </div>
             </>
           )}
 
@@ -389,15 +427,15 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                 <dl className="wizard-summary-list">
                   <div className="wizard-summary-item">
                     <dt>{t("settings.wizard.displayName")}</dt>
-                    <dd>{displayName.trim() || "—"}</dd>
+                    <dd>{displayName.trim() || "-"}</dd>
                   </div>
                   <div className="wizard-summary-item">
                     <dt>{t("settings.wizard.baseUrl")}</dt>
-                    <dd>{baseUrl.trim() || "—"}</dd>
+                    <dd>{baseUrl.trim() || "-"}</dd>
                   </div>
                   <div className="wizard-summary-item">
                     <dt>{t("settings.wizard.queryType")}</dt>
-                    <dd>{t(queryType === "script" ? "settings.wizard.queryTypeScript" : "settings.wizard.queryTypeBalance")}</dd>
+                    <dd>{t("settings.wizard.queryTypeScript")}</dd>
                   </div>
                   <div className="wizard-summary-item">
                     <dt>{t("settings.wizard.authScheme")}</dt>
@@ -405,6 +443,19 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                       {t(AUTH_SCHEME_OPTIONS.find((option) => option.value === authScheme)?.labelKey ?? "settings.wizard.authBearer")}
                     </dd>
                   </div>
+                  {(accessToken.trim() || userId.trim()) && (
+                    <div className="wizard-summary-item">
+                      <dt>{t("settings.wizard.credentialsSummary")}</dt>
+                      <dd>
+                        {[
+                          accessToken.trim() && t("settings.wizard.accessToken"),
+                          userId.trim() && t("settings.wizard.userId"),
+                        ]
+                          .filter(Boolean)
+                          .join(" / ")}
+                      </dd>
+                    </div>
+                  )}
                 </dl>
               </div>
             </>

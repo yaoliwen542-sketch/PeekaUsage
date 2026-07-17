@@ -10,7 +10,11 @@ use super::types::*;
 /// 这样可避免进程启动时把时间戳固定下来（builtin_templates 仅在进程启动时调用一次）。
 fn builtin_templates() -> Vec<ProviderTemplate> {
     vec![
-        // === OpenAI（复合型：Balance × 3 + Subscription × 1）===
+        // === OpenAI（按量查询走 legacy fetch_usage，registry 只保留 Subscription）===
+        // OpenAI 的 Balance 查询模板曾使用错误的 JSONPath（如 $.total_granted），
+        // 实际 OpenAI credit_grants 响应字段并非如此，导致 C-1 解析失败。
+        // 阶段 1 修复：registry 只保留 Subscription 查询；
+        // 按量查询统一走 legacy OpenAIProvider::fetch_usage（credit_grants + costs + subscription 三条合并逻辑）。
         ProviderTemplate {
             id: "openai".to_string(),
             display_name: "OpenAI".to_string(),
@@ -25,51 +29,8 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                 has_subscription: true,
             },
             queries: vec![
-                // 1. 预付费 credit grants
-                QuerySpec {
-                    query_type: QueryType::Balance {
-                        url: "https://api.openai.com/v1/dashboard/billing/credit_grants"
-                            .to_string(),
-                        auth: AuthScheme::Bearer,
-                        field_map: BalanceFieldMap {
-                            total: "$.total_granted".to_string(),
-                            used: Some("$.total_used".to_string()),
-                            remaining: Some("$.total_available".to_string()),
-                            currency: "USD".to_string(),
-                        },
-                    },
-                    base_url: None,
-                },
-                // 2. 后付费 costs（本月，动态时间戳占位符）
-                QuerySpec {
-                    query_type: QueryType::Balance {
-                        url: "https://api.openai.com/v1/organization/costs?start_time={{month_start_ts}}&end_time={{now_ts}}&group_by=line_item".to_string(),
-                        auth: AuthScheme::Bearer,
-                        field_map: BalanceFieldMap {
-                            total: "$.total".to_string(),
-                            used: Some("$.used".to_string()),
-                            remaining: None,
-                            currency: "USD".to_string(),
-                        },
-                    },
-                    base_url: None,
-                },
-                // 3. 限额 subscription
-                QuerySpec {
-                    query_type: QueryType::Balance {
-                        url: "https://api.openai.com/v1/dashboard/billing/subscription"
-                            .to_string(),
-                        auth: AuthScheme::Bearer,
-                        field_map: BalanceFieldMap {
-                            total: "$.hard_limit_usd".to_string(),
-                            used: None,
-                            remaining: None,
-                            currency: "USD".to_string(),
-                        },
-                    },
-                    base_url: None,
-                },
-                // 4. OAuth 订阅（ChatGPT Plus/Pro/Max）
+                // OAuth 订阅（ChatGPT Plus/Pro/Max）
+                // 按量 API 查询不在 registry 中，由 ProviderManager::fetch_api_usage 路由到 legacy fetch_usage
                 QuerySpec {
                     query_type: QueryType::Subscription {
                         provider: "openai_wham".to_string(),
@@ -79,7 +40,11 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             ],
             oauth_detect: None, // 阶段 2 填充
         },
-        // === Anthropic（Balance × 1 + Subscription × 1）===
+        // === Anthropic（按量查询走 legacy fetch_usage，registry 只保留 Subscription）===
+        // Anthropic 的 cost_report 模板在 registry 里走 Balance 查询分支，但 BalanceFieldMap
+        // 的 JSONPath（$.total / $.used）与 cost_report 实际响应结构不符，导致 C-2 解析失败。
+        // 阶段 1 修复：registry 只保留 Subscription 查询；
+        // 按量查询统一走 legacy AnthropicProvider::fetch_usage（直接读 cost_cents 累加）。
         ProviderTemplate {
             id: "anthropic".to_string(),
             display_name: "Anthropic".to_string(),
@@ -94,21 +59,8 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                 has_subscription: true,
             },
             queries: vec![
-                // 1. cost_report（按量，x-api-key 认证，动态日期占位符）
-                QuerySpec {
-                    query_type: QueryType::Balance {
-                        url: "https://api.anthropic.com/v1/organizations/cost_report?start_date={{month_start_date}}&end_date={{today_date}}".to_string(),
-                        auth: AuthScheme::XApiKey,
-                        field_map: BalanceFieldMap {
-                            total: "$.total".to_string(),
-                            used: Some("$.used".to_string()),
-                            remaining: None,
-                            currency: "USD".to_string(),
-                        },
-                    },
-                    base_url: None,
-                },
-                // 2. OAuth 订阅
+                // OAuth 订阅
+                // 按量 API 查询不在 registry 中，由 ProviderManager::fetch_api_usage 路由到 legacy fetch_usage
                 QuerySpec {
                     query_type: QueryType::Subscription {
                         provider: "anthropic_oauth".to_string(),
@@ -193,32 +145,15 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
-        // === NewAPI（Script，预置脚本）===
-        ProviderTemplate {
-            id: "newapi".to_string(),
-            display_name: "NewAPI".to_string(),
-            env_key_name: "NEWAPI_API_KEY".to_string(),
-            env_oauth_token_name: None,
-            icon: "newapi".to_string(),
-            docs_url: Some("https://github.com/Calcium-Ion/new-api".to_string()),
-            capabilities: ProviderCapabilities {
-                has_balance: true,
-                has_usage: false,
-                has_rate_limit: false,
-                has_subscription: false,
-            },
-            queries: vec![QuerySpec {
-                query_type: QueryType::Script {
-                    default_template: Some(newapi_script_template().to_string()),
-                },
-                base_url: None,
-            }],
-            oauth_detect: None,
-        },
     ]
 }
 
-/// NewAPI 预置 JS 脚本模板
+/// NewAPI 预置 JS 脚本模板（供自定义供应商向导的"NewAPI 预设"按钮调用）
+///
+/// NewAPI 不再作为内置供应商条目存在于 registry：它的 base_url / accessToken / userId
+/// 因部署而异，无法用一组固定的模板覆盖所有部署。阶段 1 修复 C-3：
+/// NewAPI 改为"自定义供应商预设"，用户通过向导一键填充此脚本模板，
+/// 然后填入自己的 base_url / accessToken / userId。
 pub fn newapi_script_template() -> &'static str {
     r#"({
   request: {

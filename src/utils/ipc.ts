@@ -59,12 +59,16 @@ export async function testCustomProviderScript(
   apiKey: string,
   baseUrl: string | null,
   allowHttp: boolean,
+  accessToken?: string | null,
+  userId?: string | null,
 ): Promise<string> {
   return invoke<string>("test_custom_provider_script", {
     code,
     apiKey,
     baseUrl,
     allowHttp,
+    accessToken: accessToken ?? null,
+    userId: userId ?? null,
   });
 }
 
@@ -87,8 +91,16 @@ export async function activateProviderApiKey(providerId: ProviderId, apiKeyId: s
 }
 
 /** 验证 API Key */
-export async function validateApiKey(providerId: ProviderId, apiKey: string): Promise<boolean> {
-  return invoke<boolean>("validate_api_key", { providerId, apiKey });
+export async function validateApiKey(
+  providerId: ProviderId,
+  apiKey: string,
+  customConfig?: CustomProviderConfig | null,
+): Promise<boolean> {
+  return invoke<boolean>("validate_api_key", {
+    providerId,
+    apiKey,
+    customConfig: customConfig ?? null,
+  });
 }
 
 /** 获取应用设置 */

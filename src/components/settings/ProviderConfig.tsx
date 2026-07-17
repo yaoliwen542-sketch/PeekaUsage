@@ -88,6 +88,12 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
   function createId(prefix: string) { return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`; }
+  // 修复 C-3：脱敏 accessToken（仅显示前 4 位 + 后 4 位，中间用 ... 表示）
+  function maskCredential(value: string) {
+    if (!value) return "-";
+    if (value.length <= 8) return "****";
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
+  }
   function createEmptyApiKey(index: number): ProviderApiKeyItem { return { id: createId("key"), name: defaultKeyName(index), color: normalizeProviderMarkerColor(null, index), value: "", isActiveInEnvironment: false }; }
   function createEmptySubscription(index: number): ProviderSubscriptionItem { return { id: createId("subscription"), name: defaultSubscriptionName(index), color: normalizeProviderMarkerColor(null, index), oauthToken: "", source: null }; }
   function cloneApiKeys(source: ProviderApiKeyItem[]) { return source.length === 0 ? [createEmptyApiKey(0)] : source.map((item, index) => ({ id: item.id || createId("key"), name: item.name || defaultKeyName(index), color: normalizeProviderMarkerColor(item.color, index), value: item.value, isActiveInEnvironment: !!item.isActiveInEnvironment })); }
@@ -173,7 +179,9 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     setValidatingKeyId(target.id);
     setValidationResults((current) => ({ ...current, [target.id]: null }));
     try {
-      const result = await validateApiKey(config.providerId, value);
+      // 修复 C-4：自定义供应商验证 Key 时必须传入 customConfig，
+      // 否则后端无法用自定义模板分发查询（如 NewAPI Script 模板）
+      const result = await validateApiKey(config.providerId, value, config.customConfig ?? null);
       setValidationResults((current) => ({ ...current, [target.id]: result }));
     } catch {
       setValidationResults((current) => ({ ...current, [target.id]: false }));
@@ -355,6 +363,19 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                 <span className="custom-provider-meta-label">{t("settings.providerConfig.customAuthScheme")}</span>
                 <span className="custom-provider-meta-value-inline">{customConfig.authScheme}</span>
               </div>
+              {/* 修复 C-3：脚本类供应商展示 accessToken / userId 状态（只读，编辑走重新创建向导） */}
+              {customConfig.accessToken && (
+                <div className="custom-provider-meta-row">
+                  <span className="custom-provider-meta-label">{t("settings.wizard.accessToken")}</span>
+                  <span className="custom-provider-meta-value-inline">{maskCredential(customConfig.accessToken)}</span>
+                </div>
+              )}
+              {customConfig.userId && (
+                <div className="custom-provider-meta-row">
+                  <span className="custom-provider-meta-label">{t("settings.wizard.userId")}</span>
+                  <span className="custom-provider-meta-value-inline">{customConfig.userId}</span>
+                </div>
+              )}
               {customConfig.allowHttp && (
                 <div className="field-hint">{t("settings.providerConfig.customAllowHttpEnabled")}</div>
               )}

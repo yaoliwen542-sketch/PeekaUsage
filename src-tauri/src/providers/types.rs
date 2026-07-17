@@ -375,6 +375,14 @@ pub struct CustomProviderConfig {
     /// 是否允许 HTTP（默认 false，强制 HTTPS）
     #[serde(default)]
     pub allow_http: bool,
+    /// NewAPI 等 Script 模板需要的访问令牌（阶段 1 临时方案：随 customConfig 明文存储，
+    /// 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{accessToken}} 占位符引用。
+    #[serde(default)]
+    pub access_token: Option<String>,
+    /// NewAPI 等 Script 模板需要的用户 ID（阶段 1 临时方案：随 customConfig 明文存储，
+    /// 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{userId}} 占位符引用。
+    #[serde(default)]
+    pub user_id: Option<String>,
 }
 
 fn default_auth_scheme() -> AuthSchemeConfig {

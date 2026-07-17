@@ -206,11 +206,23 @@ pub async fn save_provider_config(
         api_keys,
         subscriptions,
         provider_template_id,
-        custom_config,
+        mut custom_config,
     } = config;
 
     let provider_id = provider_enum;
     let existing_entry = app_config.get_provider_entry(&provider_id).await;
+
+    // 修复 C-5：脚本 timeout_ms 在入口 clamp 到 ≤ 60000，避免用户配置过大导致 JS 引擎长时间阻塞
+    if let Some(cfg) = custom_config.as_mut() {
+        if let Some(script) = cfg.script.as_mut() {
+            if script.timeout_ms > 60000 {
+                script.timeout_ms = 60000;
+            }
+            if script.timeout_ms == 0 {
+                script.timeout_ms = 15000;
+            }
+        }
+    }
 
     // 解析环境变量名（自定义供应商用 custom_config.env_key_name，内置从 registry 查）
     let env_key_name = match &custom_config {
@@ -882,6 +894,8 @@ pub async fn test_custom_provider_script(
     api_key: String,
     base_url: Option<String>,
     allow_http: bool,
+    access_token: Option<String>,
+    user_id: Option<String>,
 ) -> Result<String, String> {
     // 执行脚本，返回成功/失败信息
     let result = crate::providers::script_engine::run(
@@ -891,6 +905,8 @@ pub async fn test_custom_provider_script(
         base_url.as_deref(),
         allow_http,
         15000,
+        access_token.as_deref(),
+        user_id.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())?;

@@ -260,4 +260,10 @@ export interface CustomProviderConfig {
   script?: ScriptConfig;
   /** 是否允许 HTTP（默认 false，强制 HTTPS） */
   allowHttp: boolean;
+  /** NewAPI 等 Script 模板需要的访问令牌（阶段 1 临时方案：随 customConfig 明文存储，
+   * 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{accessToken}} 占位符引用。 */
+  accessToken?: string | null;
+  /** NewAPI 等 Script 模板需要的用户 ID（阶段 1 临时方案：随 customConfig 明文存储，
+   * 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{userId}} 占位符引用。 */
+  userId?: string | null;
 }

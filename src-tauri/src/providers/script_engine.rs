@@ -1,6 +1,9 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use super::traits::ProviderError;
 use super::types::UsageData;
@@ -33,6 +36,16 @@ struct ExtractResult {
 /// 3. Rust 端按 request 发 HTTP 请求（脚本不能自己发）
 /// 4. 把响应喂回 extractor 函数
 /// 5. 转换结果为 UsageData
+///
+/// 修复 C-5：原实现直接在 tokio 异步上下文里调用 `ctx.with(...)` 同步执行 JS，
+/// 这会阻塞当前 worker 线程；若脚本陷入死循环或执行超长时间（如 while(true)），
+/// 整个 runtime 会被卡死，请求也永远无法返回。
+///
+/// 现修复为：
+/// - 用 `tokio::task::spawn_blocking` 把同步的 rquickjs 调用挪到 blocking 池
+/// - 用 `Runtime::set_interrupt_handler` 注册按 `timeout_ms` 中断的 handler：
+///   起一个计时器，到达 timeout 后置 AtomicBool，handler 检测到后返回 true，
+///   QuickJS 引擎会抛出 uncatchable exception 终止脚本，避免死循环阻塞
 pub async fn run(
     client: &Client,
     code: &str,
@@ -40,29 +53,38 @@ pub async fn run(
     base_url: Option<&str>,
     allow_http: bool,
     timeout_ms: u64,
+    access_token: Option<&str>,
+    user_id: Option<&str>,
 ) -> Result<UsageData, ProviderError> {
     // 1. 模板变量替换
     let resolved_code = code
         .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url.unwrap_or(""));
+        .replace("{{baseUrl}}", base_url.unwrap_or(""))
+        // NewAPI 等 Script 模板用 accessToken / userId（修复 C-3）
+        // 阶段 1 临时方案：直接从 custom_config 读取明文 accessToken/userId
+        .replace("{{accessToken}}", access_token.unwrap_or(""))
+        .replace("{{userId}}", user_id.unwrap_or(""));
 
-    // NewAPI 用 accessToken / userId，阶段 1 暂用 api_key 占位
-    // （实际 accessToken/userId 通过 KeyStore 读取，在命令层注入，这里先留接口）
-    let resolved_code = resolved_code
-        .replace("{{accessToken}}", api_key)
-        .replace("{{userId}}", "");
-
-    // 2. 在沙箱中执行脚本，拿到 request 配置
-    let request_spec = run_script_for_request(&resolved_code)?;
+    // 2. 在 spawn_blocking 中执行脚本，拿到 request 配置
+    let code_for_request = resolved_code.clone();
+    let request_spec =
+        tokio::task::spawn_blocking(move || run_script_for_request(&code_for_request, timeout_ms))
+            .await
+            .map_err(|e| ProviderError::RequestError(format!("脚本执行任务失败: {}", e)))??;
 
     // 3. 安全校验
     validate_request_url(&request_spec.url, base_url, allow_http)?;
 
-    // 4. Rust 端发请求
+    // 4. Rust 端发请求（异步，带 timeout）
     let response = send_request(client, &request_spec, timeout_ms).await?;
 
     // 5. 把响应喂回 extractor
-    let result = run_extractor(&resolved_code, &response)?;
+    let code_for_extractor = resolved_code.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_extractor(&code_for_extractor, &response, timeout_ms)
+    })
+    .await
+    .map_err(|e| ProviderError::RequestError(format!("extractor 执行任务失败: {}", e)))??;
 
     // 6. 转换结果
     if result.is_valid == Some(false) {
@@ -110,12 +132,17 @@ struct ScriptResponse {
 
 /// 在 rquickjs 沙箱中执行脚本，返回 request 配置
 ///
-/// 使用 rquickjs 0.7 的同步 API：Runtime::new() + Context::full() + ctx.with(|ctx| {...})
-fn run_script_for_request(code: &str) -> Result<RequestSpec, ProviderError> {
+/// 修复 C-5：注册按 timeout_ms 中断的 handler，避免脚本死循环阻塞。
+/// 实现细节：handler 闭包持有 `Arc<AtomicBool>`，spawn 一个定时器在 timeout 后
+/// 置位，QuickJS 引擎周期性调用 handler，检测到 true 则抛出 uncatchable exception。
+fn run_script_for_request(code: &str, timeout_ms: u64) -> Result<RequestSpec, ProviderError> {
     use rquickjs::{Context, Runtime};
 
     let runtime = Runtime::new()
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 运行时: {}", e)))?;
+
+    // 注册中断 handler：超时后置位 flag，handler 返回 true 触发 QuickJS 中断
+    let timeout_flag = install_interrupt_handler(&runtime, timeout_ms)?;
 
     let ctx = Context::full(&runtime)
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 上下文: {}", e)))?;
@@ -181,7 +208,51 @@ fn run_script_for_request(code: &str) -> Result<RequestSpec, ProviderError> {
         })
     });
 
+    // 检查是否因超时被中断
+    if timeout_flag.load(Ordering::SeqCst) {
+        return Err(ProviderError::RequestError(format!(
+            "脚本执行超时（{}ms）",
+            timeout_ms
+        )));
+    }
+
     result
+}
+
+/// 安装超时中断 handler：返回一个 AtomicBool 标志，超时后会被置位
+///
+/// 实现方式：
+/// - 创建 `Arc<AtomicBool>` 共享给 handler 闭包与定时器线程
+/// - spawn 一个轻量线程在 `timeout_ms` 后置位（不依赖 tokio，因为我们在 blocking 池里）
+/// - handler 闭包返回 AtomicBool 的值，QuickJS 周期性调用它，true 时抛出中断异常
+fn install_interrupt_handler(
+    runtime: &rquickjs::Runtime,
+    timeout_ms: u64,
+) -> Result<Arc<AtomicBool>, ProviderError> {
+    let flag = Arc::new(AtomicBool::new(false));
+
+    // 启动一个后台线程在 timeout_ms 后置位 flag
+    // （blocking 池里没有 tokio runtime，用 std::thread）
+    let timer_flag = flag.clone();
+    std::thread::Builder::new()
+        .name("js-script-timeout".to_string())
+        .spawn(move || {
+            let start = Instant::now();
+            let timeout = Duration::from_millis(timeout_ms);
+            // 轮询：每 50ms 检查一次是否到达 timeout
+            // （避免 sleep 过久导致线程无法及时退出，但实际精度不影响超时判定）
+            while start.elapsed() < timeout {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            timer_flag.store(true, Ordering::SeqCst);
+        })
+        .map_err(|e| ProviderError::ParseError(format!("启动超时计时器失败: {}", e)))?;
+
+    // 注册 handler：返回 flag 的当前值，true 时 QuickJS 中断脚本
+    let handler_flag = flag.clone();
+    runtime.set_interrupt_handler(Some(Box::new(move || handler_flag.load(Ordering::SeqCst))));
+
+    Ok(flag)
 }
 
 /// 校验请求 URL：HTTPS 强制 + 同源校验
@@ -295,11 +366,19 @@ async fn send_request(
 }
 
 /// 在 rquickjs 沙箱中执行 extractor 函数
-fn run_extractor(code: &str, response: &ScriptResponse) -> Result<ExtractResult, ProviderError> {
+///
+/// 修复 C-5：与 run_script_for_request 一样，注册中断 handler 避免死循环。
+fn run_extractor(
+    code: &str,
+    response: &ScriptResponse,
+    timeout_ms: u64,
+) -> Result<ExtractResult, ProviderError> {
     use rquickjs::{Context, Runtime};
 
     let runtime = Runtime::new()
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 运行时: {}", e)))?;
+
+    let timeout_flag = install_interrupt_handler(&runtime, timeout_ms)?;
 
     let ctx = Context::full(&runtime)
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 上下文: {}", e)))?;
@@ -341,6 +420,14 @@ fn run_extractor(code: &str, response: &ScriptResponse) -> Result<ExtractResult,
         serde_json::from_str::<ExtractResult>(&result_json)
             .map_err(|e| ProviderError::ParseError(format!("解析 extractor 结果失败: {}", e)))
     });
+
+    // 检查是否因超时被中断
+    if timeout_flag.load(Ordering::SeqCst) {
+        return Err(ProviderError::RequestError(format!(
+            "extractor 执行超时（{}ms）",
+            timeout_ms
+        )));
+    }
 
     result
 }
