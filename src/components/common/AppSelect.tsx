@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
+import { cn } from "@/lib/utils";
 
 export type SelectValue = string | number;
 
@@ -47,6 +48,8 @@ type AppSelectProps<T extends SelectValue = SelectValue> = {
   ariaLabel?: string;
   listMaxHeight?: number;
   className?: string;
+  // 触发器附加类名（用于紧凑尺寸等调用方定制）
+  triggerClassName?: string;
   onChange: (value: T) => void;
   onOpen?: () => void;
   onClose?: () => void;
@@ -67,6 +70,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
   ariaLabel,
   listMaxHeight = 240,
   className,
+  triggerClassName,
   onChange,
   onOpen,
   onClose,
@@ -336,10 +340,18 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
   }, [isOpen, modelValue]);
 
   return (
-    <div className={`app-select${className ? ` ${className}` : ""}`}>
+    <div className={cn("w-full", className)}>
       <button
         ref={triggerRef}
-        className={`select-trigger${isOpen ? " is-open" : ""}${disabled ? " is-disabled" : ""}`}
+        className={cn(
+          "inline-flex min-h-8 w-full cursor-pointer items-center justify-between gap-2.5 rounded-sm border border-border",
+          "bg-surface px-2.5 py-1.5 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-[border-color,background,box-shadow,transform]",
+          "hover:border-border-hover hover:bg-surface-hover",
+          "focus-visible:border-primary-soft-border focus-visible:shadow-[0_0_0_3px_var(--color-primary-soft-bg)] focus-visible:outline-none",
+          isOpen && "border-primary-soft-border bg-surface-hover shadow-[0_0_0_3px_var(--color-primary-soft-bg)]",
+          disabled && "cursor-not-allowed opacity-55",
+          triggerClassName,
+        )}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         aria-label={resolvedAriaLabel}
@@ -347,27 +359,33 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
         onClick={toggleMenu}
         onKeyDown={handleKeyDown}
       >
-        <span className="select-trigger-content">
+        <span className="min-w-0 flex-1 text-left">
           {renderSelected ? renderSelected(selectedOption) : (
-            <span className={`select-trigger-label${selectedOption ? "" : " is-placeholder"}`}>
+            <span className={cn("block text-xs leading-[1.4]", selectedOption ? "text-foreground" : "text-foreground-muted")}>
               {selectedOption?.label ?? resolvedPlaceholder}
             </span>
           )}
         </span>
         <svg
-          className={`select-caret${isOpen ? " is-open" : ""}`}
+          className={cn(
+            "size-3 shrink-0 text-foreground-muted transition-transform",
+            isOpen && "rotate-180 text-primary-soft-text",
+          )}
           viewBox="0 0 12 12"
           fill="none"
           aria-hidden="true"
         >
-          <path d="M2.5 4.5L6 8L9.5 4.5" />
+          <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
 
       {isOpen && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className="select-panel"
+          className={cn(
+            "fixed z-[1100] overflow-y-auto rounded-md border border-border bg-surface-elevated p-1.5 shadow-overlay",
+            "[backdrop-filter:blur(var(--backdrop-blur))]",
+          )}
           style={panelStyle}
           role="listbox"
           aria-label={resolvedAriaLabel}
@@ -375,7 +393,11 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
           {panelEntries.map((entry, index) => {
             if (entry.kind === "group") {
               return (
-                <div key={`group-${index}`} className="app-select-group-title" role="presentation">
+                <div
+                  key={`group-${index}`}
+                  className="pointer-events-none px-2 pt-2 pb-1 text-[10px] leading-[1.4] font-semibold tracking-[0.04em] text-foreground-muted uppercase select-none first:pt-0.5"
+                  role="presentation"
+                >
                   {entry.label}
                 </div>
               );
@@ -388,12 +410,12 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
             return (
               <button
                 key={String(option.value)}
-                className={[
-                  "select-option",
-                  selected ? "is-selected" : "",
-                  active ? "is-active" : "",
-                  option.disabled ? "is-disabled" : "",
-                ].filter(Boolean).join(" ")}
+                className={cn(
+                  "flex min-h-[34px] w-full items-center rounded-[5px] px-2 py-[7px] text-left text-foreground transition-colors",
+                  (active || selected) && "bg-ghost-hover",
+                  selected && "bg-primary-soft-bg text-primary-soft-text shadow-[0_0_0_1px_var(--color-primary-soft-border)]",
+                  option.disabled && "cursor-not-allowed opacity-45",
+                )}
                 aria-selected={selected}
                 data-option-index={optionIndex}
                 disabled={option.disabled}
@@ -404,7 +426,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
                 onMouseEnter={() => setActiveIndex(optionIndex)}
               >
                 {renderOption ? renderOption({ option, selected, active }) : (
-                  <span className="select-option-label">{option.label}</span>
+                  <span className="block text-xs leading-[1.4]">{option.label}</span>
                 )}
               </button>
             );

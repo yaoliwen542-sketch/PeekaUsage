@@ -20,9 +20,21 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        /* 项目定制变体：匹配旧版手写按钮风格 */
+        surface:
+          "border border-border bg-surface text-foreground shadow-none hover:border-border-hover hover:bg-ghost-hover",
+        soft:
+          "border border-primary-soft-border bg-primary-soft-bg text-primary-soft-text shadow-none hover:bg-primary-soft-bg/80",
+        softDanger:
+          "border border-danger-soft-border bg-danger-soft-bg text-danger-soft-text shadow-none hover:bg-danger-soft-bg/80",
+        softGhost:
+          "border border-border bg-ghost text-foreground shadow-none hover:bg-ghost-hover",
+        transparent:
+          "border border-border bg-transparent text-foreground shadow-none hover:bg-ghost-hover",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
+        xs: "h-7 rounded-sm gap-1 px-2.5 text-[11px] has-[>svg]:px-2",
         sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
         lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
         icon: "size-9",
