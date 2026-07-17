@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { I18nProvider } from "./i18n";
+import "./index.css";
 import "./assets/styles/main.css";
 
 const container = document.getElementById("app");

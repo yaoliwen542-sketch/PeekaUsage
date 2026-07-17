@@ -4,6 +4,7 @@ import { windowLabels } from "../../i18n/messages";
 import type { ApiKeyUsageSummary, UsageSummary } from "../../types/provider";
 import type { WidgetDisplayMode } from "../../types/settings";
 import { calcUsagePercent, formatCurrency } from "../../utils/formatters";
+import { cn } from "@/lib/utils";
 import ProviderIcon from "../common/ProviderIcon";
 import RateLimitBadge from "./RateLimitBadge";
 import SubscriptionBadge from "./SubscriptionBadge";
@@ -16,6 +17,9 @@ type ProviderCardProps = {
   isRefreshing?: boolean;
   onRefresh: () => void;
 };
+
+/** 紧凑模式指标行的通用样式（网格布局：标签 + 进度条） */
+const COMPACT_METRIC_ROW_CLASS = "grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-center gap-2";
 
 export default function ProviderCard({
   provider,
@@ -42,6 +46,7 @@ export default function ProviderCard({
   });
   const useSubscriptionColorMarkers = useCompactColorMarkers && compactVisibleSubscriptions.length > 1;
   const useApiColorMarkers = useCompactColorMarkers && compactApiItems.length > 1;
+  const isCompact = displayMode === "compact";
 
   /** 订阅窗口标签 i18n：先查映射表，找不到时原样返回 */
   function getWindowLabel(label: string): string {
@@ -60,15 +65,32 @@ export default function ProviderCard({
     return calcUsagePercent(item.usage.totalUsed, item.usage.totalBudget);
   }
 
+  // 注意：保留 provider-card 类名作为拖拽状态钩子（widget.css 的 card-shell 规则会给它加阴影/边框）
   return (
-    <div className={`provider-card${provider.status === "error" ? " is-error" : ""}${displayMode === "compact" ? " is-compact" : ""}`}>
-      <div className="card-header">
-        <div className="provider-title">
-          <ProviderIcon providerId={provider.providerId} size={displayMode === "compact" ? 16 : 20} />
-          <span className="provider-name">{provider.displayName}</span>
+    <div
+      className={cn(
+        "provider-card flex flex-col gap-2 rounded-md border border-border bg-surface p-3 transition-colors hover:border-border-hover",
+        provider.status === "error" && "border-danger/30",
+        isCompact && "gap-1.5 px-2.5 py-[9px]",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <ProviderIcon providerId={provider.providerId} size={isCompact ? 16 : 20} />
+          <span className={cn("font-semibold leading-[1.1] text-foreground", isCompact ? "text-[11px]" : "text-[13px]")}>
+            {provider.displayName}
+          </span>
         </div>
         <button
-          className={`refresh-btn${isRefreshing ? " is-spinning" : ""}${displayMode === "compact" ? " is-compact" : ""}`}
+          className={cn(
+            "inline-flex shrink-0 items-center justify-center rounded-full border border-transparent p-0",
+            "cursor-pointer text-foreground-secondary transition-colors",
+            "hover:border-border hover:bg-ghost-hover hover:text-foreground",
+            "focus-visible:border-primary-soft-border focus-visible:shadow-[0_0_0_3px_var(--color-primary-soft-bg)] focus-visible:outline-none",
+            "disabled:cursor-not-allowed disabled:opacity-55",
+            isCompact ? "h-5 w-5 [&_svg]:size-3" : "h-[26px] w-[26px] [&_svg]:size-3.5",
+            isRefreshing && "[&_svg]:animate-spin",
+          )}
           disabled={isRefreshing}
           type="button"
           title={t("widget.actions.refreshProvider")}
@@ -99,10 +121,10 @@ export default function ProviderCard({
         </button>
       </div>
 
-      {displayMode === "compact" ? (
+      {isCompact ? (
         <>
           {(provider.subscriptions.some((item) => item.usage.status === "success" && item.usage.windows.length > 0) || compactApiItems.length > 0) ? (
-            <div className="compact-metrics">
+            <div className="flex flex-col gap-1">
               {provider.subscriptions.map((subscription) => {
                 if (subscription.usage.status !== "success") {
                   return null;
@@ -119,30 +141,37 @@ export default function ProviderCard({
                 return (
                   <div
                     key={subscription.subscriptionId}
-                    className={`compact-subscription-group${useSubscriptionColorMarkers ? " has-marker" : ""}`}
+                    className={cn(
+                      "flex flex-col gap-1 rounded-sm border border-muted-surface-border bg-muted-surface px-2 py-1.5",
+                      useSubscriptionColorMarkers && cn(
+                        "relative pl-3.5",
+                        "before:absolute before:top-1.5 before:bottom-1.5 before:left-1.5 before:w-1 before:rounded-full",
+                        "before:bg-(--compact-marker-color) before:content-['']",
+                      ),
+                    )}
                     style={{ "--compact-marker-color": subscription.color } as CSSProperties}
                   >
                     {!useSubscriptionColorMarkers && (
-                      <div className="compact-subscription-title" title={subscription.subscriptionName}>
+                      <div className="text-[10px] leading-[1.2] font-semibold text-foreground-secondary" title={subscription.subscriptionName}>
                         {subscription.subscriptionName}
                       </div>
                     )}
                     {subscription.usage.windows.map((window, index) => (
-                      <div key={`${subscription.subscriptionId}-${window.label}-${index}`} className="compact-metric-row">
-                        <span className="compact-metric-label" title={getWindowLabel(window.label)}>
+                      <div key={`${subscription.subscriptionId}-${window.label}-${index}`} className={COMPACT_METRIC_ROW_CLASS}>
+                        <span className="max-w-[72px] truncate text-[10px] font-semibold text-foreground-secondary" title={getWindowLabel(window.label)}>
                           {formatCompactSubscriptionWindowLabel(getWindowLabel(window.label), t("widget.providerCard.subscriptionShort"))}
                         </span>
-                        <div className="compact-metric-bar">
+                        <div className="min-w-0 [&_.progress-container]:gap-1.5 [&_.progress-label]:min-w-7 [&_.progress-label]:text-[10px]">
                           <UsageProgressBar percent={window.utilization} />
                         </div>
                       </div>
                     ))}
                     {hasExtra && (
-                      <div className="compact-metric-row">
-                        <span className="compact-metric-label" title={t("widget.subscription.extraUsageLabel")}>
+                      <div className={COMPACT_METRIC_ROW_CLASS}>
+                        <span className="max-w-[72px] truncate text-[10px] font-semibold text-foreground-secondary" title={t("widget.subscription.extraUsageLabel")}>
                           {formatCompactSubscriptionWindowLabel(t("widget.subscription.extraUsageLabel"), t("widget.providerCard.subscriptionShort"))}
                         </span>
-                        <div className="compact-metric-bar">
+                        <div className="min-w-0 [&_.progress-container]:gap-1.5 [&_.progress-label]:min-w-7 [&_.progress-label]:text-[10px]">
                           <UsageProgressBar percent={extra!.utilization!} />
                         </div>
                       </div>
@@ -154,22 +183,25 @@ export default function ProviderCard({
               {compactApiItems.map((item) => (
                 <div
                   key={item.keyId}
-                  className={`compact-metric-row${useApiColorMarkers ? " has-marker" : ""}`}
+                  className={cn(
+                    COMPACT_METRIC_ROW_CLASS,
+                    useApiColorMarkers && "grid-cols-[4px_minmax(0,1fr)] gap-1.5",
+                  )}
                   style={useApiColorMarkers ? ({ "--compact-marker-color": item.color } as CSSProperties) : undefined}
                 >
                   {useApiColorMarkers ? (
                     <>
-                      <span className="compact-metric-marker" aria-hidden="true" />
-                      <div className="compact-metric-bar">
+                      <span className="h-[18px] w-1 rounded-full bg-(--compact-marker-color)" aria-hidden="true" />
+                      <div className="min-w-0 [&_.progress-container]:gap-1.5 [&_.progress-label]:min-w-7 [&_.progress-label]:text-[10px]">
                         <UsageProgressBar percent={usagePercent(item)} />
                       </div>
                     </>
                   ) : (
                     <>
-                      <span className="compact-metric-label" title={item.keyName}>
+                      <span className="max-w-[72px] truncate text-[10px] font-semibold text-foreground-secondary" title={item.keyName}>
                         {formatCompactApiLabel(item.keyName, t("widget.providerCard.apiShort"))}
                       </span>
-                      <div className="compact-metric-bar">
+                      <div className="min-w-0 [&_.progress-container]:gap-1.5 [&_.progress-label]:min-w-7 [&_.progress-label]:text-[10px]">
                         <UsageProgressBar percent={usagePercent(item)} />
                       </div>
                     </>
@@ -180,19 +212,19 @@ export default function ProviderCard({
           ) : null}
 
           {compactSubscriptionErrors.map((item) => (
-            <div key={`${item.subscriptionId}-error`} className="compact-error-msg">
+            <div key={`${item.subscriptionId}-error`} className="text-[10px] text-danger">
               {item.subscriptionName}: {item.usage.errorMessage}
             </div>
           ))}
 
           {compactApiErrors.map((item) => (
-            <div key={`${item.keyId}-error`} className="compact-error-msg">
+            <div key={`${item.keyId}-error`} className="text-[10px] text-danger">
               {hasMultipleApiKeys ? `${item.keyName}: ${item.errorMessage}` : item.errorMessage}
             </div>
           ))}
 
           {provider.status === "error" && !hasSubscription && !hasApiUsage && provider.errorMessage && (
-            <div className="compact-error-msg">{provider.errorMessage}</div>
+            <div className="text-[10px] text-danger">{provider.errorMessage}</div>
           )}
         </>
       ) : (
@@ -202,19 +234,23 @@ export default function ProviderCard({
           ))}
 
           {hasApiUsage && (
-            <div className="api-section">
-              <div className="api-header-block">
-                {hasSubscription && <div className="api-label">{t("widget.providerCard.apiLabel")}</div>}
+            <div className="flex flex-col gap-2 border-t border-dashed border-border pt-1">
+              <div className="flex flex-col gap-1">
+                {hasSubscription && (
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-foreground-muted">
+                    {t("widget.providerCard.apiLabel")}
+                  </div>
+                )}
                 {provider.usage && (
-                  <div className="api-total">
-                    <span className="api-total-label">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] text-foreground-muted">
                       {hasMultipleApiKeys ? t("widget.providerCard.total") : t("widget.providerCard.current")}
                     </span>
-                    <span className="usage-amount">
+                    <span className="text-[13px] font-bold text-primary-hover">
                       {formatCurrency(provider.usage.totalUsed, provider.usage.currency)}
                     </span>
                     {provider.usage.remaining != null && (
-                      <span className="balance-info">
+                      <span className="text-[11px] text-foreground-secondary">
                         {t("widget.providerCard.balance")}: {formatCurrency(provider.usage.remaining, provider.usage.currency)}
                       </span>
                     )}
@@ -225,21 +261,24 @@ export default function ProviderCard({
               {provider.apiKeyUsages.map((item) => (
                 <div
                   key={item.keyId}
-                  className={`api-key-usage${item.status === "error" ? " is-error" : ""}`}
+                  className={cn(
+                    "flex flex-col gap-1 rounded-sm bg-usage-item p-2",
+                    item.status === "error" && "bg-usage-item-error",
+                  )}
                 >
-                  <div className="api-key-header">
-                    <span className="api-key-name">{item.keyName}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-foreground">{item.keyName}</span>
                     {item.usage && (
-                      <span className="api-key-amount">
+                      <span className="text-[13px] font-bold text-primary-hover">
                         {formatCurrency(item.usage.totalUsed, item.usage.currency)}
                       </span>
                     )}
                   </div>
 
                   {item.usage && (
-                    <div className="api-key-meta">
+                    <div className="flex items-center justify-between gap-2">
                       {item.usage.remaining != null && (
-                        <span className="balance-info">
+                        <span className="text-[11px] text-foreground-secondary">
                           {t("widget.providerCard.balance")}: {formatCurrency(item.usage.remaining, item.usage.currency)}
                         </span>
                       )}
@@ -251,7 +290,7 @@ export default function ProviderCard({
                   )}
 
                   {item.errorMessage && (
-                    <div className="api-key-error">{item.errorMessage}</div>
+                    <div className="text-[10px] text-danger">{item.errorMessage}</div>
                   )}
 
                   {item.rateLimit && provider.apiKeyUsages.length === 1 && (
@@ -264,8 +303,8 @@ export default function ProviderCard({
         </>
       )}
 
-      {displayMode !== "compact" && provider.status === "error" && !hasSubscription && !hasApiUsage && (
-        <div className="error-msg">{provider.errorMessage}</div>
+      {!isCompact && provider.status === "error" && !hasSubscription && !hasApiUsage && (
+        <div className="text-[10px] text-danger">{provider.errorMessage}</div>
       )}
     </div>
   );

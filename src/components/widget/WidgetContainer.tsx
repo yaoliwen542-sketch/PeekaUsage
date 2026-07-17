@@ -9,6 +9,7 @@ import type { ProviderId, UsageSummary } from "../../types/provider";
 import type { ThemeMode } from "../../types/settings";
 import { saveProviderOrder } from "../../utils/ipc";
 import { fitCurrentWindowHeight, shouldSuppressAutoFit } from "../../utils/windowBounds";
+import { cn } from "@/lib/utils";
 import OpacityHandle from "./OpacityHandle";
 import ProviderCard from "./ProviderCard";
 import UsageStatsPanel from "./UsageStatsPanel";
@@ -47,6 +48,17 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
   next.splice(toIndex, 0, item);
   return next;
 }
+
+/** 底部工具栏图标按钮的基础类名（is-active / spinning 等状态由调用方追加） */
+const ICON_BTN_CLASS = cn(
+  "flex h-7 w-7 items-center justify-center rounded-sm border border-transparent",
+  "text-foreground-secondary cursor-pointer transition-colors",
+  "hover:bg-ghost-hover hover:border-border hover:text-foreground",
+  "disabled:opacity-55 disabled:cursor-not-allowed [&_svg]:size-4",
+);
+
+/** 激活态图标按钮（主色软背景） */
+const ICON_BTN_ACTIVE_CLASS = "bg-primary-soft-bg border-primary-soft-border text-primary-soft-text";
 
 export default function WidgetContainer({
   onOpenSettings,
@@ -384,11 +396,13 @@ export default function WidgetContainer({
 
   function getCardClass(providerId: ProviderId) {
     const currentDrag = dragStateRef.current;
-    return [
-      "card-shell",
-      currentDrag?.providerId === providerId ? "is-dragging" : "",
-      currentDrag && currentDrag.providerId !== providerId && getCardTransform(providerId) ? "is-shifting" : "",
-    ].filter(Boolean).join(" ");
+    // is-dragging / is-shifting 是拖拽状态钩子，阴影/边框态样式见 widget.css 的 card-shell 规则
+    return cn(
+      "card-shell relative cursor-grab touch-none will-change-transform active:cursor-grabbing",
+      "transition-[transform_180ms_cubic-bezier(0.2,0.85,0.25,1)]",
+      currentDrag?.providerId === providerId && "is-dragging",
+      currentDrag && currentDrag.providerId !== providerId && getCardTransform(providerId) && "is-shifting",
+    );
   }
 
   function handleWindowDragIntentMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
@@ -509,10 +523,16 @@ export default function WidgetContainer({
   ]);
 
   return (
-    <div className="widget-container">
-      <div ref={cardListRef} className={`card-list${isDragging ? " is-dragging" : ""}`}>
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      <div
+        ref={cardListRef}
+        className={cn(
+          "relative flex flex-1 flex-col overflow-y-auto py-2 pl-3.5 pr-[18px]",
+          isDragging && "select-none",
+        )}
+      >
         {isStatsOpen && (
-          <div className="stats-drawer-shell">
+          <div className="absolute inset-2 z-[7] flex animate-[statsDrawerSlideUp_180ms_ease]">
             <UsageStatsPanel
               open={isStatsOpen}
               providers={orderedProviders}
@@ -521,18 +541,22 @@ export default function WidgetContainer({
           </div>
         )}
         <div
-          className="card-list-drag-strip drag-strip-left"
+          className="absolute top-2 bottom-2 left-0 z-[2] w-2 cursor-grab rounded-full active:cursor-grabbing"
           data-tauri-drag-region
           onMouseDown={handleWindowDragIntentMouseDown}
         />
         <div
-          className="card-list-drag-strip drag-strip-right"
+          className="absolute top-2 bottom-2 right-2 z-[2] w-2 cursor-grab rounded-full active:cursor-grabbing"
           data-tauri-drag-region
           onMouseDown={handleWindowDragIntentMouseDown}
         />
         <div
           ref={cardListContentRef}
-          className={`card-list-content${orderedProviders.length === 0 ? " is-empty" : ""}${isStatsOpen ? " is-obscured" : ""}`}
+          className={cn(
+            "flex flex-col gap-2",
+            orderedProviders.length === 0 && "min-h-full",
+            isStatsOpen && "pointer-events-none opacity-[0.14] blur-[1px]",
+          )}
         >
           {orderedProviders.length > 0 ? (
             orderedProviders.map((provider) => (
@@ -559,30 +583,37 @@ export default function WidgetContainer({
               </div>
             ))
           ) : (
-            <div className="empty-state">
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-xs text-foreground-muted">
               <p>{t("widget.emptyState.title")}</p>
-              <button className="btn-link" onClick={onOpenSettings}>{t("widget.emptyState.action")}</button>
+              <button className="cursor-pointer text-xs text-primary underline" onClick={onOpenSettings}>{t("widget.emptyState.action")}</button>
             </div>
           )}
         </div>
       </div>
 
-      <div ref={footerRef} className="widget-footer">
+      <div ref={footerRef} className="flex shrink-0 items-center justify-end gap-1 border-t border-border px-2 py-1">
         <div
-          className="widget-footer-drag-region"
+          className="flex min-h-7 flex-1 cursor-grab items-center pr-1 active:cursor-grabbing"
           data-tauri-drag-region
           onMouseDown={handleWindowDragIntentMouseDown}
         >
           {layoutStatusText && (
-            <span className={`layout-status is-${layoutSaveState}`}>
+            <span
+              className={cn(
+                "pointer-events-none text-[10px] text-foreground-muted transition-colors",
+                layoutSaveState === "saving" && "text-info",
+                layoutSaveState === "saved" && "text-success",
+                layoutSaveState === "error" && "text-danger",
+              )}
+            >
               {layoutStatusText}
             </span>
           )}
         </div>
 
-        <div className="footer-actions">
+        <div className="flex items-center gap-1">
           <button
-            className={`icon-btn${settings.widgetDisplayMode === "compact" ? " is-active" : ""}`}
+            className={cn(ICON_BTN_CLASS, settings.widgetDisplayMode === "compact" && ICON_BTN_ACTIVE_CLASS)}
             title={settings.widgetDisplayMode === "compact"
               ? t("widget.actions.disableCompactMode")
               : t("widget.actions.enableCompactMode")}
@@ -612,10 +643,10 @@ export default function WidgetContainer({
             </svg>
           </button>
 
-          <div className="theme-picker">
+          <div className="relative">
             <button
               ref={themeTriggerRef}
-              className={`icon-btn${isThemeMenuOpen ? " is-active" : ""}`}
+              className={cn(ICON_BTN_CLASS, isThemeMenuOpen && ICON_BTN_ACTIVE_CLASS)}
               title={t("widget.actions.theme")}
               onClick={() => setIsThemeMenuOpen((value) => !value)}
             >
@@ -646,16 +677,28 @@ export default function WidgetContainer({
             </button>
 
             {isThemeMenuOpen && (
-              <div ref={themeMenuRef} className="theme-menu">
+              <div
+                ref={themeMenuRef}
+                className={cn(
+                  "absolute bottom-[calc(100%+6px)] left-1/2 z-[8] flex -translate-x-1/2 items-center gap-1",
+                  "rounded-md border border-border bg-surface p-1 shadow-[0_10px_24px_rgba(15,23,42,0.14)]",
+                  "[backdrop-filter:blur(var(--backdrop-blur))]",
+                )}
+              >
                 {themeOptions.map((option) => (
                   <button
                     key={option.value}
-                    className={`theme-option${settings.theme === option.value ? " is-selected" : ""}`}
+                    className={cn(
+                      "flex h-[30px] w-[30px] items-center justify-center rounded-sm border border-transparent p-0",
+                      "text-foreground-secondary transition-colors",
+                      "hover:bg-ghost-hover hover:border-border hover:text-foreground",
+                      settings.theme === option.value && ICON_BTN_ACTIVE_CLASS,
+                    )}
                     title={option.label}
                     aria-label={option.label}
                     onClick={() => void saveSettings({ theme: option.value as ThemeMode }).then(() => setIsThemeMenuOpen(false))}
                   >
-                    <span className="theme-option-icon">
+                    <span className="flex items-center justify-center [&_svg]:h-[15px] [&_svg]:w-[15px]">
                       {option.value === "light" ? (
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <circle cx="12" cy="12" r="4.25" fill="none" stroke="currentColor" strokeWidth="1.8" />
@@ -691,7 +734,7 @@ export default function WidgetContainer({
           </div>
 
           <button
-            className={`icon-btn pin-icon-btn${settings.alwaysOnTop ? " is-active" : ""}`}
+            className={cn(ICON_BTN_CLASS, "[&_svg]:size-[18px]", settings.alwaysOnTop && ICON_BTN_ACTIVE_CLASS)}
             title={settings.alwaysOnTop ? t("widget.actions.cancelAlwaysOnTop") : t("widget.actions.alwaysOnTop")}
             onClick={() => void saveSettings({ alwaysOnTop: !settings.alwaysOnTop })}
           >
@@ -709,7 +752,7 @@ export default function WidgetContainer({
           </button>
 
           <button
-            className={`icon-btn${isRefreshing ? " spinning" : ""}`}
+            className={cn(ICON_BTN_CLASS, isRefreshing && "[&_svg]:animate-spin")}
             disabled={isRefreshing || isDragging}
             title={t("widget.actions.manualRefresh")}
             onClick={() => void manualRefresh()}
@@ -728,7 +771,7 @@ export default function WidgetContainer({
           </button>
 
           <button
-            className={`icon-btn${isStatsOpen ? " is-active" : ""}`}
+            className={cn(ICON_BTN_CLASS, isStatsOpen && ICON_BTN_ACTIVE_CLASS)}
             type="button"
             title={t("widget.actions.stats")}
             aria-label={t("widget.actions.stats")}
@@ -747,8 +790,10 @@ export default function WidgetContainer({
             </svg>
           </button>
 
-          <button className="icon-btn icon-btn-relative" title={t("widget.actions.settings")} onClick={onOpenSettings}>
-            {hasUpdate && <span className="update-badge" aria-hidden="true" />}
+          <button className={cn(ICON_BTN_CLASS, "relative")} title={t("widget.actions.settings")} onClick={onOpenSettings}>
+            {hasUpdate && (
+              <span className="pointer-events-none absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-danger" aria-hidden="true" />
+            )}
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 8.5a3.5 3.5 0 1 1 0 7a3.5 3.5 0 0 1 0-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
               <path

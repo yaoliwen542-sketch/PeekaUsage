@@ -348,6 +348,10 @@ export default function App() {
     titlebarDragIntentUntilRef.current = 0;
     clearEdgeDockEvaluateTimer();
 
+    // 拖动结束：恢复 backdrop-filter（与 TitleBar 的 handleMouseUp 配合，
+    // 这里覆盖鼠标松手在窗口外的场景）
+    document.documentElement.style.setProperty("--backdrop-blur", "");
+
     const latestBounds = latestDragBoundsRef.current;
     latestDragBoundsRef.current = null;
     if (!latestBounds) {
