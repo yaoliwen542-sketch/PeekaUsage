@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod balance;
 pub mod coding_plan;
+pub mod gemini;
 pub mod oauth_detect;
 pub mod openai;
 pub mod openrouter;

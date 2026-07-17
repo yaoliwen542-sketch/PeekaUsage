@@ -115,6 +115,36 @@ fn detect_openai_from_file(creds_path: &std::path::Path) -> Option<DetectedOAuth
     })
 }
 
+/// 检测 Gemini（Google Cloud Code Assist）OAuth 凭据
+///
+/// 读取 `~/.gemini/oauth_creds.json`，要求至少含 `access_token` 字段。
+///
+/// 与 Anthropic/OpenAI 不同：Gemini 的订阅查询需要 `refresh_token` 来自动刷新
+/// 过期 token，因此 `DetectedOAuth.token` 存的是**整个 oauth_creds.json 文件内容**
+/// （含 access_token + refresh_token + expiry），而非单个 token 字符串。
+/// 该完整 JSON 由 subscription.rs 的 gemini 分支透传给 gemini::fetch_gemini_quota。
+pub fn detect_gemini() -> Option<DetectedOAuth> {
+    let creds_path = gemini_oauth_creds_path()?;
+    detect_gemini_from_file(&creds_path)
+}
+
+/// 从指定 oauth_creds.json 文件读取 Gemini OAuth 凭据（纯函数，便于测试）
+fn detect_gemini_from_file(creds_path: &std::path::Path) -> Option<DetectedOAuth> {
+    let content = std::fs::read_to_string(creds_path).ok()?;
+    let json = serde_json::from_str::<Value>(&content).ok()?;
+    // 仅校验 access_token 存在且非空；token 字段存完整 JSON 文本
+    let access_token = json
+        .get("access_token")
+        .and_then(|t| t.as_str())
+        .filter(|t| !t.is_empty())?;
+    let _ = access_token; // 仅用于校验，不直接返回（返回完整 JSON）
+    Some(DetectedOAuth {
+        token: content,
+        account_id: None,
+        source: "Gemini CLI (~/.gemini/oauth_creds.json)".to_string(),
+    })
+}
+
 /// `~/.claude/.credentials.json` 路径
 fn claude_credentials_path() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".claude").join(".credentials.json"))
@@ -123,6 +153,11 @@ fn claude_credentials_path() -> Option<PathBuf> {
 /// `~/.codex/auth.json` 路径
 fn codex_auth_path() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".codex").join("auth.json"))
+}
+
+/// `~/.gemini/oauth_creds.json` 路径
+fn gemini_oauth_creds_path() -> Option<PathBuf> {
+    home_dir().map(|h| h.join(".gemini").join("oauth_creds.json"))
 }
 
 /// 获取用户 home 目录
@@ -340,6 +375,57 @@ mod tests {
         .ok();
         let detected = detect_anthropic_from_file(&path).expect("应检测到 token");
         assert_eq!(detected.token, "new-tok");
+    }
+
+    #[test]
+    fn test_detect_gemini_reads_full_json() {
+        // token 字段存的是完整 JSON 文本（含 refresh_token），而非单个 access_token
+        let tmp = tempfile_dir();
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("oauth_creds.json");
+        let raw = r#"{"access_token":"at","refresh_token":"rt","expiry":"2026-07-17T10:00:00Z"}"#;
+        std::fs::write(&path, raw).ok();
+        let detected = detect_gemini_from_file(&path).expect("应检测到凭据");
+        assert_eq!(detected.token, raw);
+        assert!(detected.account_id.is_none());
+    }
+
+    #[test]
+    fn test_detect_gemini_minimal_creds() {
+        // 仅 access_token 也可检测（refresh_token 缺失时刷新会失败，但检测应通过）
+        let tmp = tempfile_dir();
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("oauth_creds.json");
+        let raw = r#"{"access_token":"at"}"#;
+        std::fs::write(&path, raw).ok();
+        let detected = detect_gemini_from_file(&path).expect("应检测到凭据");
+        assert_eq!(detected.token, raw);
+    }
+
+    #[test]
+    fn test_detect_gemini_skips_empty_access_token() {
+        let tmp = tempfile_dir();
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("oauth_creds.json");
+        std::fs::write(&path, r#"{"access_token":""}"#).ok();
+        assert!(detect_gemini_from_file(&path).is_none());
+    }
+
+    #[test]
+    fn test_detect_gemini_missing_access_token_returns_none() {
+        let tmp = tempfile_dir();
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("oauth_creds.json");
+        std::fs::write(&path, r#"{"refresh_token":"rt"}"#).ok();
+        assert!(detect_gemini_from_file(&path).is_none());
+    }
+
+    #[test]
+    fn test_detect_gemini_missing_file_returns_none() {
+        let tmp = tempfile_dir();
+        std::fs::create_dir_all(&tmp).ok();
+        let path = tmp.join("nope.json");
+        assert!(detect_gemini_from_file(&path).is_none());
     }
 
     /// 测试用临时目录（基于 std::env::temp_dir + 唯一后缀，避免并发测试串扰）

@@ -84,6 +84,42 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                 keychain_service: Some("Claude Code-credentials".to_string()),
             }),
         },
+        // === Gemini（Google Cloud Code Assist，Subscription，两步 OAuth）===
+        // 1. POST loadCodeAssist 拿 projectId
+        // 2. POST retrieveUserQuota 拿 buckets（按 modelId 分组，取最低 remainingFraction
+        //    -> utilization = (1 - remainingFraction) * 100）
+        // 由 gemini::fetch_gemini_quota 处理。token 过期时用 Gemini CLI 公开的
+        // client_id/client_secret 调 oauth2.googleapis.com/token 自动刷新。
+        //
+        // 凭据特殊性：Gemini 的 OAuth token 是 ~/.gemini/oauth_creds.json 的**完整 JSON**
+        // （含 access_token + refresh_token + expiry），而非单个 token 字符串。
+        // oauth_detect 的 token_path 指向 $.access_token 仅用于展示/校验存在性，
+        // 实际 detect_gemini 返回的 token 字段是整个文件内容（供 subscription 透传）。
+        ProviderTemplate {
+            id: "gemini".to_string(),
+            display_name: "Gemini".to_string(),
+            env_key_name: String::new(), // Gemini 不用 API Key
+            env_oauth_token_name: Some("GEMINI_OAUTH_CREDS".to_string()),
+            icon: "gemini".to_string(),
+            docs_url: Some("https://ai.google.dev/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: true,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Subscription {
+                    provider: "gemini".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.gemini/oauth_creds.json".to_string(),
+                token_path: "$.access_token".to_string(),
+                keychain_service: None,
+            }),
+        },
         // === OpenRouter（Balance × 2，回退链路）===
         ProviderTemplate {
             id: "openrouter".to_string(),

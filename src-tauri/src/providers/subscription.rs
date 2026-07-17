@@ -78,6 +78,10 @@ impl SubscriptionFetcher {
         match provider {
             "anthropic_oauth" => self.fetch_anthropic_oauth(oauth_token).await,
             "openai_wham" => self.fetch_openai_wham(oauth_token, account_id).await,
+            // Gemini：oauth_token 参数传入的是 ~/.gemini/oauth_creds.json 的完整 JSON
+            // （含 access_token + refresh_token + expiry），由 gemini 模块解析并支持自动刷新。
+            // account_id 参数对 Gemini 不适用（Gemini 不需要 ChatGPT-Account-Id）。
+            "gemini" => super::gemini::fetch_gemini_quota(&self.client, oauth_token).await,
             _ => SubscriptionUsage {
                 plan_name: None,
                 windows: vec![],
