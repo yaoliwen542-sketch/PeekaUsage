@@ -6,6 +6,14 @@ import anthropicIcon from "../../assets/provider-icons/anthropic.png";
 import openrouterIcon from "../../assets/provider-icons/openrouter.jpeg";
 import deepseekIcon from "../../assets/provider-icons/deepseek.svg";
 import newapiIcon from "../../assets/provider-icons/newapi.svg";
+import kimiIcon from "../../assets/provider-icons/kimi.svg";
+import glmIcon from "../../assets/provider-icons/glm.svg";
+import minimaxIcon from "../../assets/provider-icons/minimax.svg";
+import siliconflowIcon from "../../assets/provider-icons/siliconflow.svg";
+import stepfunIcon from "../../assets/provider-icons/stepfun.svg";
+import novitaIcon from "../../assets/provider-icons/novita.svg";
+import volcengineIcon from "../../assets/provider-icons/volcengine.svg";
+import geminiIcon from "../../assets/provider-icons/gemini.svg";
 import customIcon from "../../assets/provider-icons/custom.svg";
 
 type ProviderIconProps = {
@@ -21,6 +29,14 @@ const iconSrcMap: Record<string, string> = {
   deepseek: deepseekIcon,
   newapi: newapiIcon,
   new_api: newapiIcon,
+  kimi: kimiIcon,
+  glm: glmIcon,
+  minimax: minimaxIcon,
+  siliconflow: siliconflowIcon,
+  stepfun: stepfunIcon,
+  novita: novitaIcon,
+  volcengine: volcengineIcon,
+  gemini: geminiIcon,
   custom: customIcon,
 };
 
@@ -32,6 +48,14 @@ const iconAltMap: Record<string, string> = {
   deepseek: "DeepSeek",
   newapi: "NewAPI",
   new_api: "NewAPI",
+  kimi: "Kimi",
+  glm: "GLM",
+  minimax: "MiniMax",
+  siliconflow: "SiliconFlow",
+  stepfun: "StepFun",
+  novita: "Novita AI",
+  volcengine: "Volcengine",
+  gemini: "Gemini",
   custom: "Custom",
 };
 

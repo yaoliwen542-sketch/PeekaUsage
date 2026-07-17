@@ -84,6 +84,15 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const customConfig: CustomProviderConfig | null = selectedProvider.customConfig ?? null;
   // 是否为脚本类自定义供应商（需要展示 Base URL 与脚本信息）
   const isScriptProvider = resolvedQueryType === "script";
+  // 按供应商解析 API Key 输入框的 placeholder（火山方舟使用 AK:SK 拼接格式）
+  const apiKeyInputPlaceholder = (() => {
+    const providerId = config.providerId;
+    if (providerId === "volcengine") {
+      return t("settings.providerConfig.apiKeyPlaceholderVolcengine");
+    }
+    return "sk-...";
+  })();
+  const showVolcengineKeyHint = config.providerId === "volcengine";
 
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
@@ -397,7 +406,10 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                     </div>
                     <button className="btn btn-sm btn-ghost" type="button" onClick={() => { setApiKeys((current) => current.length === 1 ? [createEmptyApiKey(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteKey")}</button>
                   </div>
-                  <ApiKeyInput modelValue={item.value} placeholder="sk-..." onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
+                  <ApiKeyInput modelValue={item.value} placeholder={apiKeyInputPlaceholder} onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
+                  {showVolcengineKeyHint && index === 0 && (
+                    <div className="field-hint">{t("settings.providerConfig.apiKeyHintVolcengine")}</div>
+                  )}
                   <div className="config-actions">
                     <button className="btn btn-sm" disabled={validatingKeyId === item.id || !item.value.trim() || item.value.includes("...")} type="button" onClick={() => void handleValidate(index)}>{validatingKeyId === item.id ? t("settings.providerConfig.validating") : t("settings.providerConfig.validate")}</button>
                     {validationResults[item.id] === true && <span className="valid-mark">{t("settings.providerConfig.valid")}</span>}

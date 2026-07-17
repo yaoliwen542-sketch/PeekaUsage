@@ -199,6 +199,17 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         icon: item.icon,
         badge: t("settings.providerSelect.badgeSubscription"),
       }));
+    // 用量查询类：CodingPlan / Subscription 之外的 usage 查询（如 Kimi / GLM / MiniMax / 火山方舟）
+    const usageOptions: Array<SelectOption<string>> = availableTemplates
+      .filter((item) => !item.capabilities.hasSubscription
+        && !item.capabilities.hasBalance
+        && item.queries.some((q) => q.queryType.kind === "coding_plan"))
+      .map((item) => ({
+        value: item.id,
+        label: item.displayName,
+        icon: item.icon,
+        badge: t("settings.providerSelect.badgeUsage"),
+      }));
     const balanceOptions: Array<SelectOption<string>> = availableTemplates
       .filter((item) => !item.capabilities.hasSubscription && item.capabilities.hasBalance)
       .map((item) => ({
@@ -225,6 +236,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     const groups: Array<AppSelectGroup<string>> = [];
     if (subscriptionOptions.length > 0) {
       groups.push({ label: t("settings.providerSelect.groupSubscription"), options: subscriptionOptions });
+    }
+    if (usageOptions.length > 0) {
+      groups.push({ label: t("settings.providerSelect.groupUsage"), options: usageOptions });
     }
     if (balanceOptions.length > 0) {
       groups.push({ label: t("settings.providerSelect.groupBalance"), options: balanceOptions });
