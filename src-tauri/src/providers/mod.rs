@@ -279,15 +279,18 @@ impl ProviderManager {
                 .await
                 .map_err(|e| e.to_string());
         }
-        // 新版：尝试执行一次用量查询，成功即有效
+        // 新版：尝试执行一次用量查询，成功即有效。
+        //
+        // 只有鉴权类错误（AuthError / 401 / 403）才判定为 "key 无效"，返回 Ok(false)；
+        // 瞬时错误（网络 RequestError / 限流 RateLimited）以及其它错误（ParseError 等）
+        // 一律向上抛 Err，让前端展示 "无法验证（网络错误）" 而不是误判 key 无效。
         match self
             .fetch_api_usage(provider_id, api_key, custom_config)
             .await
         {
             Ok(_) => Ok(true),
-            Err(e) if e.contains("认证失败") || e.contains("AuthError") => Ok(false),
-            Err(e) if e.contains("401") || e.contains("403") => Ok(false),
-            Err(_) => Ok(false),
+            Err(e) if is_auth_error_message(&e) => Ok(false),
+            Err(e) => Err(format!("无法验证 API Key: {}", e)),
         }
     }
 }
@@ -296,6 +299,21 @@ impl Default for ProviderManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 判断 fetch_api_usage 返回的错误字符串是否为鉴权类错误。
+///
+/// fetch_api_usage 返回的是 `String`（ProviderError 经 `to_string()` 转换），
+/// 鉴权类错误的 Display 文案固定以 "认证失败" 开头（见 ProviderError::AuthError 的
+/// `#[error("认证失败: {0}")]`），其中可能包含 "401"/"403" 字样。
+///
+/// 这里同时匹配 "认证失败" 前缀和 "401"/"403" 子串，以兼容旧版 provider 与
+/// 直接抛出 HTTP 状态码的边界场景。
+fn is_auth_error_message(msg: &str) -> bool {
+    msg.contains("认证失败")
+        || msg.contains("AuthError")
+        || msg.contains("401")
+        || msg.contains("403")
 }
 
 /// 从自定义供应商配置构造一个临时 ProviderTemplate

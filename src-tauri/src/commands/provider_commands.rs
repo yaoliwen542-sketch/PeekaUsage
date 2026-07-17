@@ -896,7 +896,14 @@ pub async fn test_custom_provider_script(
     .map_err(|e| e.to_string())?;
 
     Ok(format!(
-        "查询成功：已用 {} / 总额 {:?} / 剩余 {:?} ({})",
-        result.total_used, result.total_budget, result.remaining, result.currency
+        "查询成功：已用 {} / 总额 {} / 剩余 {} ({})",
+        result.total_used,
+        result
+            .total_budget
+            .map_or("未知".to_string(), |v| format!("{:.2}", v)),
+        result
+            .remaining
+            .map_or("未知".to_string(), |v| format!("{:.2}", v)),
+        result.currency
     ))
 }
