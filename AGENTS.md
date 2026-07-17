@@ -900,3 +900,41 @@ cargo check
 - 精简模式不显示逐 Key 的金额/余额明细块和 rate limit badge
 - 切换结果写入 `widgetDisplayMode`，刷新和重启后都要恢复
 
+### 23. 供应商架构已改为配置驱动 + 自定义供应商
+
+文件：
+
+- `src-tauri/src/providers/registry.rs`
+- `src-tauri/src/providers/balance.rs`
+- `src-tauri/src/providers/script_engine.rs`
+- `src-tauri/src/providers/types.rs`
+- `src-tauri/src/providers/mod.rs`
+- `src-tauri/src/commands/provider_commands.rs`
+- `src-tauri/src/config/app_config.rs`
+- `src-tauri/src/config/system_env.rs`
+- `src/types/provider.ts`
+- `src/components/settings/ProviderWizardDialog.tsx`
+- `src/components/settings/ProviderConfig.tsx`
+- `src/components/settings/SettingsPanel.tsx`
+- `src/components/widget/ProviderCard.tsx`
+- `src/components/common/AppSelect.tsx`
+- `src/i18n/messages.ts`
+
+当前要求：
+
+- `ProviderId` 已从枚举改为 `String`，新增供应商不再需要改枚举和 7 处 match
+- 内置供应商模板统一在 `registry.rs` 注册，新增供应商只需追加一条 `ProviderTemplate`
+- `ProviderManager` 通过 `registry::get()` 路由查询，不再硬编码 `match provider_id`
+- 查询分四类：Balance（余额）/ CodingPlan（百分比，阶段 2）/ Subscription（OAuth）/ Script（JS 脚本）
+- JS 脚本引擎使用 rquickjs 沙箱，安全边界：HTTPS 强制（可配置允许 HTTP）、同源校验、无网络/文件 API、超时上限 60s
+- 自定义供应商通过 `ProviderWizardDialog` 3 步向导创建，配置存 `customConfig` 字段
+- NewAPI 用 accessToken + userId（存 KeyStore），不是普通 API Key
+- 订阅窗口 label 改为机器常量（`five_hour` / `seven_day` 等），前端通过 i18n 映射
+- 错误处理区分瞬时（RequestError/RateLimited，保留旧值重试）和确定性（AuthError/ParseError，立即透出）
+- HTTP 读体统一改为 `bytes().await` + `serde_json::from_slice`（bytes-then-parse 模式）
+- 缓存策略：失败快照不写入，保留上次成功值
+- 旧配置缺少 `providerTemplateId` / `customConfig` 字段时按 `providerId` 在 registry 兜底
+- 阶段 1 已实现：OpenAI / Anthropic / OpenRouter 迁移 + DeepSeek + NewAPI + 自定义供应商
+- 阶段 2 待实现：Kimi / GLM / MiniMax / ZenMux（CodingPlan）+ OAuth 自动检测 + Claude seven_day_opus
+- 阶段 3 待实现：SiliconFlow / StepFun / Novita + 火山方舟 AK/SK + Gemini OAuth
+
