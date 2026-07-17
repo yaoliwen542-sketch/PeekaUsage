@@ -49,8 +49,8 @@ struct KeyRateLimit {
 
 #[async_trait]
 impl UsageProvider for OpenRouterProvider {
-    fn id(&self) -> ProviderId {
-        ProviderId::OpenRouter
+    fn id(&self) -> String {
+        "openrouter".to_string()
     }
 
     fn display_name(&self) -> &str {

@@ -157,7 +157,7 @@ impl AppSettings {
             .provider_polling_overrides
             .into_iter()
             .filter_map(|(provider_id, settings)| {
-                if is_supported_provider_id(&provider_id) {
+                if is_supported_provider_id(&provider_id, None) {
                     Some((provider_id, settings.normalized()))
                 } else {
                     None
@@ -193,15 +193,34 @@ fn default_update_check_interval_hours() -> u32 {
 }
 
 fn default_provider_card_expanded() -> HashMap<String, bool> {
-    HashMap::from([
-        ("openai".to_string(), true),
-        ("anthropic".to_string(), true),
-        ("openrouter".to_string(), true),
-    ])
+    // 内置供应商按 registry 全部默认展开
+    let mut map = HashMap::new();
+    for template in crate::providers::registry::all() {
+        map.insert(template.id, true);
+    }
+    map
 }
 
-fn is_supported_provider_id(provider_id: &str) -> bool {
-    matches!(provider_id, "openai" | "anthropic" | "openrouter")
+/// 判断 provider_id 是否受支持
+///
+/// 规则：
+/// - 内置供应商在 registry 里 -> 支持
+/// - "custom_" 前缀 -> 支持
+/// - 入参 entry 有 custom_config -> 支持
+fn is_supported_provider_id(provider_id: &str, entry: Option<&ProviderEntry>) -> bool {
+    // 内置供应商在 registry 里
+    if crate::providers::registry::get(provider_id).is_some() {
+        return true;
+    }
+    // 自定义供应商
+    if provider_id.starts_with("custom_") {
+        return true;
+    }
+    // 有 custom_config 的也算
+    if let Some(entry) = entry {
+        return entry.custom_config.is_some();
+    }
+    false
 }
 
 /// 供应商下单个 API Key 的元数据
@@ -239,6 +258,12 @@ pub struct ProviderEntry {
     pub active_api_key_id: Option<String>,
     #[serde(default)]
     pub manage_api_key_environment: bool,
+    // 新增：内置供应商模板 ID（自定义供应商为 None）
+    #[serde(default)]
+    pub provider_template_id: Option<String>,
+    // 新增：自定义供应商配置（内置供应商为 None）
+    #[serde(default)]
+    pub custom_config: Option<crate::providers::types::CustomProviderConfig>,
 }
 
 /// 配置文件内容
@@ -378,10 +403,12 @@ fn compare_provider_order(order: &[String], left: &str, right: &str) -> std::cmp
 }
 
 fn provider_rank(provider_id: &str) -> usize {
-    match provider_id {
-        "openai" => 0,
-        "anthropic" => 1,
-        "openrouter" => 2,
-        _ => usize::MAX,
+    // 内置供应商按 registry 顺序排序，自定义供应商排最后
+    let templates = crate::providers::registry::all();
+    for (i, template) in templates.iter().enumerate() {
+        if template.id == provider_id {
+            return i;
+        }
     }
+    usize::MAX
 }

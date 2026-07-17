@@ -60,8 +60,26 @@ impl SubscriptionFetcher {
         }
     }
 
-    /// 获取 Anthropic 订阅用量（Claude Pro/Max/Team）
-    pub async fn fetch_anthropic(&self, oauth_token: &str) -> SubscriptionUsage {
+    /// 统一订阅查询入口，按 provider 字符串分发
+    ///
+    /// provider 取值：内置模板 QueryType::Subscription 的 provider 字段，
+    /// 如 "anthropic_oauth" / "openai_wham"。
+    pub async fn fetch(&self, provider: &str, oauth_token: &str) -> SubscriptionUsage {
+        match provider {
+            "anthropic_oauth" => self.fetch_anthropic_oauth(oauth_token).await,
+            "openai_wham" => self.fetch_openai_wham(oauth_token).await,
+            _ => SubscriptionUsage {
+                plan_name: None,
+                windows: vec![],
+                extra_usage: None,
+                status: ProviderStatus::Error,
+                error_message: Some(format!("不支持的订阅供应商: {}", provider)),
+            },
+        }
+    }
+
+    /// Anthropic OAuth 订阅查询（原 fetch_anthropic）
+    async fn fetch_anthropic_oauth(&self, oauth_token: &str) -> SubscriptionUsage {
         let resp = self
             .client
             .get("https://api.anthropic.com/api/oauth/usage")
@@ -177,8 +195,8 @@ impl SubscriptionFetcher {
         }
     }
 
-    /// 获取 OpenAI 订阅用量（ChatGPT Plus/Pro/Team）
-    pub async fn fetch_openai(&self, oauth_token: &str) -> SubscriptionUsage {
+    /// OpenAI Wham 订阅查询（原 fetch_openai，ChatGPT Plus/Pro/Team）
+    async fn fetch_openai_wham(&self, oauth_token: &str) -> SubscriptionUsage {
         let resp = self
             .client
             .get("https://chatgpt.com/backend-api/wham/usage")

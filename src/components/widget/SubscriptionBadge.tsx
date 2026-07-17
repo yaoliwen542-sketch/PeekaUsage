@@ -1,4 +1,5 @@
 import { useI18n } from "../../i18n";
+import { windowLabels } from "../../i18n/messages";
 import type { ExtraUsage, SubscriptionUsageSummary } from "../../types/provider";
 import UsageProgressBar from "./UsageProgressBar";
 
@@ -7,9 +8,18 @@ type SubscriptionBadgeProps = {
 };
 
 export default function SubscriptionBadge({ subscription }: SubscriptionBadgeProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const usage = subscription.usage;
   const planLabel = usage.planName ?? t("widget.subscription.fallbackPlan");
+
+  /** 订阅窗口标签 i18n：先查映射表，找不到时原样返回 */
+  function getWindowLabel(label: string): string {
+    const messages = windowLabels[label];
+    if (messages && messages[language]) {
+      return messages[language] as string;
+    }
+    return label;
+  }
 
   function formatResetTime(isoStr: string): string {
     const reset = new Date(isoStr);
@@ -54,7 +64,7 @@ export default function SubscriptionBadge({ subscription }: SubscriptionBadgePro
           {usage.windows.map((win, index) => (
             <div key={`${subscription.subscriptionId}-${win.label}-${index}`} className="sub-window">
               <div className="window-header">
-                <span className="window-label">{win.label}</span>
+                <span className="window-label">{getWindowLabel(win.label)}</span>
                 {win.resetsAt && <span className="window-reset" title={win.resetsAt}>{formatResetTime(win.resetsAt)}</span>}
               </div>
               <UsageProgressBar percent={win.utilization} />

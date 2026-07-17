@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
-import type { ProviderConfigItem, ProviderId } from "../../types/provider";
+import type { CustomProviderConfig, ProviderConfigItem, ProviderId, ProviderTemplate } from "../../types/provider";
 import {
   MAX_POLLING_INTERVAL,
   MIN_POLLING_INTERVAL,
@@ -16,10 +16,11 @@ import { LANGUAGE_OPTIONS } from "../../i18n/messages";
 import { useProviderStore } from "../../stores/providerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { syncLaunchAtStartup } from "../../utils/autostart";
-import { getProviderConfigs, getSupportedProviders, setWindowSkipTaskbar } from "../../utils/ipc";
-import AppSelect, { type SelectOption } from "../common/AppSelect";
+import { getProviderConfigs, getProviderTemplates, setWindowSkipTaskbar } from "../../utils/ipc";
+import AppSelect, { type AppSelectGroup, type SelectOption } from "../common/AppSelect";
 import ProviderIcon from "../common/ProviderIcon";
 import ProviderConfig from "./ProviderConfig";
+import { ProviderWizardDialog } from "./ProviderWizardDialog";
 import UpdateSettings from "./UpdateSettings";
 import { useUpdateStore } from "../../stores/updateStore";
 
@@ -62,8 +63,10 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const { t } = useI18n();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const [providerConfigs, setProviderConfigs] = useState<ProviderConfigItem[]>([]);
-  const [supportedProviders, setSupportedProviders] = useState<ProviderConfigItem[]>([]);
+  const [providerTemplates, setProviderTemplates] = useState<ProviderTemplate[]>([]);
   const [creatingProviderId, setCreatingProviderId] = useState<ProviderId | null>(null);
+  const [pendingCustomConfig, setPendingCustomConfig] = useState<CustomProviderConfig | null>(null);
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [opacityDraft, setOpacityDraft] = useState(settings.windowOpacity);
   const [launchAtStartupPending, setLaunchAtStartupPending] = useState(false);
   const [hideTaskbarPending, setHideTaskbarPending] = useState(false);
@@ -102,64 +105,186 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     ?? t("settings.sections.general");
 
   const configuredProviderIds = new Set(providerConfigs.map((item) => item.providerId));
-  const availableProviders = supportedProviders.filter((item) => !configuredProviderIds.has(item.providerId));
+  // 可选模板：排除已配置的内置供应商
+  const availableTemplates = providerTemplates.filter((item) => !configuredProviderIds.has(item.id));
   const isManualPolling = settings.pollingMode === "manual";
   const configuredPollingProviders = providerConfigs.filter((item) => item.enabled);
-  const selectedDraftProvider = creatingProviderId
-    ? availableProviders.find((item) => item.providerId === creatingProviderId) ?? null
-    : null;
-  const draftProviderConfig = selectedDraftProvider
-    ? {
-        ...selectedDraftProvider,
-        enabled: true,
-        apiKeys: [
-          {
-            id: `${selectedDraftProvider.providerId}-draft-key`,
-            name: t("settings.providerConfig.keyName", { index: 1 }),
-            color: "#3b82f6",
-            value: "",
-            isActiveInEnvironment: false,
-          },
-        ],
-        subscriptions: selectedDraftProvider.capabilities.hasSubscription
-          ? [
-              {
-                id: `${selectedDraftProvider.providerId}-draft-subscription`,
-                name: t("settings.providerConfig.subscriptionName", { index: 1 }),
-                color: "#3b82f6",
-                oauthToken: "",
-                source: null,
-              },
-            ]
-          : [],
-        environmentVariableName: selectedDraftProvider.environmentVariableName,
-        activeApiKeyId: null,
+
+  // 从模板构造草稿 ProviderConfigItem（用于创建模式渲染）
+  function buildDraftFromTemplate(template: ProviderTemplate): ProviderConfigItem {
+    return {
+      providerId: template.id,
+      displayName: template.displayName,
+      enabled: true,
+      apiKeys: [
+        {
+          id: `${template.id}-draft-key`,
+          name: t("settings.providerConfig.keyName", { index: 1 }),
+          color: "#3b82f6",
+          value: "",
+          isActiveInEnvironment: false,
+        },
+      ],
+      subscriptions: template.capabilities.hasSubscription
+        ? [
+            {
+              id: `${template.id}-draft-subscription`,
+              name: t("settings.providerConfig.subscriptionName", { index: 1 }),
+              color: "#3b82f6",
+              oauthToken: "",
+              source: null,
+            },
+          ]
+        : [],
+      capabilities: template.capabilities,
+      environmentVariableName: template.envKeyName,
+      activeApiKeyId: null,
+      providerTemplateId: template.id,
+      customConfig: null,
+    };
+  }
+
+  // 从自定义配置构造草稿 ProviderConfigItem
+  function buildDraftFromCustomConfig(customConfig: CustomProviderConfig): ProviderConfigItem {
+    // 自定义供应商 ID 用固定前缀，后端会根据 customConfig 落盘
+    const providerId = `custom_${Date.now().toString(36)}`;
+    return {
+      providerId,
+      displayName: customConfig.displayName,
+      enabled: true,
+      apiKeys: [
+        {
+          id: `${providerId}-draft-key`,
+          name: t("settings.providerConfig.keyName", { index: 1 }),
+          color: "#3b82f6",
+          value: "",
+          isActiveInEnvironment: false,
+        },
+      ],
+      subscriptions: [],
+      capabilities: {
+        hasBalance: customConfig.queryType === "balance",
+        hasUsage: false,
+        hasRateLimit: false,
+        hasSubscription: false,
+      },
+      environmentVariableName: customConfig.envKeyName ?? "",
+      activeApiKeyId: null,
+      providerTemplateId: null,
+      customConfig,
+    };
+  }
+
+  // 当前选中的草稿配置（优先自定义，其次内置模板）
+  const draftProviderConfig: ProviderConfigItem | null = (() => {
+    if (pendingCustomConfig) {
+      return buildDraftFromCustomConfig(pendingCustomConfig);
+    }
+    if (creatingProviderId) {
+      const template = availableTemplates.find((item) => item.id === creatingProviderId);
+      if (template) {
+        return buildDraftFromTemplate(template);
       }
-    : null;
+    }
+    return null;
+  })();
+
+  // 构造"新增供应商"分组下拉
+  const providerSelectGroups: Array<AppSelectGroup<string>> = useMemo(() => {
+    const subscriptionOptions: Array<SelectOption<string>> = availableTemplates
+      .filter((item) => item.capabilities.hasSubscription)
+      .map((item) => ({
+        value: item.id,
+        label: item.displayName,
+        icon: item.icon,
+        badge: t("settings.providerSelect.badgeSubscription"),
+      }));
+    const balanceOptions: Array<SelectOption<string>> = availableTemplates
+      .filter((item) => !item.capabilities.hasSubscription && item.capabilities.hasBalance)
+      .map((item) => ({
+        value: item.id,
+        label: item.displayName,
+        icon: item.icon,
+        badge: t("settings.providerSelect.badgeBalance"),
+      }));
+    const gatewayOptions: Array<SelectOption<string>> = availableTemplates
+      .filter((item) => item.queries.some((q) => q.queryType.kind === "script"))
+      .map((item) => ({
+        value: item.id,
+        label: item.displayName,
+        icon: item.icon,
+        badge: t("settings.providerSelect.badgeGateway"),
+      }));
+    const customOption: SelectOption<string> = {
+      value: "__custom__",
+      label: t("settings.providerSelect.customProvider"),
+      icon: "custom",
+      badge: t("settings.providerSelect.badgeCustom"),
+    };
+
+    const groups: Array<AppSelectGroup<string>> = [];
+    if (subscriptionOptions.length > 0) {
+      groups.push({ label: t("settings.providerSelect.groupSubscription"), options: subscriptionOptions });
+    }
+    if (balanceOptions.length > 0) {
+      groups.push({ label: t("settings.providerSelect.groupBalance"), options: balanceOptions });
+    }
+    if (gatewayOptions.length > 0) {
+      groups.push({ label: t("settings.providerSelect.groupGateway"), options: gatewayOptions });
+    }
+    // 自定义入口始终展示
+    groups.push({ label: t("settings.providerSelect.groupCustom"), options: [customOption] });
+    return groups;
+  }, [availableTemplates, t]);
+
+  // 当前"新增供应商"下拉的选中值（自定义流程中无内置选中）
+  const providerSelectValue: string = pendingCustomConfig ? "__custom__" : (creatingProviderId ?? "");
+
+  function handleProviderSelectChange(value: string) {
+    if (value === "__custom__") {
+      // 打开自定义供应商向导
+      setPendingCustomConfig(null);
+      setIsWizardOpen(true);
+      return;
+    }
+    setPendingCustomConfig(null);
+    setCreatingProviderId(value);
+  }
+
+  function handleWizardConfirm(config: CustomProviderConfig) {
+    setIsWizardOpen(false);
+    setCreatingProviderId(null);
+    setPendingCustomConfig(config);
+  }
+
+  function handleWizardClose() {
+    setIsWizardOpen(false);
+  }
 
   async function loadProviderData() {
     try {
-      const [configs, supported] = await Promise.all([
+      const [configs, templates] = await Promise.all([
         getProviderConfigs(),
-        getSupportedProviders(),
+        getProviderTemplates(),
       ]);
 
       setProviderConfigs(configs);
-      setSupportedProviders(supported);
+      setProviderTemplates(templates);
 
       setCreatingProviderId((current) => {
         if (!current) {
           return current;
         }
 
-        const nextAvailable = supported.filter((item) => !new Set(configs.map((config) => config.providerId)).has(item.providerId));
-        return nextAvailable.some((item) => item.providerId === current)
+        const configuredSet = new Set(configs.map((config) => config.providerId));
+        const nextAvailable = templates.filter((item) => !configuredSet.has(item.id));
+        return nextAvailable.some((item) => item.id === current)
           ? current
-          : nextAvailable[0]?.providerId ?? null;
+          : nextAvailable[0]?.id ?? null;
       });
     } catch {
       setProviderConfigs([]);
-      setSupportedProviders([]);
+      setProviderTemplates([]);
     }
   }
 
@@ -530,14 +655,44 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       <section className="settings-section settings-section-page">
         <div className="section-header">
           <h3 className="section-title">{t("settings.sections.providers")}</h3>
-          {!creatingProviderId && availableProviders.length > 0 && (
-            <button
-              className="add-provider-btn"
-              type="button"
-              onClick={() => setCreatingProviderId(availableProviders[0]?.providerId ?? null)}
-            >
-              +
-            </button>
+          {!draftProviderConfig && providerSelectGroups.some((group) => group.options.length > 0) && (
+            <div className="add-provider-select">
+              <AppSelect
+                modelValue={providerSelectValue}
+                groups={providerSelectGroups}
+                placeholder={t("settings.providerSelect.addPlaceholder")}
+                ariaLabel={t("settings.providerSelect.addPlaceholder")}
+                className="provider-add-select"
+                onChange={(value) => handleProviderSelectChange(value)}
+                renderSelected={(option) => (
+                  <span className={`provider-select-value${option ? "" : " is-placeholder"}`}>
+                    {option ? (
+                      <>
+                        <ProviderIcon providerId={option.icon ?? option.value} size={18} />
+                        <span className="provider-select-text">{option.label}</span>
+                        {option.badge && <span className="provider-select-badge">{option.badge}</span>}
+                      </>
+                    ) : (
+                      <span className="provider-select-text">{t("settings.providerSelect.addPlaceholder")}</span>
+                    )}
+                  </span>
+                )}
+                renderOption={({ option }) => (
+                  <span className="select-option-meta">
+                    <span className="select-option-meta-icon">
+                      <ProviderIcon providerId={option.icon ?? option.value} size={18} />
+                    </span>
+                    <span className="select-option-meta-text">
+                      <span className="select-option-meta-label">{option.label}</span>
+                      {option.description && (
+                        <span className="select-option-meta-description">{option.description}</span>
+                      )}
+                    </span>
+                    {option.badge && <span className="select-option-badge">{option.badge}</span>}
+                  </span>
+                )}
+              />
+            </div>
           )}
         </div>
 
@@ -546,11 +701,14 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             config={draftProviderConfig}
             expanded
             mode="create"
-            selectableProviders={availableProviders}
-            onProviderChange={(providerId) => setCreatingProviderId(providerId)}
-            onCanceled={() => setCreatingProviderId(null)}
+            selectableProviders={[]}
+            onCanceled={() => {
+              setCreatingProviderId(null);
+              setPendingCustomConfig(null);
+            }}
             onSaved={() => void (async () => {
               setCreatingProviderId(null);
+              setPendingCustomConfig(null);
               await reloadProviders();
             })()}
           />
@@ -575,12 +733,19 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             })}
             onSaved={() => void (async () => {
               setCreatingProviderId(null);
+              setPendingCustomConfig(null);
               await reloadProviders();
             })()}
             onRemoved={() => void reloadProviders()}
             onEnvironmentChanged={() => loadProviderData()}
           />
         ))}
+
+        <ProviderWizardDialog
+          open={isWizardOpen}
+          onClose={handleWizardClose}
+          onConfirm={handleWizardConfirm}
+        />
       </section>
     ),
     advanced: (

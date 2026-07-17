@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import {
   PROVIDER_MARKER_COLORS,
   normalizeProviderMarkerColor,
+  type CustomProviderConfig,
   type ProviderApiKeyItem,
   type ProviderConfigItem,
   type ProviderId,
@@ -15,10 +16,26 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ProviderIcon from "../common/ProviderIcon";
 import ApiKeyInput from "./ApiKeyInput";
 
-const OAUTH_METHOD_URLS: Partial<Record<ProviderId, string>> = {
+const OAUTH_METHOD_URLS: Partial<Record<string, string>> = {
   anthropic: "https://code.claude.com/docs/en/authentication",
   openai: "https://developers.openai.com/codex/auth",
 };
+
+/** 解析当前配置的 queryType（用于按字段动态显隐） */
+function resolveQueryType(config: ProviderConfigItem): "balance" | "script" | "subscription" | null {
+  if (config.customConfig) {
+    return config.customConfig.queryType;
+  }
+  // 订阅类供应商（如 anthropic / openai）
+  if (config.capabilities.hasSubscription && !config.capabilities.hasBalance) {
+    return "subscription";
+  }
+  // 余额类（如 deepseek / openrouter）
+  if (config.capabilities.hasBalance) {
+    return "balance";
+  }
+  return null;
+}
 
 type ProviderConfigProps = {
   config: ProviderConfigItem;
@@ -61,10 +78,22 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const selectedProvider = isCreateMode ? selectableProviders.find((item) => item.providerId === config.providerId) ?? config : config;
   const selectableProviderOptions: Array<SelectOption<ProviderId>> = selectableProviders.map((item) => ({ value: item.providerId, label: item.displayName, providerId: item.providerId }));
   const canDetectOAuth = selectedProvider.capabilities.hasSubscription;
+  // 当前配置的查询类型（用于按字段动态显隐）
+  const resolvedQueryType = resolveQueryType(selectedProvider);
+  // 自定义供应商的 customConfig（若存在）
+  const customConfig: CustomProviderConfig | null = selectedProvider.customConfig ?? null;
+  // 是否为脚本类自定义供应商（需要展示 Base URL 与脚本信息）
+  const isScriptProvider = resolvedQueryType === "script";
 
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
   function createId(prefix: string) { return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`; }
+  // 修复 C-3：脱敏 accessToken（仅显示前 4 位 + 后 4 位，中间用 ... 表示）
+  function maskCredential(value: string) {
+    if (!value) return "-";
+    if (value.length <= 8) return "****";
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
+  }
   function createEmptyApiKey(index: number): ProviderApiKeyItem { return { id: createId("key"), name: defaultKeyName(index), color: normalizeProviderMarkerColor(null, index), value: "", isActiveInEnvironment: false }; }
   function createEmptySubscription(index: number): ProviderSubscriptionItem { return { id: createId("subscription"), name: defaultSubscriptionName(index), color: normalizeProviderMarkerColor(null, index), oauthToken: "", source: null }; }
   function cloneApiKeys(source: ProviderApiKeyItem[]) { return source.length === 0 ? [createEmptyApiKey(0)] : source.map((item, index) => ({ id: item.id || createId("key"), name: item.name || defaultKeyName(index), color: normalizeProviderMarkerColor(item.color, index), value: item.value, isActiveInEnvironment: !!item.isActiveInEnvironment })); }
@@ -150,7 +179,9 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     setValidatingKeyId(target.id);
     setValidationResults((current) => ({ ...current, [target.id]: null }));
     try {
-      const result = await validateApiKey(config.providerId, value);
+      // 修复 C-4：自定义供应商验证 Key 时必须传入 customConfig，
+      // 否则后端无法用自定义模板分发查询（如 NewAPI Script 模板）
+      const result = await validateApiKey(config.providerId, value, config.customConfig ?? null);
       setValidationResults((current) => ({ ...current, [target.id]: result }));
     } catch {
       setValidationResults((current) => ({ ...current, [target.id]: false }));
@@ -208,7 +239,15 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     setSaving(true);
     setSaveResult(null);
     try {
-      await saveProviderConfig({ providerId: config.providerId, apiKeys: sanitizedApiKeys(apiKeys), subscriptions: sanitizedSubscriptions(subscriptions), enabled: true });
+      await saveProviderConfig({
+        providerId: config.providerId,
+        apiKeys: sanitizedApiKeys(apiKeys),
+        subscriptions: sanitizedSubscriptions(subscriptions),
+        enabled: true,
+        // 透传模板 ID 与自定义配置（后端按需读取）
+        providerTemplateId: config.providerTemplateId ?? null,
+        customConfig: config.customConfig ?? null,
+      });
       if (isCreateMode) {
         onSaved?.();
         return;
@@ -302,6 +341,44 @@ export default function ProviderConfig(props: ProviderConfigProps) {
             <div className="provider-config-tabs" role="tablist" aria-label={t("settings.providerConfig.viewAriaLabel")}>
               <button className={`provider-config-tab${activeView === "apiKeys" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "apiKeys"} onClick={() => setActiveView("apiKeys")}>{t("settings.providerConfig.apiKeyTab")}</button>
               <button className={`provider-config-tab${activeView === "subscriptions" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "subscriptions"} onClick={() => setActiveView("subscriptions")}>{t("settings.providerConfig.subscriptionTab")}</button>
+            </div>
+          )}
+
+          {/* 脚本类供应商：展示只读 Base URL / 认证方式 / 查询类型信息 */}
+          {isScriptProvider && customConfig && (
+            <div className="field-group custom-provider-meta">
+              <div className="field-row">
+                <label className="field-label">{t("settings.providerConfig.customBaseUrl")}</label>
+              </div>
+              <div className="custom-provider-meta-value" title={customConfig.baseUrl}>
+                {customConfig.baseUrl || "-"}
+              </div>
+              <div className="custom-provider-meta-row">
+                <span className="custom-provider-meta-label">{t("settings.providerConfig.customQueryType")}</span>
+                <span className="custom-provider-meta-value-inline">
+                  {t(customConfig.queryType === "script" ? "settings.wizard.queryTypeScript" : "settings.wizard.queryTypeBalance")}
+                </span>
+              </div>
+              <div className="custom-provider-meta-row">
+                <span className="custom-provider-meta-label">{t("settings.providerConfig.customAuthScheme")}</span>
+                <span className="custom-provider-meta-value-inline">{customConfig.authScheme}</span>
+              </div>
+              {/* 修复 C-3：脚本类供应商展示 accessToken / userId 状态（只读，编辑走重新创建向导） */}
+              {customConfig.accessToken && (
+                <div className="custom-provider-meta-row">
+                  <span className="custom-provider-meta-label">{t("settings.wizard.accessToken")}</span>
+                  <span className="custom-provider-meta-value-inline">{maskCredential(customConfig.accessToken)}</span>
+                </div>
+              )}
+              {customConfig.userId && (
+                <div className="custom-provider-meta-row">
+                  <span className="custom-provider-meta-label">{t("settings.wizard.userId")}</span>
+                  <span className="custom-provider-meta-value-inline">{customConfig.userId}</span>
+                </div>
+              )}
+              {customConfig.allowHttp && (
+                <div className="field-hint">{t("settings.providerConfig.customAllowHttpEnabled")}</div>
+              )}
             </div>
           )}
 

@@ -1,5 +1,5 @@
-/** 供应商 ID */
-export type ProviderId = "openai" | "anthropic" | "openrouter";
+/** 供应商 ID（配置驱动，不再是固定枚举） */
+export type ProviderId = string;
 
 /** 精简模式标记色 */
 export const PROVIDER_MARKER_COLORS = [
@@ -136,4 +136,134 @@ export interface ProviderConfigItem {
   capabilities: ProviderCapabilities;
   environmentVariableName: string;
   activeApiKeyId: string | null;
+  // 新增：内置供应商模板 ID（自定义供应商为 null）
+  providerTemplateId: string | null;
+  // 新增：自定义供应商配置（内置供应商为 null）
+  customConfig: CustomProviderConfig | null;
+}
+
+/** 前端传给后端的 API Key 输入 */
+export interface ProviderApiKeyInput {
+  id: string;
+  name: string;
+  color: string;
+  value: string;
+}
+
+/** 前端传给后端的订阅输入 */
+export interface ProviderSubscriptionInput {
+  id: string;
+  name: string;
+  color: string;
+  oauthToken: string;
+  source: string | null;
+}
+
+/** 供应商配置（前端传给后端） */
+export interface ProviderConfig {
+  providerId: ProviderId;
+  enabled: boolean;
+  apiKeys: ProviderApiKeyInput[];
+  subscriptions: ProviderSubscriptionInput[];
+  providerTemplateId?: string | null;
+  customConfig?: CustomProviderConfig | null;
+}
+
+// ====================================================================
+// 以下为配置驱动架构新增类型（与 src-tauri/src/providers/types.rs 同步）
+// ====================================================================
+
+/** 查询类型：决定如何获取供应商用量（与 Rust QueryType 对齐，serde tag=kind） */
+export type QueryType =
+  | { kind: "balance"; url: string; auth: AuthScheme; fieldMap: BalanceFieldMap }
+  | { kind: "coding_plan"; provider: string }
+  | { kind: "subscription"; provider: string }
+  | { kind: "script"; defaultTemplate: string | null };
+
+/** 认证方案（运行期，可能含自定义 header 集合） */
+export type AuthScheme =
+  | "bearer"
+  | "x_api_key"
+  | "raw_key"
+  | { custom: Array<[string, string]> };
+
+/** Balance 查询的字段映射（JSONPath） */
+export interface BalanceFieldMap {
+  total: string;
+  used?: string | null;
+  remaining?: string | null;
+  currency: string;
+}
+
+/** 单条查询规格 */
+export interface QuerySpec {
+  queryType: QueryType;
+  /** 覆盖默认 base url（自定义供应商用） */
+  baseUrl?: string | null;
+}
+
+/** 内置供应商模板（注册表条目） */
+export interface ProviderTemplate {
+  /** 供应商 ID，如 "openai" */
+  id: string;
+  /** 显示名称，如 "OpenAI" */
+  displayName: string;
+  /** 按量 API Key 对应的环境变量名，如 "OPENAI_API_KEY" */
+  envKeyName: string;
+  /** 订阅 OAuth Token 对应的环境变量名（可选） */
+  envOauthTokenName?: string | null;
+  /** 查询规格列表（一个供应商可有多条查询路径） */
+  queries: QuerySpec[];
+  /** 供应商能力 */
+  capabilities: ProviderCapabilities;
+  /** 图标名（对应 src/assets/provider-icons/ 下的文件名，不含扩展名） */
+  icon: string;
+  /** "获取方式"按钮跳转的官方文档 URL */
+  docsUrl?: string | null;
+  /** OAuth 凭据自动检测配置（阶段 2 填充，阶段 1 预留） */
+  oauthDetect?: OAuthDetectConfig | null;
+}
+
+/** OAuth 凭据自动检测配置（阶段 2 实现，阶段 1 仅占位） */
+export interface OAuthDetectConfig {
+  /** 凭据文件路径（如 "~/.codex/auth.json"） */
+  filePath: string;
+  /** 文件内 token 的 JSONPath */
+  tokenPath: string;
+  /** macOS Keychain service 名（可选） */
+  keychainService?: string | null;
+}
+
+/** 认证方案（配置层，前端可序列化） */
+export type AuthSchemeConfig = "bearer" | "x_api_key" | "raw_key";
+
+/** 查询类型（配置层，前端可序列化） */
+export type QueryTypeConfig = "balance" | "script";
+
+/** JS 脚本配置 */
+export interface ScriptConfig {
+  /** 脚本代码（返回 {request, extractor} 的 JS 表达式） */
+  code: string;
+  language: string;
+  timeoutMs: number;
+}
+
+/** 自定义供应商配置（存于 config.json 的 customConfig 字段） */
+export interface CustomProviderConfig {
+  displayName: string;
+  baseUrl: string;
+  authScheme: AuthSchemeConfig;
+  /** 自定义环境变量名（不填则不接管环境变量） */
+  envKeyName?: string | null;
+  icon?: string | null;
+  queryType: QueryTypeConfig;
+  script?: ScriptConfig;
+  /** 是否允许 HTTP（默认 false，强制 HTTPS） */
+  allowHttp: boolean;
+  /** NewAPI 等 Script 模板需要的访问令牌（阶段 1 临时方案：随 customConfig 明文存储，
+   * 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{accessToken}} 占位符引用。 */
+  accessToken?: string | null;
+  /** NewAPI 等 Script 模板需要的用户 ID（阶段 1 临时方案：随 customConfig 明文存储，
+   * 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{userId}} 占位符引用。 */
+  userId?: string | null;
 }

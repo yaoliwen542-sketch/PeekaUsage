@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../i18n";
+import { windowLabels } from "../../i18n/messages";
 import type { UsageSummary } from "../../types/provider";
 import type {
   ProviderStatsSnapshot,
@@ -27,6 +28,15 @@ export default function UsageStatsPanel({
   const [snapshot, setSnapshot] = useState<UsageStatsSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** 订阅窗口标签 i18n：先查映射表，找不到时原样返回 */
+  function getWindowLabel(label: string): string {
+    const messages = windowLabels[label];
+    if (messages && messages[language]) {
+      return messages[language] as string;
+    }
+    return label;
+  }
 
   const refreshToken = useMemo(
     () => providers
@@ -222,7 +232,7 @@ export default function UsageStatsPanel({
                               <div className="stats-trend-label">
                                 {trend.kind === "extraUsage"
                                   ? t("widget.subscription.extraUsageLabel")
-                                  : trend.label}
+                                  : getWindowLabel(trend.label)}
                               </div>
                             </div>
                             <div className="stats-trend-current">

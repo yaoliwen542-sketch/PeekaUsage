@@ -7,7 +7,6 @@ use std::process::Command;
 
 use crate::config::app_config::{AppConfig, ProviderEntry};
 use crate::config::encryption::KeyStore;
-use crate::providers::types::ProviderId;
 
 #[cfg(not(target_os = "windows"))]
 const MANAGED_ENV_DIR: &str = ".peekausage";
@@ -45,17 +44,28 @@ pub async fn sync_active_api_key_envs(
     Ok(())
 }
 
+/// 解析单个供应商对应的环境变量名
+///
+/// - 内置供应商：从 registry 取 env_key_name
+/// - 自定义供应商：从 entry.custom_config.env_key_name 取（若为 None 则不接管环境变量）
+fn resolve_env_key_name(provider_id: &str, entry: Option<&ProviderEntry>) -> Option<String> {
+    if let Some(entry) = entry {
+        if let Some(cfg) = entry.custom_config.as_ref() {
+            return cfg.env_key_name.clone();
+        }
+    }
+    // 内置供应商
+    crate::providers::registry::get(provider_id).map(|t| t.env_key_name)
+}
+
 fn collect_managed_env_names(provider_entries: &HashMap<String, ProviderEntry>) -> Vec<String> {
-    supported_provider_ids()
-        .into_iter()
-        .filter_map(|provider_id| {
-            let provider = parse_provider_id(provider_id)?;
-            let entry = provider_entries.get(provider_id)?;
-            if entry.manage_api_key_environment {
-                Some(provider.env_key_name().to_string())
-            } else {
-                None
+    provider_entries
+        .iter()
+        .filter_map(|(provider_id, entry)| {
+            if !entry.manage_api_key_environment {
+                return None;
             }
+            resolve_env_key_name(provider_id, Some(entry))
         })
         .collect()
 }
@@ -66,12 +76,8 @@ async fn collect_active_assignments(
 ) -> HashMap<String, String> {
     let mut assignments = HashMap::new();
 
-    for provider_id in supported_provider_ids() {
-        let Some(provider) = parse_provider_id(provider_id) else {
-            continue;
-        };
-
-        let Some(entry) = provider_entries.get(provider_id) else {
+    for (provider_id, entry) in provider_entries {
+        let Some(env_var_name) = resolve_env_key_name(provider_id, Some(entry)) else {
             continue;
         };
 
@@ -89,7 +95,7 @@ async fn collect_active_assignments(
             continue;
         }
 
-        assignments.insert(provider.env_key_name().to_string(), trimmed.to_string());
+        assignments.insert(env_var_name, trimmed.to_string());
     }
 
     assignments
@@ -295,19 +301,6 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
-}
-
-fn supported_provider_ids() -> [&'static str; 3] {
-    ["openai", "anthropic", "openrouter"]
-}
-
-fn parse_provider_id(provider_id: &str) -> Option<ProviderId> {
-    match provider_id {
-        "openai" => Some(ProviderId::OpenAI),
-        "anthropic" => Some(ProviderId::Anthropic),
-        "openrouter" => Some(ProviderId::OpenRouter),
-        _ => None,
-    }
 }
 
 fn api_key_storage_key(provider_id: &str, key_id: &str) -> String {

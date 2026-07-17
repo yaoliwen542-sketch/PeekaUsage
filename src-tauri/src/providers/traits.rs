@@ -4,10 +4,13 @@ use async_trait::async_trait;
 /// 用量供应商核心抽象
 ///
 /// 新增供应商只需实现此 trait，然后在 ProviderManager 中注册即可。
+/// 注意：阶段 1 期间，此 trait 仍由 openai/anthropic/openrouter 三个旧 provider 实现，
+/// 但 ProviderManager 已改为优先从 ProviderRegistry 取模板查询。
+/// 阶段 2 起，新供应商不再实现此 trait，而是通过 registry 的 QueryType 配置。
 #[async_trait]
 pub trait UsageProvider: Send + Sync {
     /// 供应商唯一 ID
-    fn id(&self) -> ProviderId;
+    fn id(&self) -> String;
 
     /// 显示名称
     fn display_name(&self) -> &str;
@@ -42,6 +45,16 @@ pub enum ProviderError {
 
     #[error("速率限制: {0}")]
     RateLimited(String),
+}
+
+impl ProviderError {
+    /// 是否为瞬时错误（网络抖动 / 限流，前端应保留上次成功值并重试）
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            ProviderError::RequestError(_) | ProviderError::RateLimited(_)
+        )
+    }
 }
 
 impl From<reqwest::Error> for ProviderError {
