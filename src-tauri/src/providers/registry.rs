@@ -338,6 +338,37 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
+        // === 火山方舟（Volcengine，CodingPlan + SigV4 签名）===
+        // POST https://open.volcengineapi.com/?Action=GetAFPUsage&Version=2024-09-30
+        // 火山签名 V4（AK/SK）认证，非 Bearer。由 coding_plan::fetch_volcengine 处理：
+        // 1. 解析 "AccessKeyId:SecretAccessKey" 格式的 api_key
+        // 2. 调用 sigv4::sign_volc_request 生成签名 headers
+        // 3. 主链路 GetAFPUsage（绝对额度 -> 百分比）；失败回退 GetCodingPlanUsage（百分比）
+        //
+        // 注意：火山方舟的 api_key 字段格式特殊（AK:SK），前端在添加供应商时需提示用户
+        // 输入完整 "AKID:SecretKey" 字符串。环境变量 VOLC_ACCESSKEY 同样存储该拼接格式。
+        // 签名算法待真实 AK/SK 端到端验证。
+        ProviderTemplate {
+            id: "volcengine".to_string(),
+            display_name: "火山方舟".to_string(),
+            env_key_name: "VOLC_ACCESSKEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "volcengine".to_string(),
+            docs_url: Some("https://www.volcengine.com/docs/82379".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "volcengine".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
     ]
 }
 

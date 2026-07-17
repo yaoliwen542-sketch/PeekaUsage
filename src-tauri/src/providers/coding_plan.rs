@@ -23,6 +23,7 @@ pub async fn execute_coding_plan_query(
         "kimi" => fetch_kimi(client, api_key).await,
         "glm" => fetch_glm(client, api_key).await,
         "minimax" => fetch_minimax(client, api_key).await,
+        "volcengine" => fetch_volcengine(client, api_key).await,
         _ => Err(ProviderError::RequestError(format!(
             "不支持的 CodingPlan 供应商: {}",
             provider
@@ -297,6 +298,236 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
     Ok(build_percent_usage(utilizations))
 }
 
+// ===== 火山方舟（Volcengine）=====
+//
+// 火山方舟用量查询走控制面 OpenAPI（非数据面 ark 域名），使用火山签名 V4（AK/SK）认证。
+// api_key 参数实际格式为 "AccessKeyId:SecretAccessKey"（用冒号分隔），在函数内部解析。
+//
+// 主链路：POST https://open.volcengineapi.com/?Action=GetAFPUsage&Version=2024-09-30
+//   - 返回绝对额度（已用/总额），转换成百分比型 UsageData
+//   - 若未订阅 AFP 或接口不可用，回退到 GetCodingPlanUsage
+//
+// 回退链路：POST https://open.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-09-30
+//   - 返回百分比利用率，直接映射
+//
+// 注意：签名逻辑见 super::sigv4；本函数仅负责发请求 + 解析。
+// 签名算法待真实 AK/SK 端到端验证（当前实现遵循 cc-switch 的 V4 变体）。
+async fn fetch_volcengine(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    // 解析 AK:SK
+    let (ak, sk) = api_key.split_once(':').ok_or_else(|| {
+        ProviderError::AuthError("火山方舟 Key 格式应为 AccessKeyId:SecretAccessKey".into())
+    })?;
+    if ak.is_empty() || sk.is_empty() {
+        return Err(ProviderError::AuthError(
+            "火山方舟 AccessKeyId 或 SecretAccessKey 为空".into(),
+        ));
+    }
+
+    // 主链路：GetAFPUsage
+    match fetch_volc_action(client, ak, sk, "GetAFPUsage").await {
+        Ok(usage) => Ok(usage),
+        Err(ProviderError::AuthError(e)) => Err(ProviderError::AuthError(e)),
+        Err(afp_err) => {
+            // AFP 失败（非鉴权类），回退到 GetCodingPlanUsage
+            match fetch_volc_action(client, ak, sk, "GetCodingPlanUsage").await {
+                Ok(usage) => Ok(usage),
+                Err(ProviderError::AuthError(e)) => Err(ProviderError::AuthError(e)),
+                Err(coding_err) => Err(ProviderError::RequestError(format!(
+                    "GetAFPUsage 失败({}) 且 GetCodingPlanUsage 失败({})",
+                    afp_err, coding_err
+                ))),
+            }
+        }
+    }
+}
+
+/// 执行单个火山方舟 Action 查询
+///
+/// 通用流程：构造请求体 -> 签名 -> 发送 -> 状态码检查 -> 响应解析。
+/// 不同 Action 的响应字段不同，由 parse_*_response 处理。
+async fn fetch_volc_action(
+    client: &Client,
+    ak: &str,
+    sk: &str,
+    action: &str,
+) -> Result<UsageData, ProviderError> {
+    let host = "open.volcengineapi.com";
+    let query = format!("Action={}&Version=2024-09-30", action);
+    let url = format!("https://{}?{}", host, query);
+
+    // 请求体：火山方舟部分接口要求 Region 等参数。这里传最小 JSON。
+    // 即使是空对象 {} 也能签名（x-content-sha256 会反映 body 哈希）。
+    let body = serde_json::json!({
+        "Region": "cn-beijing",
+    });
+    let body_bytes = serde_json::to_vec(&body)
+        .map_err(|e| ProviderError::RequestError(format!("序列化请求体失败: {}", e)))?;
+
+    // 签名
+    let headers = super::sigv4::sign_volc_request(super::sigv4::VolcSignParams {
+        access_key_id: ak,
+        secret_access_key: sk,
+        region: "cn-beijing",
+        service: "ark",
+        host,
+        method: "POST",
+        query: &query,
+        body: &body_bytes,
+    });
+
+    // 构造请求
+    let mut req = client.post(&url).body(body_bytes);
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+
+    // 发请求
+    let resp = req.send().await.map_err(|e| {
+        if let Some(status) = e.status() {
+            let code = status.as_u16();
+            if code == 401 || code == 403 {
+                return ProviderError::AuthError(format!("认证失败 (HTTP {})", code));
+            }
+            if code == 429 {
+                return ProviderError::RateLimited("请求过于频繁".to_string());
+            }
+        }
+        ProviderError::RequestError(e.to_string())
+    })?;
+
+    check_status(resp.status())?;
+
+    let body_bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ProviderError::RequestError(format!("读取响应体失败: {}", e)))?;
+
+    let json: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProviderError::ParseError(format!("解析 JSON 失败: {}", e)))?;
+
+    // 火山 OpenAPI 错误响应：{"ResponseMetadata": {"Error": {"Code": "...", "Message": "..."}}, "Result": null}
+    // 或顶层 {"Code": "...", "Message": "..."}
+    if let Some(err_msg) = extract_volc_error(&json) {
+        // 业务层错误：返回 RequestError（非鉴权类），让上层回退或汇总
+        return Err(ProviderError::RequestError(err_msg));
+    }
+
+    // 按 Action 分发解析
+    match action {
+        "GetAFPUsage" => parse_afp_response(&json),
+        "GetCodingPlanUsage" => parse_coding_plan_response(&json),
+        _ => Err(ProviderError::ParseError(format!(
+            "未实现的火山方舟 Action: {}",
+            action
+        ))),
+    }
+}
+
+/// 从火山 OpenAPI 响应中提取错误信息
+///
+/// 火山错误响应通常为：
+/// ```json
+/// { "ResponseMetadata": { "Error": { "Code": "xxx", "Message": "yyy" } } }
+/// ```
+/// 或简化形式：
+/// ```json
+/// { "Code": "xxx", "Message": "yyy" }
+/// ```
+/// 返回 Some("Code: Message") 表示业务错误；None 表示无业务错误。
+fn extract_volc_error(json: &Value) -> Option<String> {
+    // 形式 1：ResponseMetadata.Error
+    if let Some(err) = json.get("ResponseMetadata").and_then(|v| v.get("Error")) {
+        let code = err
+            .get("Code")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let message = err
+            .get("Message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("无错误消息");
+        return Some(format!("{}: {}", code, message));
+    }
+    // 形式 2：顶层 Code/Message
+    if let Some(code) = json.get("Code").and_then(|v| v.as_str()) {
+        let message = json
+            .get("Message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("无错误消息");
+        return Some(format!("{}: {}", code, message));
+    }
+    None
+}
+
+/// 解析 GetAFPUsage 响应（绝对额度 -> 百分比型）
+///
+/// 预期响应结构（火山方舟 GetAFPUsage）：
+/// ```json
+/// {
+///   "Result": {
+///     "TotalAmount": 100.0,
+///     "UsedAmount": 30.0,
+///     "RemainingAmount": 70.0,
+///     "Currency": "CNY"
+///   }
+/// }
+/// ```
+/// 映射：utilization = UsedAmount / TotalAmount * 100（TotalAmount 为 0 时返回 0%）。
+///
+/// 注意：实际字段名可能因火山接口版本不同而异。当前实现基于公开文档与 cc-switch 调研，
+/// 待真实 AK/SK 端到端验证。若字段缺失则回退到 GetCodingPlanUsage。
+fn parse_afp_response(json: &Value) -> Result<UsageData, ProviderError> {
+    let result = json
+        .get("Result")
+        .ok_or_else(|| ProviderError::ParseError("GetAFPUsage 响应缺少 Result 字段".into()))?;
+
+    let total = result.get("TotalAmount").and_then(|v| v.as_f64());
+    let used = result.get("UsedAmount").and_then(|v| v.as_f64());
+
+    match (total, used) {
+        (Some(t), Some(u)) if t > 0.0 => {
+            let utilization = (u / t * 100.0).clamp(0.0, 100.0);
+            Ok(build_percent_usage(vec![utilization]))
+        }
+        _ => Err(ProviderError::ParseError(
+            "GetAFPUsage 响应缺少 TotalAmount/UsedAmount 或 TotalAmount 为 0".into(),
+        )),
+    }
+}
+
+/// 解析 GetCodingPlanUsage 响应（百分比利用率）
+///
+/// 预期响应结构（火山方舟 GetCodingPlanUsage）：
+/// ```json
+/// {
+///   "Result": {
+///     "UsagePercent": 65.0,
+///     "ResetTime": "2026-07-20T00:00:00Z"
+///   }
+/// }
+/// ```
+/// 映射：utilization = UsagePercent（0-100）。
+///
+/// 注意：实际字段名待真实 AK/SK 端到端验证。
+fn parse_coding_plan_response(json: &Value) -> Result<UsageData, ProviderError> {
+    let result = json.get("Result").ok_or_else(|| {
+        ProviderError::ParseError("GetCodingPlanUsage 响应缺少 Result 字段".into())
+    })?;
+
+    // 优先用 UsagePercent
+    if let Some(percent) = result.get("UsagePercent").and_then(|v| v.as_f64()) {
+        return Ok(build_percent_usage(vec![percent.clamp(0.0, 100.0)]));
+    }
+
+    // 回退：尝试 Utilization 字段
+    if let Some(percent) = result.get("Utilization").and_then(|v| v.as_f64()) {
+        return Ok(build_percent_usage(vec![percent.clamp(0.0, 100.0)]));
+    }
+
+    Err(ProviderError::ParseError(
+        "GetCodingPlanUsage 响应缺少 UsagePercent/Utilization 字段".into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,5 +659,73 @@ mod tests {
         }
         // general: interval=100-70=30, weekly=100-60=40
         assert_eq!(utilizations, vec![30.0, 40.0]);
+    }
+
+    #[test]
+    fn test_volc_extract_error_metadata_form() {
+        let json = serde_json::json!({
+            "ResponseMetadata": {
+                "Error": { "Code": "NotFound", "Message": "AFP not subscribed" }
+            }
+        });
+        let err = extract_volc_error(&json).unwrap();
+        assert_eq!(err, "NotFound: AFP not subscribed");
+    }
+
+    #[test]
+    fn test_volc_extract_error_top_level_form() {
+        let json = serde_json::json!({
+            "Code": "InvalidParameter",
+            "Message": "bad region"
+        });
+        let err = extract_volc_error(&json).unwrap();
+        assert_eq!(err, "InvalidParameter: bad region");
+    }
+
+    #[test]
+    fn test_volc_extract_error_none_on_success() {
+        let json = serde_json::json!({
+            "Result": { "TotalAmount": 100.0, "UsedAmount": 30.0 }
+        });
+        assert!(extract_volc_error(&json).is_none());
+    }
+
+    #[test]
+    fn test_volc_parse_afp_response() {
+        let json = serde_json::json!({
+            "Result": {
+                "TotalAmount": 200.0,
+                "UsedAmount": 50.0,
+                "RemainingAmount": 150.0,
+                "Currency": "CNY"
+            }
+        });
+        let usage = parse_afp_response(&json).unwrap();
+        // 50 / 200 = 25%
+        assert!((usage.total_used - 25.0).abs() < 1e-6);
+        assert_eq!(usage.currency, "%");
+    }
+
+    #[test]
+    fn test_volc_parse_afp_response_missing_fields() {
+        let json = serde_json::json!({ "Result": { "Foo": "bar" } });
+        assert!(parse_afp_response(&json).is_err());
+    }
+
+    #[test]
+    fn test_volc_parse_coding_plan_response() {
+        let json = serde_json::json!({
+            "Result": { "UsagePercent": 65.0, "ResetTime": "2026-07-20T00:00:00Z" }
+        });
+        let usage = parse_coding_plan_response(&json).unwrap();
+        assert!((usage.total_used - 65.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_volc_parse_coding_plan_response_fallback_field() {
+        // UsagePercent 缺失时回退到 Utilization
+        let json = serde_json::json!({ "Result": { "Utilization": 40.0 } });
+        let usage = parse_coding_plan_response(&json).unwrap();
+        assert!((usage.total_used - 40.0).abs() < 1e-6);
     }
 }

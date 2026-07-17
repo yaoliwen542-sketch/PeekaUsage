@@ -6,6 +6,7 @@ pub mod openai;
 pub mod openrouter;
 pub mod registry;
 pub mod script_engine;
+pub mod sigv4;
 pub mod subscription;
 pub mod traits;
 pub mod types;
