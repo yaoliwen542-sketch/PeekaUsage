@@ -138,6 +138,8 @@ export interface DetectedToken {
 export interface DetectedTokens {
   anthropic: DetectedToken[];
   openai: DetectedToken[];
+  /** Gemini OAuth 凭据（token 字段存完整 oauth_creds.json 文本） */
+  gemini?: DetectedToken[];
 }
 
 /** 自动检测本地 OAuth Token */

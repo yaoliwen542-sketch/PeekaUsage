@@ -20,6 +20,7 @@ pub async fn detect_oauth_tokens() -> Result<DetectedTokens, String> {
     let mut result = DetectedTokens {
         anthropic: Vec::new(),
         openai: Vec::new(),
+        gemini: Vec::new(),
     };
 
     if let Some(token) = read_claude_token_from_home(&home, "native") {
@@ -28,6 +29,20 @@ pub async fn detect_oauth_tokens() -> Result<DetectedTokens, String> {
 
     if let Some(token) = read_codex_token_from_home(&home, "native") {
         result.openai.push(token);
+    }
+
+    // Gemini：复用 oauth_detect::detect_gemini，token 字段是完整 oauth_creds.json 文本
+    // （含 refresh_token，供 subscription.rs 自动刷新）。与 Anthropic/OpenAI 不同，Gemini
+    // 不区分 native/WSL 环境（oauth_detect 仅读当前进程 home），也没有多账号场景。
+    if let Some(detected) = crate::providers::oauth_detect::detect_gemini() {
+        result.gemini.push(DetectedToken {
+            token: detected.token,
+            source: detected.source.clone(),
+            subscription_type: None,
+            environment: "native".to_string(),
+            display_source: detected.source,
+            account_id: None,
+        });
     }
 
     #[cfg(windows)]
@@ -206,6 +221,9 @@ fn dirs_next() -> Option<std::path::PathBuf> {
 pub struct DetectedTokens {
     pub anthropic: Vec<DetectedToken>,
     pub openai: Vec<DetectedToken>,
+    /// Gemini OAuth 凭据（token 字段存完整 oauth_creds.json 文本，含 refresh_token）
+    #[serde(default)]
+    pub gemini: Vec<DetectedToken>,
 }
 
 #[derive(Debug, serde::Serialize)]
