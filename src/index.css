@@ -1,4 +1,10 @@
-:root {
+@import "tailwindcss";
+
+/* 设计 token 统一由 Tailwind 4 @theme 接管（原 variables.css 已迁移至此）
+   亮色为默认值；暗色通过 [data-theme="dark"] 覆盖；
+   未设置 data-theme 时按系统 prefers-color-scheme 回退。 */
+@theme {
+  /* 静态基础色与尺寸 */
   --color-primary: #6366f1;
   --color-primary-hover: #818cf8;
   --color-success: #22c55e;
@@ -16,11 +22,8 @@
   --spacing-lg: 16px;
 
   --titlebar-height: 32px;
-}
 
-:root,
-:root[data-theme="light"] {
-  color-scheme: light;
+  /* 亮色主题（默认） */
   --color-bg: rgba(248, 250, 252, 0.94);
   --color-surface: rgba(255, 255, 255, 0.92);
   --color-surface-hover: rgba(255, 255, 255, 0.98);
@@ -82,6 +85,7 @@
   --shadow-settings-surface: var(--shadow-surface);
 }
 
+/* 暗色主题覆盖 */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --color-bg: rgba(15, 15, 15, 0.85);
@@ -129,22 +133,10 @@
   --shadow-overlay: 0 18px 40px rgba(2, 6, 23, 0.34);
   --shadow-drag: 0 18px 42px rgba(15, 23, 42, 0.42);
   --color-settings-panel-bg: rgba(18, 18, 18, 0.92);
-  --color-settings-surface: var(--color-surface);
-  --color-settings-surface-elevated: var(--color-surface-elevated);
-  --color-settings-border: var(--color-border);
-  --color-settings-border-strong: var(--color-primary-soft-border);
-  --color-settings-ghost: var(--color-ghost-bg);
-  --color-settings-ghost-hover: var(--color-ghost-bg-hover);
-  --color-settings-control-bg: var(--color-control-bg);
-  --color-settings-control-bg-hover: var(--color-surface-elevated);
-  --color-settings-selected-bg: var(--color-primary-soft-bg);
   --color-settings-selected-solid: rgba(30, 64, 175, 0.42);
-  --color-settings-selected-text: var(--color-primary-soft-text);
-  --color-settings-selected-shadow: 0 0 0 1px var(--color-primary-soft-border);
-  --color-settings-focus-ring: var(--color-primary-soft-bg);
-  --shadow-settings-surface: var(--shadow-surface);
 }
 
+/* 未显式设置 data-theme 时跟随系统暗色 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
@@ -193,19 +185,72 @@
     --shadow-overlay: 0 18px 40px rgba(2, 6, 23, 0.34);
     --shadow-drag: 0 18px 42px rgba(15, 23, 42, 0.42);
     --color-settings-panel-bg: rgba(18, 18, 18, 0.92);
-    --color-settings-surface: var(--color-surface);
-    --color-settings-surface-elevated: var(--color-surface-elevated);
-    --color-settings-border: var(--color-border);
-    --color-settings-border-strong: var(--color-primary-soft-border);
-    --color-settings-ghost: var(--color-ghost-bg);
-    --color-settings-ghost-hover: var(--color-ghost-bg-hover);
-    --color-settings-control-bg: var(--color-control-bg);
-    --color-settings-control-bg-hover: var(--color-surface-elevated);
-    --color-settings-selected-bg: var(--color-primary-soft-bg);
     --color-settings-selected-solid: rgba(30, 64, 175, 0.42);
-    --color-settings-selected-text: var(--color-primary-soft-text);
-    --color-settings-selected-shadow: 0 0 0 1px var(--color-primary-soft-border);
-    --color-settings-focus-ring: var(--color-primary-soft-bg);
-    --shadow-settings-surface: var(--shadow-surface);
   }
 }
+
+/* 亮色主题的 color-scheme（保持原生控件配色正确） */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* 拖动窗口时由 JS 临时置 0，避免 backdrop-filter 高频重绘导致卡顿 */
+:root {
+  --backdrop-blur: 18px;
+}
+
+/* shadcn/ui 语义变量：映射到项目设计 token，随主题自动切换 */
+:root {
+  --radius: 0.5rem;
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-surface-elevated);
+  --popover-foreground: var(--color-text);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-ghost-bg);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-muted-surface);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-ghost-bg-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --destructive-foreground: #ffffff;
+  --input: var(--color-border);
+  --ring: var(--color-primary-soft-border);
+}
+
+/* @theme inline：把 shadcn 语义变量与项目语义别名注册为 Tailwind 工具类 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* 项目语义别名（组件重构后使用） */
+  --color-foreground-secondary: var(--color-text-secondary);
+  --color-foreground-muted: var(--color-text-muted);
+  --color-ghost: var(--color-ghost-bg);
+  --color-ghost-hover: var(--color-ghost-bg-hover);
+  --color-titlebar: var(--color-titlebar-bg);
+  --color-usage-item: var(--color-usage-item-bg);
+  --color-usage-item-error: var(--color-usage-item-error-bg);
+}
+
+/* shadcn/ui 暗色变体：跟随项目 data-theme 属性而非 .dark 类 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
