@@ -1,0 +1,336 @@
+@import "tailwindcss";
+@import "./variables.css";
+@import "./common.css";
+@import "./settings.css";
+@import "./widget.css";
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: var(--color-text);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+#app {
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#app.app-edge-docked-collapsed {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.app-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell.is-edge-docked-collapsed > :not(.edge-dock-handle) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.edge-dock-handle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.edge-dock-handle.edge-left {
+  justify-content: flex-start;
+}
+
+.edge-dock-handle.edge-right {
+  justify-content: flex-end;
+}
+
+.edge-dock-handle.edge-top {
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.edge-dock-handle-shell {
+  position: relative;
+  width: 16px;
+  height: min(100%, 136px);
+  overflow: visible;
+  background: transparent;
+  border: 1px solid var(--color-dock-shell-border);
+  box-shadow: var(--shadow-dock-handle);
+}
+
+.edge-dock-handle.edge-left .edge-dock-handle-shell {
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+}
+
+.edge-dock-handle.edge-right .edge-dock-handle-shell {
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-shell {
+  width: 100%;
+  height: 16px;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+}
+
+.edge-dock-handle-glow,
+.edge-dock-handle-core,
+.edge-dock-handle-shine {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  transition:
+    background 180ms ease,
+    box-shadow 180ms ease,
+    opacity 180ms ease;
+}
+
+.edge-dock-handle-glow {
+  width: 12px;
+  height: 78px;
+  background: radial-gradient(circle, var(--color-dock-core-glow) 0%, rgba(34, 211, 238, 0.18) 48%, transparent 76%);
+  filter: blur(8px);
+  opacity: 0.88;
+}
+
+.edge-dock-handle-core {
+  width: 7px;
+  height: 60px;
+  background: linear-gradient(180deg, var(--color-dock-core-start), var(--color-dock-core-end));
+  box-shadow:
+    0 0 14px var(--color-dock-core-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -2px 5px rgba(10, 37, 64, 0.18);
+}
+
+.edge-dock-handle-shine {
+  width: 3px;
+  height: 26px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.08));
+  filter: blur(0.4px);
+  opacity: 0.82;
+}
+
+.edge-dock-handle.edge-left .edge-dock-handle-glow,
+.edge-dock-handle.edge-left .edge-dock-handle-core {
+  right: 1px;
+}
+
+.edge-dock-handle.edge-left .edge-dock-handle-shine {
+  right: 3px;
+}
+
+.edge-dock-handle.edge-right .edge-dock-handle-glow,
+.edge-dock-handle.edge-right .edge-dock-handle-core {
+  left: 1px;
+}
+
+.edge-dock-handle.edge-right .edge-dock-handle-shine {
+  left: 3px;
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-glow,
+.edge-dock-handle.edge-top .edge-dock-handle-core,
+.edge-dock-handle.edge-top .edge-dock-handle-shine {
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-glow {
+  width: 78px;
+  height: 12px;
+  background: radial-gradient(circle, var(--color-dock-core-glow) 0%, rgba(34, 211, 238, 0.18) 48%, transparent 76%);
+  filter: blur(8px);
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-core {
+  width: 60px;
+  height: 7px;
+  background: linear-gradient(90deg, var(--color-dock-core-start), var(--color-dock-core-end));
+  box-shadow:
+    0 0 14px var(--color-dock-core-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -2px 5px rgba(10, 37, 64, 0.18);
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-shine {
+  top: 3px;
+  width: 26px;
+  height: 3px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.08));
+  filter: blur(0.4px);
+}
+
+.app-shell.is-edge-docked-collapsed .edge-dock-handle-core {
+  animation: edge-dock-core-pulse 2.2s ease-in-out infinite;
+}
+
+.app-shell.is-edge-docked-collapsed .edge-dock-handle-glow {
+  animation: edge-dock-glow-breathe 2.2s ease-in-out infinite;
+}
+
+.app-shell.is-edge-docked-collapsed .edge-dock-handle-shine {
+  animation: edge-dock-shine-breathe 2.2s ease-in-out infinite;
+}
+
+.app-shell.is-edge-docked-collapsed.edge-top .edge-dock-handle-core {
+  animation: edge-dock-core-pulse-top 2.2s ease-in-out infinite;
+}
+
+.app-shell.is-edge-docked-collapsed.edge-top .edge-dock-handle-glow {
+  animation: edge-dock-glow-breathe-top 2.2s ease-in-out infinite;
+}
+
+.app-shell.is-edge-docked-collapsed.edge-top .edge-dock-handle-shine {
+  animation: edge-dock-shine-breathe-top 2.2s ease-in-out infinite;
+}
+
+@keyframes edge-dock-core-pulse {
+  0%,
+  100% {
+    opacity: 0.78;
+    transform: translateY(-50%) scale(0.94, 0.96);
+    box-shadow:
+      0 0 10px var(--color-dock-core-glow),
+      inset 0 1px 0 rgba(255, 255, 255, 0.68),
+      inset 0 -2px 5px rgba(10, 37, 64, 0.14);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.08, 1.05);
+    box-shadow:
+      0 0 18px var(--color-dock-core-glow),
+      0 0 28px color-mix(in srgb, var(--color-dock-core-glow) 78%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      inset 0 -2px 5px rgba(10, 37, 64, 0.22);
+  }
+}
+
+@keyframes edge-dock-glow-breathe {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: translateY(-50%) scale(0.9);
+  }
+
+  50% {
+    opacity: 0.96;
+    transform: translateY(-50%) scale(1.08);
+  }
+}
+
+@keyframes edge-dock-shine-breathe {
+  0%,
+  100% {
+    opacity: 0.48;
+    transform: translateY(-50%) scaleY(0.92);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: translateY(-50%) scaleY(1.08);
+  }
+}
+
+@keyframes edge-dock-core-pulse-top {
+  0%,
+  100% {
+    opacity: 0.78;
+    transform: translateX(-50%) scale(0.96, 0.94);
+    box-shadow:
+      0 0 10px var(--color-dock-core-glow),
+      inset 0 1px 0 rgba(255, 255, 255, 0.68),
+      inset 0 -2px 5px rgba(10, 37, 64, 0.14);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.05, 1.08);
+    box-shadow:
+      0 0 18px var(--color-dock-core-glow),
+      0 0 28px color-mix(in srgb, var(--color-dock-core-glow) 78%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      inset 0 -2px 5px rgba(10, 37, 64, 0.22);
+  }
+}
+
+@keyframes edge-dock-glow-breathe-top {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: translateX(-50%) scale(0.9);
+  }
+
+  50% {
+    opacity: 0.96;
+    transform: translateX(-50%) scale(1.08);
+  }
+}
+
+@keyframes edge-dock-shine-breathe-top {
+  0%,
+  100% {
+    opacity: 0.48;
+    transform: translateX(-50%) scaleX(0.92);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: translateX(-50%) scaleX(1.08);
+  }
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover);
+}

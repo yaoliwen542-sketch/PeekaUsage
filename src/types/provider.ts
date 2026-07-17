@@ -1,0 +1,139 @@
+/** 供应商 ID */
+export type ProviderId = "openai" | "anthropic" | "openrouter";
+
+/** 精简模式标记色 */
+export const PROVIDER_MARKER_COLORS = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#ec4899",
+  "#84cc16",
+] as const;
+
+export function normalizeProviderMarkerColor(color: string | null | undefined, index: number): string {
+  if (color && PROVIDER_MARKER_COLORS.includes(color as (typeof PROVIDER_MARKER_COLORS)[number])) {
+    return color;
+  }
+
+  return PROVIDER_MARKER_COLORS[index % PROVIDER_MARKER_COLORS.length];
+}
+
+/** 供应商能力 */
+export interface ProviderCapabilities {
+  hasBalance: boolean;
+  hasUsage: boolean;
+  hasRateLimit: boolean;
+  hasSubscription: boolean;
+}
+
+/** 用量数据（按量 API） */
+export interface UsageData {
+  totalUsed: number;
+  totalBudget: number | null;
+  remaining: number | null;
+  currency: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+/** 订阅用量窗口 */
+export interface SubscriptionWindow {
+  label: string;
+  utilization: number;
+  resetsAt: string | null;
+}
+
+/** 额外用量（Extra Usage，仅 Anthropic） */
+export interface ExtraUsage {
+  isEnabled: boolean;
+  monthlyLimitUsd: number | null;
+  usedUsd: number | null;
+  /** 利用率百分比 0-100 */
+  utilization: number | null;
+  resetsAt: string | null;
+}
+
+/** 订阅用量数据 */
+export interface SubscriptionUsage {
+  planName: string | null;
+  windows: SubscriptionWindow[];
+  extraUsage: ExtraUsage | null;
+  status: ProviderStatus;
+  errorMessage: string | null;
+}
+
+export interface SubscriptionUsageSummary {
+  subscriptionId: string;
+  subscriptionName: string;
+  color: string;
+  source: string | null;
+  usage: SubscriptionUsage;
+}
+
+/** 速率限制数据 */
+export interface RateLimitData {
+  requestsPerMinute: number | null;
+  requestsPerMinuteLimit: number | null;
+  tokensPerMinute: number | null;
+  tokensPerMinuteLimit: number | null;
+}
+
+/** 供应商状态 */
+export type ProviderStatus = "idle" | "loading" | "success" | "error";
+
+/** 单个 API Key 的用量摘要 */
+export interface ApiKeyUsageSummary {
+  keyId: string;
+  keyName: string;
+  color: string;
+  status: ProviderStatus;
+  usage: UsageData | null;
+  rateLimit: RateLimitData | null;
+  errorMessage: string | null;
+}
+
+/** 供应商用量摘要（从后端返回） */
+export interface UsageSummary {
+  providerId: ProviderId;
+  displayName: string;
+  enabled: boolean;
+  status: ProviderStatus;
+  apiKeyUsages: ApiKeyUsageSummary[];
+  usage: UsageData | null;
+  subscriptions: SubscriptionUsageSummary[];
+  rateLimit: RateLimitData | null;
+  lastUpdated: string | null;
+  errorMessage: string | null;
+}
+
+/** 命名 API Key 配置 */
+export interface ProviderApiKeyItem {
+  id: string;
+  name: string;
+  color: string;
+  value: string;
+  isActiveInEnvironment: boolean;
+}
+
+export interface ProviderSubscriptionItem {
+  id: string;
+  name: string;
+  color: string;
+  oauthToken: string;
+  source: string | null;
+}
+
+/** 供应商配置（前端用） */
+export interface ProviderConfigItem {
+  providerId: ProviderId;
+  displayName: string;
+  enabled: boolean;
+  apiKeys: ProviderApiKeyItem[];
+  subscriptions: ProviderSubscriptionItem[];
+  capabilities: ProviderCapabilities;
+  environmentVariableName: string;
+  activeApiKeyId: string | null;
+}
