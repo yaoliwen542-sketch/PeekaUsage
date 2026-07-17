@@ -193,6 +193,10 @@ export interface BalanceFieldMap {
   used?: string | null;
   remaining?: string | null;
   currency: string;
+  /** 提取值乘以此系数（如 Novita 的 0.0001，将万分之一美元换算为美元）
+   * 应用范围：total / used / remaining 三个字段均会乘以 scale。
+   * 默认 null 表示不换算。 */
+  scale?: number | null;
 }
 
 /** 单条查询规格 */

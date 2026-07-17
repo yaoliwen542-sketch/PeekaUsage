@@ -58,6 +58,10 @@ export default function App() {
   const windowBoundsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingWindowSizeRef = useRef<LogicalWindowSize | null>(null);
   const pendingWindowPositionRef = useRef<LogicalWindowPosition | null>(null);
+  // 缓存 scaleFactor，避免拖拽时 onMoved/onResized 每帧都发起异步 IPC 调用导致卡顿
+  const scaleFactorRef = useRef<number | null>(null);
+  // 缓存最新窗口尺寸，供 onMoved 的边缘吸附检测使用，避免每次都 await innerSize()
+  const latestWindowSizeRef = useRef<LogicalWindowSize | null>(null);
   const edgeDockCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const edgeDockEvaluateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titlebarDragIntentUntilRef = useRef(0);
@@ -484,6 +488,13 @@ export default function App() {
       await loadSettings();
       const currentSettings = useSettingsStore.getState().settings;
 
+      // 初始化 scaleFactor 缓存，后续拖拽时 onMoved/onResized 复用，避免高频 IPC 卡顿
+      try {
+        scaleFactorRef.current = await currentWindow.scaleFactor();
+      } catch {
+        scaleFactorRef.current = null;
+      }
+
       applyTheme(currentSettings.theme);
       await applyOpacity(currentSettings.windowOpacity);
       await syncAlwaysOnTop(currentSettings.alwaysOnTop);
@@ -512,8 +523,19 @@ export default function App() {
           suppressAutoFitAfterManualResize();
         }
 
-        const scaleFactor = await currentWindow.scaleFactor();
+        // 使用缓存的 scaleFactor，避免每帧 IPC 调用；缓存缺失时才回退到异步获取
+        let scaleFactor = scaleFactorRef.current;
+        if (scaleFactor === null) {
+          try {
+            scaleFactor = await currentWindow.scaleFactor();
+            scaleFactorRef.current = scaleFactor;
+          } catch {
+            return;
+          }
+        }
         const nextSize = toLogicalWindowSize(payload, scaleFactor);
+        // 维护最新窗口尺寸缓存，供 onMoved 边缘吸附检测复用
+        latestWindowSizeRef.current = nextSize;
         const dockState = dockStateRef.current;
 
         if (dockState) {
@@ -549,7 +571,16 @@ export default function App() {
           return;
         }
 
-        const scaleFactor = await currentWindow.scaleFactor();
+        // 使用缓存的 scaleFactor，避免拖拽时每帧 IPC 调用导致卡顿
+        let scaleFactor = scaleFactorRef.current;
+        if (scaleFactor === null) {
+          try {
+            scaleFactor = await currentWindow.scaleFactor();
+            scaleFactorRef.current = scaleFactor;
+          } catch {
+            return;
+          }
+        }
         const nextPosition = toLogicalWindowPosition(payload, scaleFactor);
         if (!nextPosition) {
           return;
@@ -563,11 +594,11 @@ export default function App() {
           }
 
           if (dockState.phase === "preview") {
-            const innerSize = await currentWindow.innerSize();
-            const nextSize = toLogicalWindowSize(innerSize, scaleFactor);
+            // 用缓存的窗口尺寸，避免每次 onMoved 都 await innerSize()
+            const cachedSize = latestWindowSizeRef.current ?? dockState.expandedBounds.windowSize;
             clearWindowDock({
               windowPosition: nextPosition,
-              windowSize: nextSize,
+              windowSize: cachedSize,
             });
           } else {
           dockStateRef.current = dockState.phase === "collapsed"
@@ -588,9 +619,11 @@ export default function App() {
         }
 
         if (!isProgrammaticWindowMove()) {
-          const innerSize = await currentWindow.innerSize();
-          const nextSize = toLogicalWindowSize(innerSize, scaleFactor);
-          scheduleWindowDockEvaluation(nextPosition, nextSize);
+          // 用缓存的窗口尺寸做边缘吸附检测，避免拖拽时高频 await innerSize()
+          const cachedSize = latestWindowSizeRef.current;
+          if (cachedSize) {
+            scheduleWindowDockEvaluation(nextPosition, cachedSize);
+          }
         }
       });
 

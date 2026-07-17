@@ -19,6 +19,7 @@ import ApiKeyInput from "./ApiKeyInput";
 const OAUTH_METHOD_URLS: Partial<Record<string, string>> = {
   anthropic: "https://code.claude.com/docs/en/authentication",
   openai: "https://developers.openai.com/codex/auth",
+  gemini: "https://ai.google.dev/gemini-api/docs/oauth",
 };
 
 /** 解析当前配置的 queryType（用于按字段动态显隐） */
@@ -84,6 +85,15 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const customConfig: CustomProviderConfig | null = selectedProvider.customConfig ?? null;
   // 是否为脚本类自定义供应商（需要展示 Base URL 与脚本信息）
   const isScriptProvider = resolvedQueryType === "script";
+  // 按供应商解析 API Key 输入框的 placeholder（火山方舟使用 AK:SK 拼接格式）
+  const apiKeyInputPlaceholder = (() => {
+    const providerId = config.providerId;
+    if (providerId === "volcengine") {
+      return t("settings.providerConfig.apiKeyPlaceholderVolcengine");
+    }
+    return "sk-...";
+  })();
+  const showVolcengineKeyHint = config.providerId === "volcengine";
 
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
@@ -197,7 +207,12 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     setDetectChoice(null);
     try {
       const tokens = await detectOAuthTokens();
-      const found = sortDetectedTokens(config.providerId === "anthropic" ? tokens.anthropic : tokens.openai);
+      const pool = config.providerId === "anthropic"
+        ? tokens.anthropic
+        : config.providerId === "gemini"
+          ? (tokens.gemini ?? [])
+          : tokens.openai;
+      const found = sortDetectedTokens(pool);
       if (found.length === 0) {
         setDetectResult(t("settings.providerConfig.tokenNotFound"));
         return;
@@ -397,7 +412,10 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                     </div>
                     <button className="btn btn-sm btn-ghost" type="button" onClick={() => { setApiKeys((current) => current.length === 1 ? [createEmptyApiKey(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteKey")}</button>
                   </div>
-                  <ApiKeyInput modelValue={item.value} placeholder="sk-..." onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
+                  <ApiKeyInput modelValue={item.value} placeholder={apiKeyInputPlaceholder} onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
+                  {showVolcengineKeyHint && index === 0 && (
+                    <div className="field-hint">{t("settings.providerConfig.apiKeyHintVolcengine")}</div>
+                  )}
                   <div className="config-actions">
                     <button className="btn btn-sm" disabled={validatingKeyId === item.id || !item.value.trim() || item.value.includes("...")} type="button" onClick={() => void handleValidate(index)}>{validatingKeyId === item.id ? t("settings.providerConfig.validating") : t("settings.providerConfig.validate")}</button>
                     {validationResults[item.id] === true && <span className="valid-mark">{t("settings.providerConfig.valid")}</span>}
@@ -444,12 +462,12 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                     </div>
                     <button className="btn btn-sm btn-ghost" type="button" onClick={() => { setSubscriptions((current) => current.length === 1 ? [createEmptySubscription(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteSubscription")}</button>
                   </div>
-                  <ApiKeyInput modelValue={item.oauthToken} placeholder={config.providerId === "anthropic" ? "sk-ant-oat01-..." : "eyJ..."} onChange={(value) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, oauthToken: value } : currentItem))} />
+                  <ApiKeyInput modelValue={item.oauthToken} placeholder={config.providerId === "anthropic" ? "sk-ant-oat01-..." : config.providerId === "gemini" ? '{"access_token":"...","refresh_token":"..."}' : "eyJ..."} onChange={(value) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, oauthToken: value } : currentItem))} />
                   {item.source && <div className="field-hint">{t("settings.providerConfig.detectedSource", { source: item.source })}</div>}
                 </div>
               ))}
               <div className="field-hint">
-                {config.providerId === "anthropic" ? <>{t("settings.providerConfig.detectAnthropicHintAuto")} <code>~/.claude/.credentials.json</code><br />{t("settings.providerConfig.detectAnthropicHintManual")} <code>claude setup-token</code></> : <>{t("settings.providerConfig.detectOpenAIHintAuto")} <code>~/.codex/auth.json</code><br />{t("settings.providerConfig.detectOpenAIHintManual", { command: "codex login" })} <code>codex login --device-auth</code></>}
+                {config.providerId === "anthropic" ? <>{t("settings.providerConfig.detectAnthropicHintAuto")} <code>~/.claude/.credentials.json</code><br />{t("settings.providerConfig.detectAnthropicHintManual")} <code>claude setup-token</code></> : config.providerId === "gemini" ? <>{t("settings.providerConfig.detectGeminiHintAuto")} <code>~/.gemini/oauth_creds.json</code></> : <>{t("settings.providerConfig.detectOpenAIHintAuto")} <code>~/.codex/auth.json</code><br />{t("settings.providerConfig.detectOpenAIHintManual", { command: "codex login" })} <code>codex login --device-auth</code></>}
               </div>
             </div>
           )}

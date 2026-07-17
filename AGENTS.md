@@ -22,7 +22,7 @@
 
 ### 1. OpenAI OAuth 检测已修复
 
-文件：`src-tauri/src/commands/window_commands.rs`
+文件：`src-tauri/src/commands/window_commands.rs`、`src-tauri/src/providers/oauth_detect.rs`
 
 `~/.codex/auth.json` 的 `tokens.access_token` 现在可能是：
 
@@ -30,6 +30,15 @@
 - 索引对象
 
 必须同时兼容，不能再只按对象格式解析。
+
+当前要求：
+
+- `~/.codex/auth.json` 仅在 `auth_mode == "chatgpt"` 时才视作可用 OAuth 凭据（其它 mode 直接返回 None）
+- `tokens.account_id` 也要一并解析，作为 `ChatGPT-Account-Id` header 发送给 ChatGPT 后端（多账号场景必须）
+- 两条解析链路保持一致：
+  - `commands::window_commands::detect_oauth_tokens`（Tauri 命令，面向前端，返回带 environment/source 元信息的 `DetectedTokens`，支持 Windows 原生 + WSL）
+  - `providers::oauth_detect::detect_openai`（纯函数，供后端订阅查询时同步调用，仅读当前系统原生凭据文件）
+- `DetectedToken` 结构新增 `accountId` 字段（camelCase 序列化），Anthropic 恒为 null，OpenAI 从 `tokens.account_id` 读取
 
 ### 2. 设置页保存链路已修复
 
@@ -432,7 +441,8 @@
 当前要求：
 
 - Anthropic 订阅展示不再只看单一窗口
-- 要兼容 `5 小时`、`7 天`、`7 天 Sonnet` 等多个订阅窗口
+- 要兼容 `5 小时`、`7 天`、`7 天 Sonnet`、`7 天 Opus` 等多个订阅窗口
+- 订阅窗口 label 必须使用机器常量（`five_hour` / `seven_day` / `seven_day_sonnet` / `seven_day_opus`），前端通过 `windowLabels` 映射成各语言文案；不能再硬编码中文 `"5小时"` / `"7天"` / `"7天(Sonnet)"`
 - 如果 OAuth 返回 `extra_usage`，主界面也要展示 Extra Usage 的利用率
 - 精简模式下也要保留这些额外窗口和 Extra Usage 的进度条
 
@@ -671,6 +681,8 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - `parse_codex_access_token()` 是否被走到
 - 本地文件路径是否正确
 - 是否当前机器把 Codex 凭据存到了系统凭据库而不是 `~/.codex/auth.json`
+- `auth_mode` 是否为 `"chatgpt"`（其它 mode 时 `oauth_detect::detect_openai` 直接返回 None）
+- 多账号场景下 `tokens.account_id` 是否存在；ChatGPT Wham 请求是否带上了 `ChatGPT-Account-Id` header
 
 ### OAuth 获取入口异常
 
@@ -935,6 +947,35 @@ cargo check
 - 缓存策略：失败快照不写入，保留上次成功值
 - 旧配置缺少 `providerTemplateId` / `customConfig` 字段时按 `providerId` 在 registry 兜底
 - 阶段 1 已实现：OpenAI / Anthropic / OpenRouter 迁移 + DeepSeek + NewAPI + 自定义供应商
-- 阶段 2 待实现：Kimi / GLM / MiniMax / ZenMux（CodingPlan）+ OAuth 自动检测 + Claude seven_day_opus
+- 阶段 2-A 已实现：Kimi / GLM / MiniMax（CodingPlan）接入 registry
+- 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
+- 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
 - 阶段 3 待实现：SiliconFlow / StepFun / Novita + 火山方舟 AK/SK + Gemini OAuth
+
+### 24. OAuth 凭据自动检测 + ChatGPT-Account-Id + Claude seven_day_opus 已接入
+
+文件：
+
+- `src-tauri/src/providers/oauth_detect.rs`（新增）
+- `src-tauri/src/providers/subscription.rs`
+- `src-tauri/src/providers/mod.rs`
+- `src-tauri/src/providers/registry.rs`
+- `src-tauri/src/commands/window_commands.rs`
+- `src/utils/ipc.ts`
+
+当前要求：
+
+- 新增 `providers::oauth_detect` 模块，提供纯函数式 OAuth 凭据检测能力：
+  - `detect_anthropic()` - 读 `~/.claude/.credentials.json` 的 `claudeAiOauth.accessToken`（兼容旧 key `claude.ai_oauth`）；macOS 额外尝试 Keychain（service=`Claude Code-credentials`）
+  - `detect_openai()` - 读 `~/.codex/auth.json`，仅 `auth_mode == "chatgpt"` 有效；返回 `tokens.access_token`（兼容字符串和索引对象）+ `tokens.account_id`
+  - home 目录解析复用 `window_commands` 的 `USERPROFILE` → `HOME` 回退逻辑，不依赖 `dirs` crate
+- `registry.rs` 的 openai / anthropic 模板填充 `oauth_detect` 字段（`file_path` / `token_path` / `keychain_service`），供前端展示检测来源
+- Claude 订阅补 `seven_day_opus` 窗口：`AnthropicOAuthUsageResponse` 新增 `seven_day_opus` 字段，命中时按 `window_labels::SEVEN_DAY_OPUS` 常量构造窗口
+- 所有 Anthropic 订阅窗口 label 改用 `window_labels` 常量（`FIVE_HOUR` / `SEVEN_DAY` / `SEVEN_DAY_SONNET` / `SEVEN_DAY_OPUS`），不再硬编码中文
+- ChatGPT Wham 查询补 `ChatGPT-Account-Id` header：
+  - `fetch_openai_wham` 签名增加 `account_id: Option<&str>`
+  - 调用方未传时，由 `oauth_detect::detect_openai()` 自动读取 `tokens.account_id`（fetch 时回退，不需要用户手动配置）
+  - `User-Agent` 改为 `codex-cli`（与 cc-switch 一致）
+- `SubscriptionFetcher::fetch` / `ProviderManager::fetch_subscription_usage` 签名透传 `account_id`；新增 `fetch_subscription_usage_with_account` 供未来显式传入
+- `DetectedToken` 结构新增 `accountId` 字段（`#[serde(default)]`，camelCase），前端 `ipc.ts::DetectedToken` 同步新增可选 `accountId`
 

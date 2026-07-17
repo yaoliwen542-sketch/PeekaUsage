@@ -20,6 +20,7 @@ pub async fn detect_oauth_tokens() -> Result<DetectedTokens, String> {
     let mut result = DetectedTokens {
         anthropic: Vec::new(),
         openai: Vec::new(),
+        gemini: Vec::new(),
     };
 
     if let Some(token) = read_claude_token_from_home(&home, "native") {
@@ -28,6 +29,20 @@ pub async fn detect_oauth_tokens() -> Result<DetectedTokens, String> {
 
     if let Some(token) = read_codex_token_from_home(&home, "native") {
         result.openai.push(token);
+    }
+
+    // Gemini：复用 oauth_detect::detect_gemini，token 字段是完整 oauth_creds.json 文本
+    // （含 refresh_token，供 subscription.rs 自动刷新）。与 Anthropic/OpenAI 不同，Gemini
+    // 不区分 native/WSL 环境（oauth_detect 仅读当前进程 home），也没有多账号场景。
+    if let Some(detected) = crate::providers::oauth_detect::detect_gemini() {
+        result.gemini.push(DetectedToken {
+            token: detected.token,
+            source: detected.source.clone(),
+            subscription_type: None,
+            environment: "native".to_string(),
+            display_source: detected.source,
+            account_id: None,
+        });
     }
 
     #[cfg(windows)]
@@ -74,6 +89,7 @@ fn read_claude_token_from_home(home: &std::path::Path, environment: &str) -> Opt
         subscription_type: oauth.subscription_type,
         environment: environment.to_string(),
         display_source: source,
+        account_id: None,
     })
 }
 
@@ -94,6 +110,7 @@ fn read_codex_token_from_home(home: &std::path::Path, environment: &str) -> Opti
         subscription_type: None,
         environment: environment.to_string(),
         display_source: source,
+        account_id: tokens.account_id.filter(|s| !s.is_empty()),
     })
 }
 
@@ -113,6 +130,7 @@ fn read_wsl_claude_token() -> Option<DetectedToken> {
         subscription_type: oauth.subscription_type,
         environment: "wsl".to_string(),
         display_source: format!("WSL {}", source),
+        account_id: None,
     })
 }
 
@@ -133,6 +151,7 @@ fn read_wsl_codex_token() -> Option<DetectedToken> {
         subscription_type: None,
         environment: "wsl".to_string(),
         display_source: format!("WSL {}", source),
+        account_id: tokens.account_id.filter(|s| !s.is_empty()),
     })
 }
 
@@ -202,6 +221,9 @@ fn dirs_next() -> Option<std::path::PathBuf> {
 pub struct DetectedTokens {
     pub anthropic: Vec<DetectedToken>,
     pub openai: Vec<DetectedToken>,
+    /// Gemini OAuth 凭据（token 字段存完整 oauth_creds.json 文本，含 refresh_token）
+    #[serde(default)]
+    pub gemini: Vec<DetectedToken>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -212,6 +234,10 @@ pub struct DetectedToken {
     pub subscription_type: Option<String>,
     pub environment: String,
     pub display_source: String,
+    /// OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header，多账号场景）；
+    /// Anthropic 恒为 None
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -235,4 +261,7 @@ struct CodexAuth {
 #[derive(Debug, serde::Deserialize)]
 struct CodexTokens {
     access_token: Option<Value>,
+    /// OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header）
+    #[serde(default)]
+    account_id: Option<String>,
 }

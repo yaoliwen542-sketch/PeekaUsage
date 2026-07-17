@@ -271,7 +271,8 @@
 当前行为：
 
 - Anthropic 订阅展示不再只看单一窗口
-- 支持 `5小时`、`7天`、`7天 Sonnet` 等多个窗口
+- 支持 `5小时`、`7天`、`7天 Sonnet`、`7天 Opus` 等多个窗口
+- 订阅窗口 label 使用机器常量（`five_hour` / `seven_day` / `seven_day_sonnet` / `seven_day_opus`），前端通过 `windowLabels` 映射成各语言文案
 - 如果返回 `extra_usage`，主界面会展示 Extra Usage 的利用率
 - 精简模式也会保留这些窗口和 Extra Usage 的进度条
 
@@ -941,7 +942,9 @@ cargo check
 - 缓存策略：失败快照不写入，保留上次成功值
 - 旧配置缺少 `providerTemplateId` / `customConfig` 字段时按 `providerId` 在 registry 兜底
 - 阶段 1 已实现：OpenAI / Anthropic / OpenRouter 迁移 + DeepSeek + NewAPI + 自定义供应商
-- 阶段 2 待实现：Kimi / GLM / MiniMax / ZenMux（CodingPlan）+ OAuth 自动检测 + Claude seven_day_opus
+- 阶段 2-A 已实现：Kimi / GLM / MiniMax（CodingPlan）接入 registry
+- 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
+- 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
 - 阶段 3 待实现：SiliconFlow / StepFun / Novita + 火山方舟 AK/SK + Gemini OAuth
 
 

@@ -38,7 +38,14 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                     base_url: None,
                 },
             ],
-            oauth_detect: None, // 阶段 2 填充
+            // OAuth 自动检测：从 ~/.codex/auth.json 读取 tokens.access_token + tokens.account_id
+            // （token_path 仅作前端展示/文档用，实际解析由 oauth_detect::detect_openai 处理，
+            // 兼容字符串和索引对象两种 access_token 格式）
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.codex/auth.json".to_string(),
+                token_path: "$.tokens.access_token".to_string(),
+                keychain_service: None,
+            }),
         },
         // === Anthropic（按量查询走 legacy fetch_usage，registry 只保留 Subscription）===
         // Anthropic 的 cost_report 模板在 registry 里走 Balance 查询分支，但 BalanceFieldMap
@@ -68,7 +75,50 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                     base_url: None,
                 },
             ],
-            oauth_detect: None,
+            // OAuth 自动检测：从 ~/.claude/.credentials.json 读取 claudeAiOauth.accessToken
+            // （兼容旧 key claude.ai_oauth）；macOS 额外尝试 Keychain
+            // (service="Claude Code-credentials")
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.claude/.credentials.json".to_string(),
+                token_path: "$.claudeAiOauth.accessToken".to_string(),
+                keychain_service: Some("Claude Code-credentials".to_string()),
+            }),
+        },
+        // === Gemini（Google Cloud Code Assist，Subscription，两步 OAuth）===
+        // 1. POST loadCodeAssist 拿 projectId
+        // 2. POST retrieveUserQuota 拿 buckets（按 modelId 分组，取最低 remainingFraction
+        //    -> utilization = (1 - remainingFraction) * 100）
+        // 由 gemini::fetch_gemini_quota 处理。token 过期时用 Gemini CLI 公开的
+        // client_id/client_secret 调 oauth2.googleapis.com/token 自动刷新。
+        //
+        // 凭据特殊性：Gemini 的 OAuth token 是 ~/.gemini/oauth_creds.json 的**完整 JSON**
+        // （含 access_token + refresh_token + expiry），而非单个 token 字符串。
+        // oauth_detect 的 token_path 指向 $.access_token 仅用于展示/校验存在性，
+        // 实际 detect_gemini 返回的 token 字段是整个文件内容（供 subscription 透传）。
+        ProviderTemplate {
+            id: "gemini".to_string(),
+            display_name: "Gemini".to_string(),
+            env_key_name: String::new(), // Gemini 不用 API Key
+            env_oauth_token_name: Some("GEMINI_OAUTH_CREDS".to_string()),
+            icon: "gemini".to_string(),
+            docs_url: Some("https://ai.google.dev/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: true,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Subscription {
+                    provider: "gemini".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.gemini/oauth_creds.json".to_string(),
+                token_path: "$.access_token".to_string(),
+                keychain_service: None,
+            }),
         },
         // === OpenRouter（Balance × 2，回退链路）===
         ProviderTemplate {
@@ -95,6 +145,7 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                             used: Some("$.data.total_usage".to_string()),
                             remaining: None, // = total - used
                             currency: "USD".to_string(),
+                            scale: None,
                         },
                     },
                     base_url: None,
@@ -109,6 +160,7 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                             used: Some("$.data.usage".to_string()),
                             remaining: None,
                             currency: "USD".to_string(),
+                            scale: None,
                         },
                     },
                     base_url: None,
@@ -139,7 +191,215 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                         used: None,
                         remaining: Some("$.balance_infos[0].total_balance".to_string()),
                         currency: "USD".to_string(),
+                        scale: None,
                     },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === SiliconFlow（硅基流动，Balance × 1）===
+        // GET https://api.siliconflow.cn/v1/user/info
+        // Bearer 认证。响应 { "data": { "totalBalance": 50.0 } }。
+        // 注：仅做国内版（.cn，CNY）；海外版（api.siliconflow.com，USD）用户可走自定义供应商。
+        ProviderTemplate {
+            id: "siliconflow".to_string(),
+            display_name: "SiliconFlow".to_string(),
+            env_key_name: "SILICONFLOW_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "siliconflow".to_string(),
+            docs_url: Some("https://cloud.siliconflow.cn/account/ak".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.siliconflow.cn/v1/user/info".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.data.totalBalance".to_string(),
+                        used: None,
+                        remaining: Some("$.data.totalBalance".to_string()),
+                        currency: "CNY".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === StepFun（阶跃星辰，Balance × 1）===
+        // GET https://api.stepfun.com/v1/accounts
+        // Bearer 认证。响应 { "balance": 100.0 }。
+        ProviderTemplate {
+            id: "stepfun".to_string(),
+            display_name: "StepFun".to_string(),
+            env_key_name: "STEPFUN_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "stepfun".to_string(),
+            docs_url: Some("https://platform.stepfun.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.stepfun.com/v1/accounts".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.balance".to_string(),
+                        used: None,
+                        remaining: Some("$.balance".to_string()),
+                        currency: "CNY".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === Novita AI（Balance × 1，单位换算）===
+        // GET https://api.novita.ai/v3/user/balance
+        // Bearer 认证。响应 { "availableBalance": 500000 }。
+        // 注意：availableBalance 单位是万分之一美元，需 scale=0.0001 换算为美元（500000 * 0.0001 = 5.0 USD）。
+        ProviderTemplate {
+            id: "novita".to_string(),
+            display_name: "Novita AI".to_string(),
+            env_key_name: "NOVITA_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "novita".to_string(),
+            docs_url: Some("https://novita.ai/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.novita.ai/v3/user/balance".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.availableBalance".to_string(),
+                        used: None,
+                        remaining: Some("$.availableBalance".to_string()),
+                        currency: "USD".to_string(),
+                        scale: Some(0.0001),
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === Kimi（月之暗面，CodingPlan）===
+        // GET https://api.kimi.com/coding/v1/usages
+        // Bearer 认证。响应含 limits[0].detail（5 小时窗口）和 usage（周限额窗口）。
+        // 由 coding_plan::fetch_kimi 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "kimi".to_string(),
+            display_name: "Kimi".to_string(),
+            env_key_name: "KIMI_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "kimi".to_string(),
+            docs_url: Some("https://platform.moonshot.cn/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "kimi".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === GLM（智谱，个人版，CodingPlan）===
+        // GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
+        // 裸 key 认证（无 Bearer 前缀）+ Accept-Language: en-US,en。
+        // 响应 data.limits[] 中 unit==3 -> 5 小时窗口，unit==6 -> 周限额窗口。
+        // 由 coding_plan::fetch_glm 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "glm".to_string(),
+            display_name: "GLM".to_string(),
+            env_key_name: "GLM_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "glm".to_string(),
+            docs_url: Some("https://open.bigmodel.cn/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "glm".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === MiniMax（CodingPlan）===
+        // GET https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
+        // Bearer 认证。响应 model_remains[] 中 model_name=="general" 的条目：
+        // current_interval_remaining_percent -> 5 小时窗口（utilization = 100 - remain）；
+        // current_weekly_status==1 时 current_weekly_remaining_percent -> 周限额窗口。
+        // 由 coding_plan::fetch_minimax 解析成百分比型 UsageData。
+        ProviderTemplate {
+            id: "minimax".to_string(),
+            display_name: "MiniMax".to_string(),
+            env_key_name: "MINIMAX_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "minimax".to_string(),
+            docs_url: Some("https://platform.minimaxi.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "minimax".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === 火山方舟（Volcengine，CodingPlan + SigV4 签名）===
+        // POST https://open.volcengineapi.com/?Action=GetAFPUsage&Version=2024-09-30
+        // 火山签名 V4（AK/SK）认证，非 Bearer。由 coding_plan::fetch_volcengine 处理：
+        // 1. 解析 "AccessKeyId:SecretAccessKey" 格式的 api_key
+        // 2. 调用 sigv4::sign_volc_request 生成签名 headers
+        // 3. 主链路 GetAFPUsage（绝对额度 -> 百分比）；失败回退 GetCodingPlanUsage（百分比）
+        //
+        // 注意：火山方舟的 api_key 字段格式特殊（AK:SK），前端在添加供应商时需提示用户
+        // 输入完整 "AKID:SecretKey" 字符串。环境变量 VOLC_ACCESSKEY 同样存储该拼接格式。
+        // 签名算法待真实 AK/SK 端到端验证。
+        ProviderTemplate {
+            id: "volcengine".to_string(),
+            display_name: "火山方舟".to_string(),
+            env_key_name: "VOLC_ACCESSKEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "volcengine".to_string(),
+            docs_url: Some("https://www.volcengine.com/docs/82379".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "volcengine".to_string(),
                 },
                 base_url: None,
             }],

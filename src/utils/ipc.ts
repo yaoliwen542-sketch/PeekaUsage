@@ -130,12 +130,16 @@ export interface DetectedToken {
   subscriptionType: string | null;
   environment: "windows" | "wsl" | "native";
   displaySource: string;
+  /** OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header，多账号场景）；Anthropic 恒为 null */
+  accountId?: string | null;
 }
 
 /** 检测到的 Token 集合 */
 export interface DetectedTokens {
   anthropic: DetectedToken[];
   openai: DetectedToken[];
+  /** Gemini OAuth 凭据（token 字段存完整 oauth_creds.json 文本） */
+  gemini?: DetectedToken[];
 }
 
 /** 自动检测本地 OAuth Token */

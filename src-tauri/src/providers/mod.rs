@@ -1,9 +1,13 @@
 pub mod anthropic;
 pub mod balance;
+pub mod coding_plan;
+pub mod gemini;
+pub mod oauth_detect;
 pub mod openai;
 pub mod openrouter;
 pub mod registry;
 pub mod script_engine;
+pub mod sigv4;
 pub mod subscription;
 pub mod traits;
 pub mod types;
@@ -166,10 +170,26 @@ impl ProviderManager {
     }
 
     /// 获取单个供应商的订阅数据
+    ///
+    /// `account_id` 仅 openai_wham 使用：透传给 SubscriptionFetcher::fetch，
+    /// 作为 `ChatGPT-Account-Id` header。传 None 时由 fetcher 内部自动检测
+    /// （从 `~/.codex/auth.json` 的 `tokens.account_id` 读取）。
     pub async fn fetch_subscription_usage(
         &self,
         provider_id: &str,
         oauth_token: &str,
+        custom_config: Option<&CustomProviderConfig>,
+    ) -> SubscriptionUsage {
+        self.fetch_subscription_usage_with_account(provider_id, oauth_token, None, custom_config)
+            .await
+    }
+
+    /// 获取单个供应商的订阅数据（显式传入 account_id）
+    pub async fn fetch_subscription_usage_with_account(
+        &self,
+        provider_id: &str,
+        oauth_token: &str,
+        account_id: Option<&str>,
         custom_config: Option<&CustomProviderConfig>,
     ) -> SubscriptionUsage {
         let template = match self.resolve_template_for_query(provider_id, custom_config) {
@@ -191,7 +211,10 @@ impl ProviderManager {
             .filter(|q| q.is_subscription_query())
         {
             if let QueryType::Subscription { provider } = &spec.query_type {
-                return self.subscription_fetcher.fetch(provider, oauth_token).await;
+                return self
+                    .subscription_fetcher
+                    .fetch(provider, oauth_token, account_id)
+                    .await;
             }
         }
 
@@ -232,11 +255,8 @@ impl ProviderManager {
                 balance::execute_balance_query(&self.http_client, url, auth, field_map, api_key)
                     .await
             }
-            QueryType::CodingPlan { provider: _ } => {
-                // 阶段 2 实现
-                Err(ProviderError::RequestError(
-                    "CodingPlan 查询将在阶段 2 实现".into(),
-                ))
+            QueryType::CodingPlan { provider } => {
+                coding_plan::execute_coding_plan_query(&self.http_client, provider, api_key).await
             }
             QueryType::Subscription { .. } => {
                 Err(ProviderError::RequestError("订阅查询不应走用量链路".into()))
