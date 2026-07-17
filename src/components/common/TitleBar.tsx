@@ -21,7 +21,14 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
       return;
     }
 
+    // 拖动开始：禁用 backdrop-filter 避免高频重绘导致卡顿
+    document.documentElement.style.setProperty("--backdrop-blur", "0px");
     onDragIntentStart?.();
+  }
+
+  function handleMouseUp() {
+    // 拖动结束：恢复 backdrop-filter
+    document.documentElement.style.setProperty("--backdrop-blur", "");
   }
 
   // 注意：保留 titlebar 类名作为 JS 测量钩子（WidgetContainer 用它读取标题栏高度）
@@ -30,6 +37,7 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
       className="titlebar flex h-8 shrink-0 items-center justify-between border-b border-border bg-titlebar px-2"
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
     >
       <div className="flex items-center gap-2" data-tauri-drag-region>
         <span className="h-2 w-2 rounded-full bg-primary" />
