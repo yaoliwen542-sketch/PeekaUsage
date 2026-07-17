@@ -124,7 +124,7 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     const isOpen = colorPickerTarget === target;
 
     return (
-      <div className="color-picker">
+      <div className="relative">
         <button
           className={`color-swatch-trigger${isOpen ? " is-open" : ""}`}
           type="button"
@@ -313,10 +313,10 @@ export default function ProviderConfig(props: ProviderConfigProps) {
 
   return (
     <div className={`provider-config${isCreateMode ? " is-create" : ""}`}>
-      <div className="config-header">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         {isCreateMode ? (
           <div className="provider-select-wrap">
-            <label className="field-label">{t("settings.providerConfig.selectProvider")}</label>
+            <label className="text-[11px] font-medium text-text-secondary">{t("settings.providerConfig.selectProvider")}</label>
             <AppSelect
               className="provider-select"
               modelValue={config.providerId}
@@ -339,11 +339,11 @@ export default function ProviderConfig(props: ProviderConfigProps) {
           </div>
         ) : (
           <>
-            <div className="provider-title">
+            <div className="flex items-center gap-2 text-sm font-medium text-text">
               <ProviderIcon providerId={config.providerId} size={20} />
-              <span className="provider-name">{config.displayName}</span>
+              <span className="text-sm font-medium text-text">{config.displayName}</span>
             </div>
-            <button className="collapse-toggle" type="button" aria-expanded={expanded} aria-label={expanded ? t("settings.providerConfig.collapse") : t("settings.providerConfig.expand")} onClick={() => onExpandedChange?.(!expanded)}>
+            <button className="flex h-6 w-6 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-elevated hover:text-text" type="button" aria-expanded={expanded} aria-label={expanded ? t("settings.providerConfig.collapse") : t("settings.providerConfig.expand")} onClick={() => onExpandedChange?.(!expanded)}>
               <svg className={`collapse-icon${expanded ? " is-expanded" : ""}`} viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 4.5L6 8L9.5 4.5" /></svg>
             </button>
           </>
@@ -351,9 +351,9 @@ export default function ProviderConfig(props: ProviderConfigProps) {
       </div>
 
       {(isCreateMode || expanded) && (
-        <div className="config-body">
+        <div className="flex flex-col gap-3 p-3">
           {canDetectOAuth && (
-            <div className="provider-config-tabs" role="tablist" aria-label={t("settings.providerConfig.viewAriaLabel")}>
+            <div className="flex gap-1" role="tablist" aria-label={t("settings.providerConfig.viewAriaLabel")}>
               <button className={`provider-config-tab${activeView === "apiKeys" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "apiKeys"} onClick={() => setActiveView("apiKeys")}>{t("settings.providerConfig.apiKeyTab")}</button>
               <button className={`provider-config-tab${activeView === "subscriptions" ? " is-active" : ""}`} type="button" role="tab" aria-selected={activeView === "subscriptions"} onClick={() => setActiveView("subscriptions")}>{t("settings.providerConfig.subscriptionTab")}</button>
             </div>
@@ -362,128 +362,128 @@ export default function ProviderConfig(props: ProviderConfigProps) {
           {/* 脚本类供应商：展示只读 Base URL / 认证方式 / 查询类型信息 */}
           {isScriptProvider && customConfig && (
             <div className="field-group custom-provider-meta">
-              <div className="field-row">
-                <label className="field-label">{t("settings.providerConfig.customBaseUrl")}</label>
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] font-medium text-text-secondary">{t("settings.providerConfig.customBaseUrl")}</label>
               </div>
-              <div className="custom-provider-meta-value" title={customConfig.baseUrl}>
+              <div className="text-[11px] text-text-secondary" title={customConfig.baseUrl}>
                 {customConfig.baseUrl || "-"}
               </div>
-              <div className="custom-provider-meta-row">
-                <span className="custom-provider-meta-label">{t("settings.providerConfig.customQueryType")}</span>
-                <span className="custom-provider-meta-value-inline">
+              <div className="flex items-center justify-between gap-2 py-1">
+                <span className="text-[11px] text-text-tertiary">{t("settings.providerConfig.customQueryType")}</span>
+                <span className="text-[11px] text-text-secondary">
                   {t(customConfig.queryType === "script" ? "settings.wizard.queryTypeScript" : "settings.wizard.queryTypeBalance")}
                 </span>
               </div>
-              <div className="custom-provider-meta-row">
-                <span className="custom-provider-meta-label">{t("settings.providerConfig.customAuthScheme")}</span>
-                <span className="custom-provider-meta-value-inline">{customConfig.authScheme}</span>
+              <div className="flex items-center justify-between gap-2 py-1">
+                <span className="text-[11px] text-text-tertiary">{t("settings.providerConfig.customAuthScheme")}</span>
+                <span className="text-[11px] text-text-secondary">{customConfig.authScheme}</span>
               </div>
               {/* 修复 C-3：脚本类供应商展示 accessToken / userId 状态（只读，编辑走重新创建向导） */}
               {customConfig.accessToken && (
-                <div className="custom-provider-meta-row">
-                  <span className="custom-provider-meta-label">{t("settings.wizard.accessToken")}</span>
-                  <span className="custom-provider-meta-value-inline">{maskCredential(customConfig.accessToken)}</span>
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-[11px] text-text-tertiary">{t("settings.wizard.accessToken")}</span>
+                  <span className="text-[11px] text-text-secondary">{maskCredential(customConfig.accessToken)}</span>
                 </div>
               )}
               {customConfig.userId && (
-                <div className="custom-provider-meta-row">
-                  <span className="custom-provider-meta-label">{t("settings.wizard.userId")}</span>
-                  <span className="custom-provider-meta-value-inline">{customConfig.userId}</span>
+                <div className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-[11px] text-text-tertiary">{t("settings.wizard.userId")}</span>
+                  <span className="text-[11px] text-text-secondary">{customConfig.userId}</span>
                 </div>
               )}
               {customConfig.allowHttp && (
-                <div className="field-hint">{t("settings.providerConfig.customAllowHttpEnabled")}</div>
+                <div className="text-[11px] leading-relaxed text-text-tertiary">{t("settings.providerConfig.customAllowHttpEnabled")}</div>
               )}
             </div>
           )}
 
           {(!canDetectOAuth || activeView === "apiKeys") && (
-            <div className="field-group">
-              <div className="field-row">
-                <label className="field-label">{t("settings.providerConfig.apiKeyLabel")}</label>
-                <button className="btn btn-sm btn-secondary" type="button" onClick={() => { setApiKeys((current) => [...current, createEmptyApiKey(current.length)]); setSaveResult(null); }}>{t("settings.providerConfig.addKey")}</button>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] font-medium text-text-secondary">{t("settings.providerConfig.apiKeyLabel")}</label>
+                <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => { setApiKeys((current) => [...current, createEmptyApiKey(current.length)]); setSaveResult(null); }}>{t("settings.providerConfig.addKey")}</button>
               </div>
               {apiKeys.map((item, index) => (
-                <div key={item.id} className="api-key-card">
-                  <div className="api-key-header">
-                    <div className="name-color-row">
-                      <input value={item.name} onChange={(event) => { const nextValue = event.target.value; setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, name: nextValue } : currentItem)); }} className="key-name-input" type="text" placeholder={t("settings.providerConfig.keyName", { index: index + 1 })} />
+                <div key={item.id} className="rounded-md border border-border bg-surface-elevated p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <input value={item.name} onChange={(event) => { const nextValue = event.target.value; setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, name: nextValue } : currentItem)); }} className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-text placeholder:text-text-tertiary focus:border-primary focus:outline-none" type="text" placeholder={t("settings.providerConfig.keyName", { index: index + 1 })} />
                       {renderColorPicker(`apiKey:${item.id}`, item.color, (nextColor) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, color: nextColor } : currentItem)))}
                     </div>
-                    <button className="btn btn-sm btn-ghost" type="button" onClick={() => { setApiKeys((current) => current.length === 1 ? [createEmptyApiKey(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteKey")}</button>
+                    <button className="h-7 rounded-md px-3 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50" type="button" onClick={() => { setApiKeys((current) => current.length === 1 ? [createEmptyApiKey(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteKey")}</button>
                   </div>
                   <ApiKeyInput modelValue={item.value} placeholder={apiKeyInputPlaceholder} onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
                   {showVolcengineKeyHint && index === 0 && (
-                    <div className="field-hint">{t("settings.providerConfig.apiKeyHintVolcengine")}</div>
+                    <div className="text-[11px] leading-relaxed text-text-tertiary">{t("settings.providerConfig.apiKeyHintVolcengine")}</div>
                   )}
-                  <div className="config-actions">
-                    <button className="btn btn-sm" disabled={validatingKeyId === item.id || !item.value.trim() || item.value.includes("...")} type="button" onClick={() => void handleValidate(index)}>{validatingKeyId === item.id ? t("settings.providerConfig.validating") : t("settings.providerConfig.validate")}</button>
-                    {validationResults[item.id] === true && <span className="valid-mark">{t("settings.providerConfig.valid")}</span>}
-                    {validationResults[item.id] === false && <span className="invalid-mark">{t("settings.providerConfig.invalid")}</span>}
-                    {item.isActiveInEnvironment ? <span className="environment-pill">{t("settings.providerConfig.activeEnvironment")}</span> : (
-                      <button className="btn btn-sm btn-secondary" disabled={isCreateMode || hasChanges || saving || removing || activatingKeyId === item.id || !item.value.trim()} type="button" onClick={() => void handleActivateApiKey(item)}>
+                  <div className="flex items-center gap-2">
+                    <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" disabled={validatingKeyId === item.id || !item.value.trim() || item.value.includes("...")} type="button" onClick={() => void handleValidate(index)}>{validatingKeyId === item.id ? t("settings.providerConfig.validating") : t("settings.providerConfig.validate")}</button>
+                    {validationResults[item.id] === true && <span className="text-success">{t("settings.providerConfig.valid")}</span>}
+                    {validationResults[item.id] === false && <span className="text-error">{t("settings.providerConfig.invalid")}</span>}
+                    {item.isActiveInEnvironment ? <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">{t("settings.providerConfig.activeEnvironment")}</span> : (
+                      <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" disabled={isCreateMode || hasChanges || saving || removing || activatingKeyId === item.id || !item.value.trim()} type="button" onClick={() => void handleActivateApiKey(item)}>
                         {activatingKeyId === item.id ? t("settings.providerConfig.activatingEnvironment") : t("settings.providerConfig.activateEnvironment")}
                       </button>
                     )}
                   </div>
                 </div>
               ))}
-              <div className="field-hint">{hasChanges ? t("settings.providerConfig.environmentSaveFirstHint") : t("settings.providerConfig.environmentHint", { envVar: config.environmentVariableName })}</div>
+              <div className="text-[11px] leading-relaxed text-text-tertiary">{hasChanges ? t("settings.providerConfig.environmentSaveFirstHint") : t("settings.providerConfig.environmentHint", { envVar: config.environmentVariableName })}</div>
             </div>
           )}
 
           {canDetectOAuth && activeView === "subscriptions" && (
-            <div className="field-group">
-              <div className="field-row">
-                <label className="field-label">{t("settings.providerConfig.oauthTokenLabel")}</label>
-                <button className="btn btn-sm btn-secondary" type="button" onClick={() => { setSubscriptions((current) => [...current, createEmptySubscription(current.length)]); setSaveResult(null); }}>{t("settings.providerConfig.addSubscription")}</button>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] font-medium text-text-secondary">{t("settings.providerConfig.oauthTokenLabel")}</label>
+                <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => { setSubscriptions((current) => [...current, createEmptySubscription(current.length)]); setSaveResult(null); }}>{t("settings.providerConfig.addSubscription")}</button>
               </div>
-              <div className="config-actions">
-                <button className="btn btn-sm btn-detect" disabled={detecting} type="button" onClick={() => void handleDetectToken()}>{detecting ? t("settings.providerConfig.detecting") : t("settings.providerConfig.detect")}</button>
-                <button className="btn btn-sm btn-secondary" type="button" onClick={() => void handleOpenOauthMethod()}>{t("settings.providerConfig.getMethod")}</button>
+              <div className="flex items-center gap-2">
+                <button className="h-7 rounded-md bg-primary/10 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50" disabled={detecting} type="button" onClick={() => void handleDetectToken()}>{detecting ? t("settings.providerConfig.detecting") : t("settings.providerConfig.detect")}</button>
+                <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => void handleOpenOauthMethod()}>{t("settings.providerConfig.getMethod")}</button>
               </div>
-              {detectResult && <div className="detect-result">{detectResult}</div>}
+              {detectResult && <div className="text-[11px] text-text-secondary">{detectResult}</div>}
               {detectChoice && (
-                <div className="detect-choice-panel">
-                  <div className="field-hint">{t("settings.providerConfig.detectChoiceHint")}</div>
-                  <div className="config-actions">
-                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => { applyDetectedTokens([detectChoice.primary]); setDetectResult(buildDetectedMessage(detectChoice.primary)); setDetectChoice(null); }}>{t("settings.providerConfig.useDetectedCandidate", { source: detectChoice.primary.displaySource })}</button>
-                    <button className="btn btn-sm btn-secondary" type="button" onClick={() => { applyDetectedTokens([detectChoice.secondary]); setDetectResult(buildDetectedMessage(detectChoice.secondary)); setDetectChoice(null); }}>{t("settings.providerConfig.useDetectedCandidate", { source: detectChoice.secondary.displaySource })}</button>
-                    <button className="btn btn-sm" type="button" onClick={() => { applyDetectedTokens([detectChoice.primary, detectChoice.secondary], true); setDetectResult(t("settings.providerConfig.detectedMultipleAssigned", { first: detectChoice.primary.displaySource, second: detectChoice.secondary.displaySource })); setDetectChoice(null); }}>{t("settings.providerConfig.useBothDetectedCandidates")}</button>
+                <div className="rounded-md border border-border bg-surface-elevated p-2">
+                  <div className="text-[11px] leading-relaxed text-text-tertiary">{t("settings.providerConfig.detectChoiceHint")}</div>
+                  <div className="flex items-center gap-2">
+                    <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => { applyDetectedTokens([detectChoice.primary]); setDetectResult(buildDetectedMessage(detectChoice.primary)); setDetectChoice(null); }}>{t("settings.providerConfig.useDetectedCandidate", { source: detectChoice.primary.displaySource })}</button>
+                    <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => { applyDetectedTokens([detectChoice.secondary]); setDetectResult(buildDetectedMessage(detectChoice.secondary)); setDetectChoice(null); }}>{t("settings.providerConfig.useDetectedCandidate", { source: detectChoice.secondary.displaySource })}</button>
+                    <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={() => { applyDetectedTokens([detectChoice.primary, detectChoice.secondary], true); setDetectResult(t("settings.providerConfig.detectedMultipleAssigned", { first: detectChoice.primary.displaySource, second: detectChoice.secondary.displaySource })); setDetectChoice(null); }}>{t("settings.providerConfig.useBothDetectedCandidates")}</button>
                   </div>
                 </div>
               )}
               {subscriptions.map((item, index) => (
-                <div key={item.id} className="api-key-card">
-                  <div className="api-key-header">
-                    <div className="name-color-row">
-                      <input value={item.name} onChange={(event) => { const nextValue = event.target.value; setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, name: nextValue } : currentItem)); }} className="key-name-input" type="text" placeholder={t("settings.providerConfig.subscriptionName", { index: index + 1 })} />
+                <div key={item.id} className="rounded-md border border-border bg-surface-elevated p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <input value={item.name} onChange={(event) => { const nextValue = event.target.value; setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, name: nextValue } : currentItem)); }} className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-xs text-text placeholder:text-text-tertiary focus:border-primary focus:outline-none" type="text" placeholder={t("settings.providerConfig.subscriptionName", { index: index + 1 })} />
                       {renderColorPicker(`subscription:${item.id}`, item.color, (nextColor) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, color: nextColor } : currentItem)))}
                     </div>
-                    <button className="btn btn-sm btn-ghost" type="button" onClick={() => { setSubscriptions((current) => current.length === 1 ? [createEmptySubscription(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteSubscription")}</button>
+                    <button className="h-7 rounded-md px-3 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text disabled:opacity-50" type="button" onClick={() => { setSubscriptions((current) => current.length === 1 ? [createEmptySubscription(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}>{t("settings.providerConfig.deleteSubscription")}</button>
                   </div>
                   <ApiKeyInput modelValue={item.oauthToken} placeholder={config.providerId === "anthropic" ? "sk-ant-oat01-..." : config.providerId === "gemini" ? '{"access_token":"...","refresh_token":"..."}' : "eyJ..."} onChange={(value) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, oauthToken: value } : currentItem))} />
-                  {item.source && <div className="field-hint">{t("settings.providerConfig.detectedSource", { source: item.source })}</div>}
+                  {item.source && <div className="text-[11px] leading-relaxed text-text-tertiary">{t("settings.providerConfig.detectedSource", { source: item.source })}</div>}
                 </div>
               ))}
-              <div className="field-hint">
+              <div className="text-[11px] leading-relaxed text-text-tertiary">
                 {config.providerId === "anthropic" ? <>{t("settings.providerConfig.detectAnthropicHintAuto")} <code>~/.claude/.credentials.json</code><br />{t("settings.providerConfig.detectAnthropicHintManual")} <code>claude setup-token</code></> : config.providerId === "gemini" ? <>{t("settings.providerConfig.detectGeminiHintAuto")} <code>~/.gemini/oauth_creds.json</code></> : <>{t("settings.providerConfig.detectOpenAIHintAuto")} <code>~/.codex/auth.json</code><br />{t("settings.providerConfig.detectOpenAIHintManual", { command: "codex login" })} <code>codex login --device-auth</code></>}
               </div>
             </div>
           )}
 
-          {!hasAnyCredential && <div className="field-hint">{t("settings.providerConfig.credentialHint")}</div>}
+          {!hasAnyCredential && <div className="text-[11px] leading-relaxed text-text-tertiary">{t("settings.providerConfig.credentialHint")}</div>}
           {saveResult && <div className={`save-result ${saveResult.type === "success" ? "is-success" : "is-error"}`}>{saveResult.message}</div>}
 
-          <div className="footer-actions">
+          <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
             {isCreateMode ? (
               <>
-                <button className="btn btn-sm btn-secondary" type="button" onClick={onCanceled}>{t("common.cancel")}</button>
-                <button className="btn btn-sm btn-primary" disabled={saving || !hasAnyCredential} type="button" onClick={() => void handleSave()}>{saveButtonLabel}</button>
+                <button className="h-7 rounded-md bg-surface-elevated px-3 text-xs font-medium text-text transition-colors hover:bg-border disabled:opacity-50" type="button" onClick={onCanceled}>{t("common.cancel")}</button>
+                <button className="h-7 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50" disabled={saving || !hasAnyCredential} type="button" onClick={() => void handleSave()}>{saveButtonLabel}</button>
               </>
             ) : (
               <>
-                <button className="btn btn-sm btn-danger" disabled={saving || removing} type="button" onClick={() => setShowRemoveDialog(true)}>{removing ? t("common.removing") : t("common.remove")}</button>
+                <button className="h-7 rounded-md bg-error/10 px-3 text-xs font-medium text-error transition-colors hover:bg-error/20 disabled:opacity-50" disabled={saving || removing} type="button" onClick={() => setShowRemoveDialog(true)}>{removing ? t("common.removing") : t("common.remove")}</button>
                 <button className={`btn btn-sm btn-primary${saveResult?.type === "success" && !hasChanges ? " is-saved" : ""}`} disabled={saving || !hasChanges || !hasAnyCredential} type="button" onClick={() => void handleSave()}>{saveButtonLabel}</button>
               </>
             )}

@@ -1,8 +1,34 @@
 import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
 import ProviderIcon from "../common/ProviderIcon";
 import type { UsageSummary } from "../../types/provider";
+
+const ISLAND_POSITION_KEY = "peekausage.island.position";
+
+/** 读取持久化的灵动岛位置 */
+function loadSavedPosition(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(ISLAND_POSITION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.x === "number" && typeof parsed.y === "number") {
+      return parsed;
+    }
+  } catch {
+    // 忽略解析失败
+  }
+  return null;
+}
+
+/** 持久化灵动岛位置 */
+function savePosition(x: number, y: number) {
+  try {
+    localStorage.setItem(ISLAND_POSITION_KEY, JSON.stringify({ x, y }));
+  } catch {
+    // 忽略存储失败
+  }
+}
 
 /**
  * 灵动岛组件
@@ -11,11 +37,23 @@ import type { UsageSummary } from "../../types/provider";
  * - 收起态：小胶囊，显示最高用量供应商图标 + 百分比
  * - 悬停展开：显示所有启用供应商的摘要（图标 + 名称 + 百分比 + 进度条）
  * - 可拖动（data-tauri-drag-region）
+ * - 位置持久化（localStorage）
  * - 通过 Tauri event "island-usage-update" 接收主窗口的用量数据
  */
 export default function IslandWidget() {
   const [summaries, setSummaries] = useState<UsageSummary[]>([]);
   const [hovered, setHovered] = useState(false);
+
+  // 启动时恢复持久化的位置
+  useEffect(() => {
+    const saved = loadSavedPosition();
+    if (saved) {
+      const win = getCurrentWindow();
+      win.setPosition(new LogicalPosition(saved.x, saved.y)).catch(() => {
+        // 忽略设置位置失败
+      });
+    }
+  }, []);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
@@ -67,12 +105,19 @@ export default function IslandWidget() {
       const dy = ev.screenY - startY;
       const newX = startPos.x + dx;
       const newY = startPos.y + dy;
-      await win.setPosition(new (await import("@tauri-apps/api/window")).LogicalPosition(newX, newY));
+      await win.setPosition(new LogicalPosition(newX, newY));
     };
 
-    const onUp = () => {
+    const onUp = async () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      // 持久化最终位置
+      try {
+        const finalPos = await win.outerPosition();
+        savePosition(finalPos.x, finalPos.y);
+      } catch {
+        // 忽略获取位置失败
+      }
     };
 
     window.addEventListener("mousemove", onMove);
