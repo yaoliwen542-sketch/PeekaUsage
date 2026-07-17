@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* 设计 token 统一由 Tailwind 4 @theme 接管（原 variables.css 已迁移至此）
    亮色为默认值；暗色通过 [data-theme="dark"] 覆盖；
