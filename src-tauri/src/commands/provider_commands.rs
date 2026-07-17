@@ -92,7 +92,16 @@ pub async fn get_provider_configs(
     app_config: State<'_, AppConfig>,
     key_store: State<'_, KeyStore>,
 ) -> Result<Vec<ProviderConfigItem>, String> {
-    let configured_providers = app_config.get_configured_providers().await;
+    // 返回所有已存在的 provider 条目（不论 enabled），
+    // 设置页需要显示所有内置供应商卡片让用户填 Key，不能只返回 enabled 的。
+    let provider_entries = app_config.get_provider_entries().await;
+    let provider_order = app_config.get_provider_order().await;
+    let mut configured_providers: Vec<String> = provider_entries.keys().cloned().collect();
+    configured_providers.sort_by(|left, right| {
+        let li = provider_order.iter().position(|id| id == left).unwrap_or(usize::MAX);
+        let ri = provider_order.iter().position(|id| id == right).unwrap_or(usize::MAX);
+        li.cmp(&ri).then_with(|| left.cmp(right))
+    });
     let mut items = Vec::new();
 
     for provider_id in configured_providers {
@@ -144,7 +153,7 @@ pub async fn get_provider_configs(
             .as_ref()
             .and_then(|provider_entry| provider_entry.active_api_key_id.clone());
 
-        item.enabled = true;
+        item.enabled = entry.as_ref().map(|e| e.enabled).unwrap_or(false);
         item.api_keys = api_keys
             .into_iter()
             .map(|key| ProviderApiKeyItem {
@@ -875,7 +884,7 @@ fn mask_value(value: &str) -> String {
 /// 获取所有可选供应商模板（含内置，用于设置页"新增供应商"下拉）
 #[tauri::command]
 pub async fn get_provider_templates(
-    provider_manager: State<'_, std::sync::Arc<ProviderManager>>,
+    provider_manager: State<'_, ProviderManager>,
 ) -> Result<Vec<ProviderTemplate>, String> {
     Ok(provider_manager.get_provider_templates())
 }
@@ -889,7 +898,7 @@ pub async fn get_newapi_script_template() -> Result<String, String> {
 /// 测试自定义供应商脚本（保存前预演）
 #[tauri::command]
 pub async fn test_custom_provider_script(
-    provider_manager: State<'_, std::sync::Arc<ProviderManager>>,
+    provider_manager: State<'_, ProviderManager>,
     code: String,
     api_key: String,
     base_url: Option<String>,

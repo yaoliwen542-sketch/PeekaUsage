@@ -387,6 +387,11 @@ impl AppConfig {
     pub async fn get_enabled_providers(&self) -> Vec<String> {
         self.get_configured_providers().await
     }
+
+    /// 获取 provider_order（用于设置页排序）
+    pub async fn get_provider_order(&self) -> Vec<String> {
+        self.config.read().await.provider_order.clone()
+    }
 }
 
 fn compare_provider_order(order: &[String], left: &str, right: &str) -> std::cmp::Ordering {
