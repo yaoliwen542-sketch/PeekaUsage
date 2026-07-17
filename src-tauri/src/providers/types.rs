@@ -289,6 +289,12 @@ pub struct BalanceFieldMap {
     pub remaining: Option<String>,
     /// 货币单位，如 "USD" / "CNY"
     pub currency: String,
+    /// 提取值乘以此系数（如 Novita 的 0.0001，将万分之一美元换算为美元）
+    ///
+    /// 应用范围：total / used / remaining 三个字段均会乘以 scale。
+    /// 默认 None 表示不换算（DeepSeek/OpenRouter 等模板不受影响）。
+    #[serde(default)]
+    pub scale: Option<f64>,
 }
 
 /// 单条查询规格

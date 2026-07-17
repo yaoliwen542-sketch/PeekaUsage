@@ -63,13 +63,14 @@ pub async fn execute_balance_query(
         .map_err(|e| ProviderError::ParseError(format!("解析 JSON 失败: {}", e)))?;
 
     // 用 jsonpath 提取字段
-    let total = extract_field(&json, &field_map.total)?;
+    let scale = field_map.scale;
+    let total = extract_field(&json, &field_map.total)?.map(|v| apply_scale(v, scale));
     let used = match &field_map.used {
-        Some(path) => extract_field(&json, path)?,
+        Some(path) => extract_field(&json, path)?.map(|v| apply_scale(v, scale)),
         None => None,
     };
     let remaining = match &field_map.remaining {
-        Some(path) => extract_field(&json, path)?,
+        Some(path) => extract_field(&json, path)?.map(|v| apply_scale(v, scale)),
         None => match (&total, &used) {
             (Some(t), Some(u)) => Some(t - u),
             _ => None,
@@ -182,4 +183,11 @@ fn extract_field(json: &Value, path: &str) -> Result<Option<f64>, ProviderError>
     };
 
     Ok(num)
+}
+
+/// 把提取出来的数值乘以 scale（如 Novita 的 0.0001）
+///
+/// scale 为 None 时不换算，直接返回原值。
+fn apply_scale(value: f64, scale: Option<f64>) -> f64 {
+    scale.map_or(value, |s| value * s)
 }

@@ -109,6 +109,7 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                             used: Some("$.data.total_usage".to_string()),
                             remaining: None, // = total - used
                             currency: "USD".to_string(),
+                            scale: None,
                         },
                     },
                     base_url: None,
@@ -123,6 +124,7 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                             used: Some("$.data.usage".to_string()),
                             remaining: None,
                             currency: "USD".to_string(),
+                            scale: None,
                         },
                     },
                     base_url: None,
@@ -153,6 +155,105 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                         used: None,
                         remaining: Some("$.balance_infos[0].total_balance".to_string()),
                         currency: "USD".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === SiliconFlow（硅基流动，Balance × 1）===
+        // GET https://api.siliconflow.cn/v1/user/info
+        // Bearer 认证。响应 { "data": { "totalBalance": 50.0 } }。
+        // 注：仅做国内版（.cn，CNY）；海外版（api.siliconflow.com，USD）用户可走自定义供应商。
+        ProviderTemplate {
+            id: "siliconflow".to_string(),
+            display_name: "SiliconFlow".to_string(),
+            env_key_name: "SILICONFLOW_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "siliconflow".to_string(),
+            docs_url: Some("https://cloud.siliconflow.cn/account/ak".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.siliconflow.cn/v1/user/info".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.data.totalBalance".to_string(),
+                        used: None,
+                        remaining: Some("$.data.totalBalance".to_string()),
+                        currency: "CNY".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === StepFun（阶跃星辰，Balance × 1）===
+        // GET https://api.stepfun.com/v1/accounts
+        // Bearer 认证。响应 { "balance": 100.0 }。
+        ProviderTemplate {
+            id: "stepfun".to_string(),
+            display_name: "StepFun".to_string(),
+            env_key_name: "STEPFUN_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "stepfun".to_string(),
+            docs_url: Some("https://platform.stepfun.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.stepfun.com/v1/accounts".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.balance".to_string(),
+                        used: None,
+                        remaining: Some("$.balance".to_string()),
+                        currency: "CNY".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === Novita AI（Balance × 1，单位换算）===
+        // GET https://api.novita.ai/v3/user/balance
+        // Bearer 认证。响应 { "availableBalance": 500000 }。
+        // 注意：availableBalance 单位是万分之一美元，需 scale=0.0001 换算为美元（500000 * 0.0001 = 5.0 USD）。
+        ProviderTemplate {
+            id: "novita".to_string(),
+            display_name: "Novita AI".to_string(),
+            env_key_name: "NOVITA_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "novita".to_string(),
+            docs_url: Some("https://novita.ai/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.novita.ai/v3/user/balance".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.availableBalance".to_string(),
+                        used: None,
+                        remaining: Some("$.availableBalance".to_string()),
+                        currency: "USD".to_string(),
+                        scale: Some(0.0001),
                     },
                 },
                 base_url: None,
