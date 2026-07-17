@@ -1,6 +1,12 @@
-import { useEffect } from "react";
-import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -27,65 +33,53 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   const { t } = useI18n();
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (!busy && event.key === "Escape") {
-        onCancel();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [busy, onCancel, open]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
-  }
-
   const resolvedConfirmLabel = confirmLabel ?? t("common.confirm");
   const resolvedCancelLabel = cancelLabel ?? t("common.cancel");
   const resolvedAriaLabel = ariaLabel ?? t("common.confirm");
 
-  return createPortal(
-    <div
-      className="dialog-overlay"
-      onClick={(event) => {
-        if (!busy && event.target === event.currentTarget) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        // busy（如删除中）时忽略 Esc / 遮罩点击触发的关闭
+        if (!nextOpen && !busy) {
           onCancel();
         }
       }}
     >
-      <div
-        className="dialog-card"
+      <DialogContent
+        className="w-full gap-3.5 rounded-md border-border bg-surface p-4 shadow-drag sm:max-w-[360px]"
+        showCloseButton={false}
         aria-label={resolvedAriaLabel}
-        aria-modal="true"
-        role="dialog"
       >
-        <p className="dialog-message">{message}</p>
-        <div className="dialog-actions">
-          <button
-            className="dialog-btn dialog-btn-secondary"
+        {/* Radix 要求存在 Title 以满足无障碍，这里视觉上隐藏 */}
+        <DialogTitle className="sr-only">{resolvedAriaLabel}</DialogTitle>
+        <DialogDescription className="text-xs leading-[1.6] whitespace-pre-wrap break-words text-foreground">
+          {message}
+        </DialogDescription>
+        <DialogFooter className="flex-row flex-wrap justify-end gap-2 sm:justify-end">
+          <Button
+            variant="softGhost"
+            size="xs"
+            className="min-w-[76px]"
             disabled={busy}
             type="button"
             onClick={onCancel}
           >
             {resolvedCancelLabel}
-          </button>
-          <button
-            className={`dialog-btn ${variant === "danger" ? "dialog-btn-danger" : "dialog-btn-primary"}`}
+          </Button>
+          <Button
+            variant={variant === "danger" ? "softDanger" : "soft"}
+            size="xs"
+            className="min-w-[76px]"
             disabled={busy}
             type="button"
             onClick={onConfirm}
           >
             {resolvedConfirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

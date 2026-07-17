@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { useI18n } from "../../i18n";
 import type {
   AuthSchemeConfig,
@@ -7,6 +6,17 @@ import type {
   ScriptConfig,
 } from "../../types/provider";
 import { getNewApiScriptTemplate, testCustomProviderScript } from "../../utils/ipc";
+import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import ProviderIcon from "../common/ProviderIcon";
 
 type ProviderWizardDialogProps = {
@@ -25,6 +35,15 @@ const AUTH_SCHEME_OPTIONS: Array<{ value: AuthSchemeConfig; labelKey: string }> 
 // 修复 I-3：阶段 1 自定义供应商只支持 Script 查询，向导 UI 不再暴露 Balance 选项
 // （QueryTypeConfig 枚举里保留 Balance，阶段 2 实现真正的 Balance 查询后开放）
 const ICON_CHOICES = ["custom", "deepseek", "newapi", "openai", "anthropic", "openrouter"];
+
+/** 字段标签通用样式 */
+const FIELD_LABEL_CLASS = "text-[11px] font-semibold text-foreground-secondary";
+/** 字段提示通用样式 */
+const FIELD_HINT_CLASS = "text-[10px] leading-[1.5] text-foreground-muted";
+/** 单行输入框通用样式（对齐旧 wizard-input：32px 高、12px 字号） */
+const WIZARD_INPUT_CLASS = "h-8 rounded-sm border-border bg-surface px-2.5 py-1.5 text-xs";
+/** 分段选择器按钮基础样式 */
+const SEGMENT_BUTTON_CLASS = "cursor-pointer border-0 bg-surface px-3.5 py-1.5 text-xs text-foreground-muted transition-colors hover:bg-surface-hover";
 
 /** 自定义供应商 3 步创建向导 */
 export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizardDialogProps) {
@@ -71,27 +90,6 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
     }
     resetState();
     onClose();
-  }
-
-  // Esc 关闭
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (!testing && event.key === "Escape") {
-        handleClose();
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, testing]);
-
-  if (!open || typeof document === "undefined") {
-    return null;
   }
 
   // 预填 NewAPI 脚本模板（一键填充 NewAPI 预设：脚本 + 提示用户填 accessToken/userId）
@@ -184,48 +182,52 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
       ? "settings.wizard.step2Title"
       : "settings.wizard.step3Title";
 
-  return createPortal(
-    <div
-      className="dialog-overlay wizard-overlay"
-      onClick={(event) => {
-        if (!testing && event.target === event.currentTarget) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        // 测试进行中时忽略 Esc / 遮罩点击触发的关闭
+        if (!nextOpen && !testing) {
           handleClose();
         }
       }}
     >
-      <div
-        className="dialog-card wizard-card"
+      <DialogContent
+        className="w-full gap-3 rounded-md border-border bg-surface px-5 pt-[18px] pb-4 shadow-drag sm:max-w-[520px]"
+        showCloseButton={false}
         aria-label={t("settings.wizard.ariaLabel")}
-        aria-modal="true"
-        role="dialog"
       >
-        <div className="wizard-header">
-          <span className="wizard-step-title">{t(stepTitleKey)}</span>
-          <span className="wizard-step-indicator">
+        <DialogHeader className="flex-row items-center justify-between gap-3 space-y-0">
+          <DialogTitle className="text-sm font-semibold text-foreground">{t(stepTitleKey)}</DialogTitle>
+          <span className="shrink-0 text-[11px] text-foreground-muted">
             {t("settings.wizard.stepIndicator", { current: step, total: 3 })}
           </span>
-        </div>
+        </DialogHeader>
 
         {/* 步骤进度条 */}
-        <div className="wizard-progress" role="presentation">
+        <div className="flex items-center gap-1.5" role="presentation">
           {[1, 2, 3].map((s) => (
             <div
               key={s}
-              className={`wizard-progress-dot${s === step ? " is-active" : ""}${s < step ? " is-done" : ""}`}
+              className={cn(
+                "h-[3px] flex-1 rounded-[2px] bg-border transition-colors",
+                s === step && "bg-primary-soft-border",
+                s < step && "bg-primary-soft-text",
+              )}
             />
           ))}
         </div>
 
-        <div className="wizard-body">
+        <div className="flex max-h-[calc(100vh-200px)] flex-col gap-3 overflow-y-auto pr-0.5">
           {step === 1 && (
             <>
-              <div className="field-group">
-                <label className="field-label" htmlFor="wizard-display-name">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS} htmlFor="wizard-display-name">
                   {t("settings.wizard.displayName")}
                 </label>
-                <input
+                <Input
                   id="wizard-display-name"
-                  className="wizard-input"
+                  className={WIZARD_INPUT_CLASS}
                   type="text"
                   value={displayName}
                   placeholder={t("settings.wizard.displayNamePlaceholder")}
@@ -234,14 +236,18 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                 />
               </div>
 
-              <div className="field-group">
-                <label className="field-label">{t("settings.wizard.icon")}</label>
-                <div className="wizard-icon-grid">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.icon")}</label>
+                <div className="flex flex-wrap gap-2">
                   {ICON_CHOICES.map((iconChoice) => (
                     <button
                       key={iconChoice}
                       type="button"
-                      className={`wizard-icon-option${icon === iconChoice ? " is-selected" : ""}`}
+                      className={cn(
+                        "flex h-9 w-9 cursor-pointer items-center justify-center rounded-sm border border-border bg-surface p-0",
+                        "transition-[border-color,background,box-shadow] hover:border-border-hover hover:bg-surface-hover",
+                        icon === iconChoice && "border-primary-soft-border bg-primary-soft-bg shadow-[0_0_0_2px_var(--color-primary-soft-bg)]",
+                      )}
                       onClick={() => setIcon(iconChoice)}
                       title={iconChoice}
                       aria-pressed={icon === iconChoice}
@@ -252,14 +258,17 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                 </div>
               </div>
 
-              <div className="field-group">
-                <label className="field-label">{t("settings.wizard.authScheme")}</label>
-                <div className="wizard-segment" role="group" aria-label={t("settings.wizard.authScheme")}>
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.authScheme")}</label>
+                <div className="inline-flex self-start overflow-hidden rounded-sm border border-border" role="group" aria-label={t("settings.wizard.authScheme")}>
                   {AUTH_SCHEME_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      className={`wizard-segment-button${authScheme === option.value ? " is-active" : ""}`}
+                      className={cn(
+                        SEGMENT_BUTTON_CLASS,
+                        authScheme === option.value && "bg-primary-soft-bg text-primary-soft-text",
+                      )}
                       aria-pressed={authScheme === option.value}
                       onClick={() => setAuthScheme(option.value)}
                     >
@@ -274,179 +283,192 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
           {step === 2 && (
             <>
               {/* 修复 I-3：阶段 1 自定义供应商只支持 Script 查询，移除 Balance/Script 切换器 */}
-              <div className="field-group">
-                <label className="field-label">{t("settings.wizard.queryType")}</label>
-                <div className="wizard-segment" role="group" aria-label={t("settings.wizard.queryType")}>
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.queryType")}</label>
+                <div className="inline-flex self-start overflow-hidden rounded-sm border border-border" role="group" aria-label={t("settings.wizard.queryType")}>
                   <button
                     type="button"
-                    className="wizard-segment-button is-active"
+                    className={cn(SEGMENT_BUTTON_CLASS, "bg-primary-soft-bg text-primary-soft-text")}
                     aria-pressed={true}
                     disabled
                   >
                     {t("settings.wizard.queryTypeScript")}
                   </button>
                 </div>
-                <div className="field-hint">{t("settings.wizard.queryTypeScriptHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.queryTypeScriptHint")}</div>
               </div>
 
-              <div className="field-group">
-                <label className="field-label" htmlFor="wizard-base-url">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS} htmlFor="wizard-base-url">
                   {t("settings.wizard.baseUrl")}
                 </label>
-                <input
+                <Input
                   id="wizard-base-url"
-                  className="wizard-input"
+                  className={WIZARD_INPUT_CLASS}
                   type="text"
                   value={baseUrl}
                   placeholder="https://your-gateway.example.com"
                   onChange={(event) => setBaseUrl(event.target.value)}
                 />
-                <div className="field-hint">{t("settings.wizard.baseUrlHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.baseUrlHint")}</div>
               </div>
 
-              <div className="field-group">
-                <div className="field-row">
-                  <label className="field-label" htmlFor="wizard-script-code">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className={FIELD_LABEL_CLASS} htmlFor="wizard-script-code">
                     {t("settings.wizard.script")}
                   </label>
-                  <button
+                  <Button
                     type="button"
-                    className="btn btn-sm btn-secondary"
+                    variant="softGhost"
+                    size="xs"
                     disabled={loadingTemplate}
                     onClick={() => void fillNewApiTemplate()}
                   >
                     {loadingTemplate ? t("settings.wizard.loading") : t("settings.wizard.fillNewApiTemplate")}
-                  </button>
+                  </Button>
                 </div>
                 <textarea
                   id="wizard-script-code"
-                  className="wizard-textarea"
+                  className={cn(
+                    "w-full resize-y rounded-sm border border-border bg-surface px-2.5 py-2 font-mono text-[11px] leading-[1.5] text-foreground tab-size-2",
+                    "transition-[border-color,box-shadow] focus:border-primary-soft-border focus:shadow-[0_0_0_3px_var(--color-primary-soft-bg)] focus:outline-none",
+                  )}
                   value={scriptCode}
                   rows={10}
                   spellCheck={false}
                   placeholder={t("settings.wizard.scriptPlaceholder")}
                   onChange={(event) => setScriptCode(event.target.value)}
                 />
-                <div className="field-hint">{t("settings.wizard.scriptHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.scriptHint")}</div>
               </div>
 
               {/* 修复 C-3：Script 模板可选的 accessToken / userId 输入框
                   （NewAPI 等 API 网关需要这两个凭据，通过 {{accessToken}} / {{userId}} 注入脚本） */}
-              <div className="field-group">
-                <label className="field-label" htmlFor="wizard-access-token">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS} htmlFor="wizard-access-token">
                   {t("settings.wizard.accessToken")}
                 </label>
-                <input
+                <Input
                   id="wizard-access-token"
-                  className="wizard-input"
+                  className={WIZARD_INPUT_CLASS}
                   type="text"
                   value={accessToken}
                   placeholder={t("settings.wizard.accessTokenPlaceholder")}
                   onChange={(event) => setAccessToken(event.target.value)}
                   autoComplete="off"
                 />
-                <div className="field-hint">{t("settings.wizard.accessTokenHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.accessTokenHint")}</div>
               </div>
 
-              <div className="field-group">
-                <label className="field-label" htmlFor="wizard-user-id">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS} htmlFor="wizard-user-id">
                   {t("settings.wizard.userId")}
                 </label>
-                <input
+                <Input
                   id="wizard-user-id"
-                  className="wizard-input"
+                  className={WIZARD_INPUT_CLASS}
                   type="text"
                   value={userId}
                   placeholder={t("settings.wizard.userIdPlaceholder")}
                   onChange={(event) => setUserId(event.target.value)}
                   autoComplete="off"
                 />
-                <div className="field-hint">{t("settings.wizard.userIdHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.userIdHint")}</div>
               </div>
             </>
           )}
 
           {step === 3 && (
             <>
-              <div className="field-group">
-                <label className="field-label" htmlFor="wizard-env-key-name">
+              <div className="flex flex-col gap-2">
+                <label className={FIELD_LABEL_CLASS} htmlFor="wizard-env-key-name">
                   {t("settings.wizard.envKeyName")}
                 </label>
-                <input
+                <Input
                   id="wizard-env-key-name"
-                  className="wizard-input"
+                  className={WIZARD_INPUT_CLASS}
                   type="text"
                   value={envKeyName}
                   placeholder="CUSTOM_PROVIDER_API_KEY"
                   onChange={(event) => setEnvKeyName(event.target.value)}
                 />
-                <div className="field-hint">{t("settings.wizard.envKeyNameHint")}</div>
+                <div className={FIELD_HINT_CLASS}>{t("settings.wizard.envKeyNameHint")}</div>
               </div>
 
-              <label className="advanced-toggle">
-                <span className="advanced-toggle-copy">
-                  <span className="advanced-toggle-title">{t("settings.wizard.allowHttp")}</span>
-                  <span className="advanced-toggle-hint">{t("settings.wizard.allowHttpHint")}</span>
+              <label
+                className="flex cursor-pointer items-center justify-between gap-2.5 rounded-md border border-border bg-surface px-3 py-2.5"
+                htmlFor="wizard-allow-http"
+              >
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-xs font-semibold text-foreground">{t("settings.wizard.allowHttp")}</span>
+                  <span className="text-[10px] leading-[1.3] text-foreground-secondary">{t("settings.wizard.allowHttpHint")}</span>
                 </span>
-                <span className="switch">
-                  <input
-                    className="switch-input"
-                    type="checkbox"
-                    checked={allowHttp}
-                    onChange={(event) => setAllowHttp(event.target.checked)}
-                  />
-                  <span className="switch-track" />
-                </span>
+                <Switch
+                  id="wizard-allow-http"
+                  checked={allowHttp}
+                  onCheckedChange={setAllowHttp}
+                />
               </label>
 
               {queryType === "script" && (
-                <div className="field-group">
-                  <div className="field-row">
-                    <label className="field-label">{t("settings.wizard.testSection")}</label>
-                    <button
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.testSection")}</label>
+                    <Button
                       type="button"
-                      className="btn btn-sm btn-primary"
+                      variant="soft"
+                      size="xs"
                       disabled={testing || !scriptCode.trim()}
                       onClick={() => void handleTest()}
                     >
                       {testing ? t("settings.wizard.testing") : t("settings.wizard.test")}
-                    </button>
+                    </Button>
                   </div>
                   {testResult && (
-                    <div className={`save-result ${testResult.ok ? "is-success" : "is-error"}`}>
+                    <div
+                      className={cn(
+                        "rounded-sm border px-2.5 py-2 text-[11px]",
+                        testResult.ok
+                          ? "border-success-soft-border bg-success-soft-bg text-success-soft-text"
+                          : "border-danger-soft-border bg-danger-soft-bg text-danger-soft-text",
+                      )}
+                    >
                       {testResult.message}
                     </div>
                   )}
-                  <div className="field-hint">{t("settings.wizard.testHint")}</div>
+                  <div className={FIELD_HINT_CLASS}>{t("settings.wizard.testHint")}</div>
                 </div>
               )}
 
               {/* 配置摘要预览 */}
-              <div className="wizard-summary">
-                <div className="wizard-summary-title">{t("settings.wizard.summaryTitle")}</div>
-                <dl className="wizard-summary-list">
-                  <div className="wizard-summary-item">
-                    <dt>{t("settings.wizard.displayName")}</dt>
-                    <dd>{displayName.trim() || "-"}</dd>
+              <div className="mt-1 rounded-sm border border-border bg-surface-hover px-3 py-2.5">
+                <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground-muted">
+                  {t("settings.wizard.summaryTitle")}
+                </div>
+                <dl className="m-0 flex flex-col gap-1">
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <dt className="w-[88px] shrink-0 text-foreground-muted">{t("settings.wizard.displayName")}</dt>
+                    <dd className="m-0 flex-1 break-all text-foreground">{displayName.trim() || "-"}</dd>
                   </div>
-                  <div className="wizard-summary-item">
-                    <dt>{t("settings.wizard.baseUrl")}</dt>
-                    <dd>{baseUrl.trim() || "-"}</dd>
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <dt className="w-[88px] shrink-0 text-foreground-muted">{t("settings.wizard.baseUrl")}</dt>
+                    <dd className="m-0 flex-1 break-all text-foreground">{baseUrl.trim() || "-"}</dd>
                   </div>
-                  <div className="wizard-summary-item">
-                    <dt>{t("settings.wizard.queryType")}</dt>
-                    <dd>{t("settings.wizard.queryTypeScript")}</dd>
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <dt className="w-[88px] shrink-0 text-foreground-muted">{t("settings.wizard.queryType")}</dt>
+                    <dd className="m-0 flex-1 break-all text-foreground">{t("settings.wizard.queryTypeScript")}</dd>
                   </div>
-                  <div className="wizard-summary-item">
-                    <dt>{t("settings.wizard.authScheme")}</dt>
-                    <dd>
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <dt className="w-[88px] shrink-0 text-foreground-muted">{t("settings.wizard.authScheme")}</dt>
+                    <dd className="m-0 flex-1 break-all text-foreground">
                       {t(AUTH_SCHEME_OPTIONS.find((option) => option.value === authScheme)?.labelKey ?? "settings.wizard.authBearer")}
                     </dd>
                   </div>
                   {(accessToken.trim() || userId.trim()) && (
-                    <div className="wizard-summary-item">
-                      <dt>{t("settings.wizard.credentialsSummary")}</dt>
-                      <dd>
+                    <div className="flex items-baseline gap-2 text-xs">
+                      <dt className="w-[88px] shrink-0 text-foreground-muted">{t("settings.wizard.credentialsSummary")}</dt>
+                      <dd className="m-0 flex-1 break-all text-foreground">
                         {[
                           accessToken.trim() && t("settings.wizard.accessToken"),
                           userId.trim() && t("settings.wizard.userId"),
@@ -462,50 +484,57 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
           )}
         </div>
 
-        <div className="dialog-actions wizard-actions">
-          <button
-            className="dialog-btn dialog-btn-secondary"
+        <DialogFooter className="flex-row flex-wrap justify-end gap-2 sm:justify-end">
+          <Button
+            variant="softGhost"
+            size="xs"
+            className="min-w-[76px]"
             type="button"
             disabled={testing}
             onClick={handleClose}
           >
             {t("common.cancel")}
-          </button>
+          </Button>
 
           {step > 1 && (
-            <button
-              className="dialog-btn dialog-btn-secondary"
+            <Button
+              variant="softGhost"
+              size="xs"
+              className="min-w-[76px]"
               type="button"
               disabled={testing}
               onClick={() => setStep((current) => Math.max(1, current - 1))}
             >
               {t("settings.wizard.prev")}
-            </button>
+            </Button>
           )}
 
           {step < 3 ? (
-            <button
-              className="dialog-btn dialog-btn-primary"
+            <Button
+              variant="soft"
+              size="xs"
+              className="min-w-[76px]"
               type="button"
               disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid)}
               onClick={() => setStep((current) => Math.min(3, current + 1))}
             >
               {t("settings.wizard.next")}
-            </button>
+            </Button>
           ) : (
-            <button
-              className="dialog-btn dialog-btn-primary"
+            <Button
+              variant="soft"
+              size="xs"
+              className="min-w-[76px]"
               type="button"
               disabled={testing || !step1Valid || !step2Valid}
               onClick={handleConfirm}
             >
               {t("settings.wizard.confirm")}
-            </button>
+            </Button>
           )}
-        </div>
-      </div>
-    </div>,
-    document.body,
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
