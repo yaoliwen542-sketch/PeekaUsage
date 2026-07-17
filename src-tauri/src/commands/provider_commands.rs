@@ -101,11 +101,42 @@ pub async fn get_provider_configs(
         };
 
         let entry = app_config.get_provider_entry(&provider_id).await;
+
+        // 内置供应商从 registry 查模板；自定义供应商从 custom_config 取
+        let (env_key_name, env_oauth_token_name, provider_template_id, custom_config) = match &entry
+        {
+            Some(entry) if entry.custom_config.is_some() => {
+                // 自定义供应商
+                let cfg = entry.custom_config.as_ref().unwrap();
+                (
+                    cfg.env_key_name.clone().unwrap_or_default(),
+                    None,
+                    None,
+                    entry.custom_config.clone(),
+                )
+            }
+            _ => {
+                // 内置供应商：从 registry 取
+                let template = crate::providers::registry::get(&provider_id);
+                (
+                    template
+                        .as_ref()
+                        .map(|t| t.env_key_name.clone())
+                        .unwrap_or_default(),
+                    template
+                        .as_ref()
+                        .and_then(|t| t.env_oauth_token_name.clone()),
+                    template.as_ref().map(|t| t.id.clone()),
+                    None,
+                )
+            }
+        };
+
         let api_keys = load_provider_api_keys(
             &provider_id,
-            &item.provider_id,
             entry.as_ref(),
             key_store.inner(),
+            &env_key_name,
         )
         .await;
 
@@ -124,16 +155,17 @@ pub async fn get_provider_configs(
                 value: mask_value(&key.value),
             })
             .collect();
-        item.environment_variable_name = item.provider_id.env_key_name().to_string();
+        item.environment_variable_name = env_key_name;
         item.active_api_key_id = active_api_key_id;
+        item.provider_template_id = provider_template_id;
+        item.custom_config = custom_config;
 
-        if let Some(env_name) = item.provider_id.env_oauth_token_name() {
+        if let Some(env_name) = env_oauth_token_name {
             item.subscriptions = load_provider_subscriptions(
                 &provider_id,
-                &item.provider_id,
                 entry.as_ref(),
                 key_store.inner(),
-                Some(env_name),
+                Some(&env_name),
             )
             .await
             .into_iter()
@@ -173,10 +205,20 @@ pub async fn save_provider_config(
         enabled,
         api_keys,
         subscriptions,
+        provider_template_id,
+        custom_config,
     } = config;
 
-    let provider_id = provider_enum.as_str().to_string();
+    let provider_id = provider_enum;
     let existing_entry = app_config.get_provider_entry(&provider_id).await;
+
+    // 解析环境变量名（自定义供应商用 custom_config.env_key_name，内置从 registry 查）
+    let env_key_name = match &custom_config {
+        Some(cfg) => cfg.env_key_name.clone().unwrap_or_default(),
+        None => crate::providers::registry::get(&provider_id)
+            .map(|t| t.env_key_name)
+            .unwrap_or_default(),
+    };
 
     let sanitized_api_keys: Vec<ProviderApiKeyInput> = api_keys
         .into_iter()
@@ -259,6 +301,8 @@ pub async fn save_provider_config(
             .as_ref()
             .map(|entry| entry.manage_api_key_environment)
             .unwrap_or(false),
+        provider_template_id,
+        custom_config,
     };
 
     app_config
@@ -270,10 +314,7 @@ pub async fn save_provider_config(
 
         if key.value.contains("...") {
             if key_store.get_stored_key(&storage_key).await.is_none() {
-                if let Some(legacy_value) = key_store
-                    .get_key(&provider_id, provider_enum.env_key_name())
-                    .await
-                {
+                if let Some(legacy_value) = key_store.get_key(&provider_id, &env_key_name).await {
                     key_store.set_key(&storage_key, &legacy_value).await?;
                 }
             }
@@ -381,6 +422,8 @@ pub async fn remove_provider_config(
                     .as_ref()
                     .map(|entry| entry.manage_api_key_environment)
                     .unwrap_or(false),
+                provider_template_id: None,
+                custom_config: None,
             },
         )
         .await?;
@@ -397,9 +440,12 @@ pub async fn remove_provider_config(
 pub async fn validate_api_key(
     provider_id: String,
     api_key: String,
+    custom_config: Option<CustomProviderConfig>,
     provider_manager: State<'_, ProviderManager>,
 ) -> Result<bool, String> {
-    provider_manager.validate_key(&provider_id, &api_key).await
+    provider_manager
+        .validate_key(&provider_id, &api_key, custom_config.as_ref())
+        .await
 }
 
 #[tauri::command]
@@ -410,7 +456,10 @@ pub async fn save_provider_order(
     let mut deduped = Vec::new();
 
     for provider_id in order {
-        if !matches!(provider_id.as_str(), "openai" | "anthropic" | "openrouter") {
+        // 内置供应商在 registry 里 OR 自定义供应商（custom_ 前缀）
+        let is_valid = crate::providers::registry::get(&provider_id).is_some()
+            || provider_id.starts_with("custom_");
+        if !is_valid {
             continue;
         }
 
@@ -460,28 +509,42 @@ async fn build_usage_summary(
     provider_manager: &ProviderManager,
     key_store: &KeyStore,
 ) -> Result<UsageSummary, String> {
-    let pid = parse_provider_id(provider_id)?;
     let base_item = provider_manager
         .get_provider_config_item(provider_id)
         .ok_or_else(|| format!("未知供应商: {}", provider_id))?;
 
-    let api_keys = load_provider_api_keys(provider_id, &pid, entry.as_ref(), key_store).await;
-    let subscriptions = if let Some(env_name) = pid.env_oauth_token_name() {
-        load_provider_subscriptions(provider_id, &pid, entry.as_ref(), key_store, Some(env_name))
-            .await
+    // 解析环境变量名（自定义供应商用 custom_config.env_key_name，内置从 registry 查）
+    let env_key_name = match entry.as_ref().and_then(|e| e.custom_config.as_ref()) {
+        Some(cfg) => cfg.env_key_name.clone().unwrap_or_default(),
+        None => crate::providers::registry::get(provider_id)
+            .map(|t| t.env_key_name)
+            .unwrap_or_default(),
+    };
+    let env_oauth_token_name = match entry.as_ref().and_then(|e| e.custom_config.as_ref()) {
+        // 自定义供应商阶段 1 不支持订阅
+        Some(_) => None,
+        None => crate::providers::registry::get(provider_id).and_then(|t| t.env_oauth_token_name),
+    };
+
+    let api_keys =
+        load_provider_api_keys(provider_id, entry.as_ref(), key_store, &env_key_name).await;
+    let subscriptions = if let Some(env_name) = env_oauth_token_name.as_deref() {
+        load_provider_subscriptions(provider_id, entry.as_ref(), key_store, Some(env_name)).await
     } else {
         Vec::new()
     };
 
+    // 自定义供应商的 custom_config 引用（用于 fetch_api_usage）
+    let custom_config_ref = entry.as_ref().and_then(|e| e.custom_config.as_ref());
+
     let mut api_key_usages = Vec::new();
     let mut successful_usages = Vec::new();
     let mut api_errors = Vec::new();
-    let mut subscription_errors = Vec::new();
     let mut rate_limit = None;
 
     for api_key in &api_keys {
         match provider_manager
-            .fetch_api_usage(provider_id, &api_key.value)
+            .fetch_api_usage(provider_id, &api_key.value, custom_config_ref)
             .await
         {
             Ok((usage, item_rate_limit)) => {
@@ -517,13 +580,14 @@ async fn build_usage_summary(
 
     let usage = aggregate_usage_data(&successful_usages);
     let mut subscription_summaries = Vec::new();
+    let mut subscription_errors = Vec::new();
 
     for subscription in subscriptions {
-        let usage = provider_manager
-            .fetch_subscription_usage(provider_id, &subscription.value)
+        let sub_usage = provider_manager
+            .fetch_subscription_usage(provider_id, &subscription.value, custom_config_ref)
             .await;
-        if matches!(usage.status, ProviderStatus::Error) {
-            if let Some(error_message) = usage.error_message.clone() {
+        if matches!(sub_usage.status, ProviderStatus::Error) {
+            if let Some(error_message) = sub_usage.error_message.clone() {
                 subscription_errors.push(format!("{}: {}", subscription.name, error_message));
             }
         }
@@ -532,7 +596,7 @@ async fn build_usage_summary(
             subscription_name: subscription.name,
             color: subscription.color,
             source: subscription.source,
-            usage,
+            usage: sub_usage,
         });
     }
 
@@ -551,12 +615,14 @@ async fn build_usage_summary(
         None
     } else if !api_errors.is_empty() {
         Some(api_errors.join("；"))
+    } else if !subscription_errors.is_empty() {
+        Some(subscription_errors.join("；"))
     } else {
         Some("未配置 API Key 或 OAuth Token".into())
     };
 
     let summary = UsageSummary {
-        provider_id: pid,
+        provider_id: provider_id.to_string(),
         display_name: base_item.display_name,
         enabled: entry.as_ref().map(|item| item.enabled).unwrap_or(true),
         status,
@@ -577,9 +643,9 @@ async fn build_usage_summary(
 
 async fn load_provider_api_keys(
     provider_id: &str,
-    provider: &ProviderId,
     entry: Option<&ProviderEntry>,
     key_store: &KeyStore,
+    env_key_name: &str,
 ) -> Vec<ResolvedApiKey> {
     let mut api_keys = Vec::new();
 
@@ -604,10 +670,7 @@ async fn load_provider_api_keys(
         return api_keys;
     }
 
-    if let Some(legacy_value) = key_store
-        .get_key(provider_id, provider.env_key_name())
-        .await
-    {
+    if let Some(legacy_value) = key_store.get_key(provider_id, env_key_name).await {
         if !legacy_value.is_empty() {
             api_keys.push(ResolvedApiKey {
                 id: LEGACY_API_KEY_ID.to_string(),
@@ -623,7 +686,6 @@ async fn load_provider_api_keys(
 
 async fn load_provider_subscriptions(
     provider_id: &str,
-    provider: &ProviderId,
     entry: Option<&ProviderEntry>,
     key_store: &KeyStore,
     env_var_name: Option<&str>,
@@ -660,7 +722,7 @@ async fn load_provider_subscriptions(
         {
             subscriptions.push(ResolvedSubscription {
                 id: LEGACY_SUBSCRIPTION_ID.to_string(),
-                name: default_subscription_name(provider),
+                name: default_subscription_name(provider_id),
                 color: normalize_marker_color("", 0),
                 value: legacy_value,
                 source: None,
@@ -725,15 +787,6 @@ fn max_optional_iso(current: Option<String>, next: Option<String>) -> Option<Str
     }
 }
 
-fn parse_provider_id(provider_id: &str) -> Result<ProviderId, String> {
-    match provider_id {
-        "openai" => Ok(ProviderId::OpenAI),
-        "anthropic" => Ok(ProviderId::Anthropic),
-        "openrouter" => Ok(ProviderId::OpenRouter),
-        _ => Err(format!("未知供应商: {}", provider_id)),
-    }
-}
-
 fn api_key_storage_key(provider_id: &str, key_id: &str) -> String {
     format!("{}::api_key::{}", provider_id, key_id)
 }
@@ -786,12 +839,13 @@ fn normalize_optional_string(value: String) -> Option<String> {
     }
 }
 
-fn default_subscription_name(provider: &ProviderId) -> String {
-    match provider {
-        ProviderId::OpenAI => "OpenAI 订阅".to_string(),
-        ProviderId::Anthropic => "Anthropic 订阅".to_string(),
-        ProviderId::OpenRouter => "OpenRouter 订阅".to_string(),
-    }
+/// 旧版订阅默认名称：按 provider_id 字符串映射显示文案
+fn default_subscription_name(provider_id: &str) -> String {
+    // 优先从 registry 拿 display_name，找不到就回退用 provider_id
+    let display = crate::providers::registry::get(provider_id)
+        .map(|t| t.display_name)
+        .unwrap_or_else(|| provider_id.to_string());
+    format!("{} 订阅", display)
 }
 
 fn mask_value(value: &str) -> String {
@@ -804,4 +858,45 @@ fn mask_value(value: &str) -> String {
     }
 
     format!("{}...{}", &value[..4], &value[value.len() - 4..])
+}
+
+/// 获取所有可选供应商模板（含内置，用于设置页"新增供应商"下拉）
+#[tauri::command]
+pub async fn get_provider_templates(
+    provider_manager: State<'_, std::sync::Arc<ProviderManager>>,
+) -> Result<Vec<ProviderTemplate>, String> {
+    Ok(provider_manager.get_provider_templates())
+}
+
+/// 获取 NewAPI 预置脚本模板
+#[tauri::command]
+pub async fn get_newapi_script_template() -> Result<String, String> {
+    Ok(crate::providers::registry::newapi_script_template().to_string())
+}
+
+/// 测试自定义供应商脚本（保存前预演）
+#[tauri::command]
+pub async fn test_custom_provider_script(
+    provider_manager: State<'_, std::sync::Arc<ProviderManager>>,
+    code: String,
+    api_key: String,
+    base_url: Option<String>,
+    allow_http: bool,
+) -> Result<String, String> {
+    // 执行脚本，返回成功/失败信息
+    let result = crate::providers::script_engine::run(
+        provider_manager.http_client_ref(),
+        &code,
+        &api_key,
+        base_url.as_deref(),
+        allow_http,
+        15000,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(format!(
+        "查询成功：已用 {} / 总额 {:?} / 剩余 {:?} ({})",
+        result.total_used, result.total_budget, result.remaining, result.currency
+    ))
 }

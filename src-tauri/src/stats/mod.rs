@@ -1274,11 +1274,8 @@ fn max_timestamp(
 }
 
 fn provider_id_to_string(provider_id: &crate::providers::types::ProviderId) -> String {
-    match provider_id {
-        crate::providers::types::ProviderId::OpenAI => "openai".to_string(),
-        crate::providers::types::ProviderId::Anthropic => "anthropic".to_string(),
-        crate::providers::types::ProviderId::OpenRouter => "openrouter".to_string(),
-    }
+    // ProviderId 已是 String 类型别名，直接克隆即可
+    provider_id.clone()
 }
 
 fn provider_status_is_success(status: &crate::providers::types::ProviderStatus) -> bool {

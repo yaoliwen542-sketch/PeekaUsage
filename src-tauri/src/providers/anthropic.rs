@@ -31,8 +31,8 @@ struct CostEntry {
 
 #[async_trait]
 impl UsageProvider for AnthropicProvider {
-    fn id(&self) -> ProviderId {
-        ProviderId::Anthropic
+    fn id(&self) -> String {
+        "anthropic".to_string()
     }
 
     fn display_name(&self) -> &str {

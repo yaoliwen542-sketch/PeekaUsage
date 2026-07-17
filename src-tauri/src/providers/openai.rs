@@ -55,8 +55,8 @@ struct CreditGrantsResponse {
 
 #[async_trait]
 impl UsageProvider for OpenAIProvider {
-    fn id(&self) -> ProviderId {
-        ProviderId::OpenAI
+    fn id(&self) -> String {
+        "openai".to_string()
     }
 
     fn display_name(&self) -> &str {
