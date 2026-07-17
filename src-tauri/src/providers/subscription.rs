@@ -15,6 +15,7 @@ struct AnthropicOAuthUsageResponse {
     five_hour: Option<AnthropicUsageWindow>,
     seven_day: Option<AnthropicUsageWindow>,
     seven_day_sonnet: Option<AnthropicUsageWindow>,
+    seven_day_opus: Option<AnthropicUsageWindow>,
     extra_usage: Option<AnthropicExtraUsage>,
 }
 
@@ -64,10 +65,19 @@ impl SubscriptionFetcher {
     ///
     /// provider 取值：内置模板 QueryType::Subscription 的 provider 字段，
     /// 如 "anthropic_oauth" / "openai_wham"。
-    pub async fn fetch(&self, provider: &str, oauth_token: &str) -> SubscriptionUsage {
+    ///
+    /// `account_id` 仅 openai_wham 使用：作为 `ChatGPT-Account-Id` header 发送，
+    /// 用于多账号场景。来源通常是 `~/.codex/auth.json` 的 `tokens.account_id`，
+    /// 由调用方通过 oauth_detect 解析后传入；None 时不附带该 header。
+    pub async fn fetch(
+        &self,
+        provider: &str,
+        oauth_token: &str,
+        account_id: Option<&str>,
+    ) -> SubscriptionUsage {
         match provider {
             "anthropic_oauth" => self.fetch_anthropic_oauth(oauth_token).await,
-            "openai_wham" => self.fetch_openai_wham(oauth_token).await,
+            "openai_wham" => self.fetch_openai_wham(oauth_token, account_id).await,
             _ => SubscriptionUsage {
                 plan_name: None,
                 windows: vec![],
@@ -150,7 +160,7 @@ impl SubscriptionFetcher {
 
         if let Some(w) = data.five_hour {
             windows.push(SubscriptionWindow {
-                label: "5小时".into(),
+                label: window_labels::FIVE_HOUR.into(),
                 utilization: w.utilization,
                 resets_at: w.resets_at,
             });
@@ -158,7 +168,7 @@ impl SubscriptionFetcher {
 
         if let Some(w) = data.seven_day {
             windows.push(SubscriptionWindow {
-                label: "7天".into(),
+                label: window_labels::SEVEN_DAY.into(),
                 utilization: w.utilization,
                 resets_at: w.resets_at,
             });
@@ -166,7 +176,15 @@ impl SubscriptionFetcher {
 
         if let Some(w) = data.seven_day_sonnet {
             windows.push(SubscriptionWindow {
-                label: "7天(Sonnet)".into(),
+                label: window_labels::SEVEN_DAY_SONNET.into(),
+                utilization: w.utilization,
+                resets_at: w.resets_at,
+            });
+        }
+
+        if let Some(w) = data.seven_day_opus {
+            windows.push(SubscriptionWindow {
+                label: window_labels::SEVEN_DAY_OPUS.into(),
                 utilization: w.utilization,
                 resets_at: w.resets_at,
             });
@@ -196,14 +214,35 @@ impl SubscriptionFetcher {
     }
 
     /// OpenAI Wham 订阅查询（原 fetch_openai，ChatGPT Plus/Pro/Team）
-    async fn fetch_openai_wham(&self, oauth_token: &str) -> SubscriptionUsage {
-        let resp = self
+    ///
+    /// `account_id` 用于多账号场景：作为 `ChatGPT-Account-Id` header 发送。
+    /// 当 `account_id` 为 None 时，会尝试从 `~/.codex/auth.json` 的
+    /// `tokens.account_id` 自动读取（与 OAuth 自动检测复用同一文件）。
+    /// 读取失败则不附带该 header（单账号场景后端通常可正常返回）。
+    async fn fetch_openai_wham(
+        &self,
+        oauth_token: &str,
+        account_id: Option<&str>,
+    ) -> SubscriptionUsage {
+        // 调用方未传 account_id 时，回退到自动检测
+        let resolved_account_id = match account_id {
+            Some(aid) => Some(aid.to_string()),
+            None => super::oauth_detect::detect_openai()
+                .and_then(|d| d.account_id)
+                .filter(|s| !s.is_empty()),
+        };
+
+        let mut req = self
             .client
             .get("https://chatgpt.com/backend-api/wham/usage")
             .header("Authorization", format!("Bearer {}", oauth_token))
-            .header("User-Agent", "ai-usage-monitor")
-            .send()
-            .await;
+            .header("User-Agent", "codex-cli");
+
+        if let Some(aid) = resolved_account_id.as_deref() {
+            req = req.header("ChatGPT-Account-Id", aid);
+        }
+
+        let resp = req.send().await;
 
         let resp = match resp {
             Ok(r) => r,

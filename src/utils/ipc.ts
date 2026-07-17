@@ -130,6 +130,8 @@ export interface DetectedToken {
   subscriptionType: string | null;
   environment: "windows" | "wsl" | "native";
   displaySource: string;
+  /** OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header，多账号场景）；Anthropic 恒为 null */
+  accountId?: string | null;
 }
 
 /** 检测到的 Token 集合 */

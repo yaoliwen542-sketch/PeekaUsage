@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod balance;
 pub mod coding_plan;
+pub mod oauth_detect;
 pub mod openai;
 pub mod openrouter;
 pub mod registry;
@@ -167,10 +168,26 @@ impl ProviderManager {
     }
 
     /// 获取单个供应商的订阅数据
+    ///
+    /// `account_id` 仅 openai_wham 使用：透传给 SubscriptionFetcher::fetch，
+    /// 作为 `ChatGPT-Account-Id` header。传 None 时由 fetcher 内部自动检测
+    /// （从 `~/.codex/auth.json` 的 `tokens.account_id` 读取）。
     pub async fn fetch_subscription_usage(
         &self,
         provider_id: &str,
         oauth_token: &str,
+        custom_config: Option<&CustomProviderConfig>,
+    ) -> SubscriptionUsage {
+        self.fetch_subscription_usage_with_account(provider_id, oauth_token, None, custom_config)
+            .await
+    }
+
+    /// 获取单个供应商的订阅数据（显式传入 account_id）
+    pub async fn fetch_subscription_usage_with_account(
+        &self,
+        provider_id: &str,
+        oauth_token: &str,
+        account_id: Option<&str>,
         custom_config: Option<&CustomProviderConfig>,
     ) -> SubscriptionUsage {
         let template = match self.resolve_template_for_query(provider_id, custom_config) {
@@ -192,7 +209,10 @@ impl ProviderManager {
             .filter(|q| q.is_subscription_query())
         {
             if let QueryType::Subscription { provider } = &spec.query_type {
-                return self.subscription_fetcher.fetch(provider, oauth_token).await;
+                return self
+                    .subscription_fetcher
+                    .fetch(provider, oauth_token, account_id)
+                    .await;
             }
         }
 

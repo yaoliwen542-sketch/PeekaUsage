@@ -74,6 +74,7 @@ fn read_claude_token_from_home(home: &std::path::Path, environment: &str) -> Opt
         subscription_type: oauth.subscription_type,
         environment: environment.to_string(),
         display_source: source,
+        account_id: None,
     })
 }
 
@@ -94,6 +95,7 @@ fn read_codex_token_from_home(home: &std::path::Path, environment: &str) -> Opti
         subscription_type: None,
         environment: environment.to_string(),
         display_source: source,
+        account_id: tokens.account_id.filter(|s| !s.is_empty()),
     })
 }
 
@@ -113,6 +115,7 @@ fn read_wsl_claude_token() -> Option<DetectedToken> {
         subscription_type: oauth.subscription_type,
         environment: "wsl".to_string(),
         display_source: format!("WSL {}", source),
+        account_id: None,
     })
 }
 
@@ -133,6 +136,7 @@ fn read_wsl_codex_token() -> Option<DetectedToken> {
         subscription_type: None,
         environment: "wsl".to_string(),
         display_source: format!("WSL {}", source),
+        account_id: tokens.account_id.filter(|s| !s.is_empty()),
     })
 }
 
@@ -212,6 +216,10 @@ pub struct DetectedToken {
     pub subscription_type: Option<String>,
     pub environment: String,
     pub display_source: String,
+    /// OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header，多账号场景）；
+    /// Anthropic 恒为 None
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -235,4 +243,7 @@ struct CodexAuth {
 #[derive(Debug, serde::Deserialize)]
 struct CodexTokens {
     access_token: Option<Value>,
+    /// OpenAI/Codex 的 account_id（用于 ChatGPT-Account-Id header）
+    #[serde(default)]
+    account_id: Option<String>,
 }

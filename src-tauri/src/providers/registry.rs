@@ -38,7 +38,14 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                     base_url: None,
                 },
             ],
-            oauth_detect: None, // 阶段 2 填充
+            // OAuth 自动检测：从 ~/.codex/auth.json 读取 tokens.access_token + tokens.account_id
+            // （token_path 仅作前端展示/文档用，实际解析由 oauth_detect::detect_openai 处理，
+            // 兼容字符串和索引对象两种 access_token 格式）
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.codex/auth.json".to_string(),
+                token_path: "$.tokens.access_token".to_string(),
+                keychain_service: None,
+            }),
         },
         // === Anthropic（按量查询走 legacy fetch_usage，registry 只保留 Subscription）===
         // Anthropic 的 cost_report 模板在 registry 里走 Balance 查询分支，但 BalanceFieldMap
@@ -68,7 +75,14 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
                     base_url: None,
                 },
             ],
-            oauth_detect: None,
+            // OAuth 自动检测：从 ~/.claude/.credentials.json 读取 claudeAiOauth.accessToken
+            // （兼容旧 key claude.ai_oauth）；macOS 额外尝试 Keychain
+            // (service="Claude Code-credentials")
+            oauth_detect: Some(OAuthDetectConfig {
+                file_path: "~/.claude/.credentials.json".to_string(),
+                token_path: "$.claudeAiOauth.accessToken".to_string(),
+                keychain_service: Some("Claude Code-credentials".to_string()),
+            }),
         },
         // === OpenRouter（Balance × 2，回退链路）===
         ProviderTemplate {
