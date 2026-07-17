@@ -23,6 +23,21 @@
         "resizable": true,
         "alwaysOnTop": true,
         "visible": true
+      },
+      {
+        "label": "island",
+        "title": "PeekaUsage Island",
+        "width": 200,
+        "height": 40,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": true,
+        "center": false,
+        "x": 560,
+        "y": 40
       }
     ],
     "security": {
