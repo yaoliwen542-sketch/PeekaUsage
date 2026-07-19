@@ -555,6 +555,9 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 不要在多个页面分别写图标逻辑
 - 统一通过 `ProviderIcon.tsx` 渲染
 - 图标资源统一放在 `src/assets/provider-icons/`
+- **应用 logo（2026-07 起）**是「仪表盘 + 瞳孔指针」：靛蓝→紫渐变圆角底板、白色仪表弧、轴心为瞳孔；品牌色取应用主色 `#6366f1 → #7c3aed`
+- logo 源文件与再生成脚本在 `.logo-lab/`（`concept-b.svg` 标准版 / `concept-b-small.svg` ≤48px 加粗变体 / `master-*.png` 1024 母图 / `gen-icons.py` 一键重建 `src-tauri/icons/` 全套 PNG + `icon.ico` 多尺寸 + `icon.icns` 手工打包 + `icon.iconset`）；改 logo 只改 SVG 后重跑脚本，不要手改单个 PNG
+- macOS 图标按 824/1024 安全边距渲染（`gen-icons.py` 已处理）；Windows 图标平铺
 
 ### 排序约束
 
