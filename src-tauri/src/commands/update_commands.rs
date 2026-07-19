@@ -51,7 +51,7 @@ pub async fn check_app_update(app: AppHandle) -> Result<UpdateStatus, String> {
                 state: UpdateState::Available,
                 available_version: Some(available_version.clone()),
                 release_url: Some(format!(
-                    "https://github.com/StarChen4/PeekaUsage/releases/tag/v{}",
+                    "https://github.com/yaoliwen542-sketch/PeekaUsage/releases/tag/v{}",
                     available_version
                 )),
                 notes,

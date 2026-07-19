@@ -1,5 +1,7 @@
 use tauri::State;
 
+use futures::StreamExt;
+
 use crate::config::app_config::{
     AppConfig, ProviderApiKeyEntry, ProviderEntry, ProviderSubscriptionEntry,
 };
@@ -11,6 +13,13 @@ use crate::stats::UsageStatsStore;
 
 const LEGACY_API_KEY_ID: &str = "legacy-default";
 const LEGACY_SUBSCRIPTION_ID: &str = "legacy-subscription";
+
+/// 修复 M14：用量拉取的最大并发数。
+/// 串行拉取时 N 个供应商 × M 个 key 顺序 await，单次刷新最坏 N×M×30s；
+/// 并发到 4 路足以明显缩短总耗时，又不会瞬间打满连接/触发对端限流。
+/// fetch_all_usage 外层（供应商间）与 build_usage_summary 内层（key/订阅间）
+/// 都用该值限流，理论峰值 4×4=16 路并发，实际远低于此（单供应商 key 数通常 ≤3）。
+const USAGE_FETCH_CONCURRENCY: usize = 4;
 
 struct ResolvedApiKey {
     id: String,
@@ -36,20 +45,35 @@ pub async fn fetch_all_usage(
     usage_stats_store: State<'_, UsageStatsStore>,
 ) -> Result<Vec<UsageSummary>, String> {
     let enabled = app_config.get_enabled_providers().await;
-    let mut results = Vec::new();
 
-    for provider_id in enabled {
-        let entry = app_config.get_provider_entry(&provider_id).await;
-        let summary = build_usage_summary(
-            &provider_id,
-            entry,
-            provider_manager.inner(),
-            key_store.inner(),
-        )
-        .await?;
-        results.push(summary);
-    }
+    // 修复 M14：各供应商的拉取并发执行（buffered 限流且保序）。
+    // 返回顺序仍与 get_enabled_providers() 一致，即受 provider_order 影响，
+    // 前端卡片排序不会因为并发完成先后而打乱。
+    let results: Vec<UsageSummary> =
+        futures::stream::iter(enabled.into_iter().map(|provider_id| {
+            let provider_manager = provider_manager.inner();
+            let key_store = key_store.inner();
+            let app_config = app_config.inner();
+            async move {
+                let entry = app_config.get_provider_entry(&provider_id).await;
+                // 修复 H-1：单个供应商失败不能拖垮整个命令，
+                // 把错误收敛到该供应商自己的 error_message，其余供应商照常返回
+                match build_usage_summary(&provider_id, entry.clone(), provider_manager, key_store)
+                    .await
+                {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        eprintln!("获取供应商 {} 用量失败: {}", provider_id, error);
+                        build_error_summary(&provider_id, entry.as_ref(), error)
+                    }
+                }
+            }
+        }))
+        .buffered(USAGE_FETCH_CONCURRENCY)
+        .collect()
+        .await;
 
+    // 统计副作用保持在全部结果收集完成后只执行一次
     if let Err(error) = usage_stats_store.record_summaries(&results).await {
         eprintln!("写入统计历史失败: {}", error);
     }
@@ -98,18 +122,30 @@ pub async fn get_provider_configs(
     let provider_order = app_config.get_provider_order().await;
     let mut configured_providers: Vec<String> = provider_entries.keys().cloned().collect();
     configured_providers.sort_by(|left, right| {
-        let li = provider_order.iter().position(|id| id == left).unwrap_or(usize::MAX);
-        let ri = provider_order.iter().position(|id| id == right).unwrap_or(usize::MAX);
+        let li = provider_order
+            .iter()
+            .position(|id| id == left)
+            .unwrap_or(usize::MAX);
+        let ri = provider_order
+            .iter()
+            .position(|id| id == right)
+            .unwrap_or(usize::MAX);
         li.cmp(&ri).then_with(|| left.cmp(right))
     });
     let mut items = Vec::new();
 
     for provider_id in configured_providers {
-        let Some(mut item) = provider_manager.get_provider_config_item(&provider_id) else {
+        let entry = app_config.get_provider_entry(&provider_id).await;
+
+        // 内置供应商走 registry，自定义供应商从 custom_config 派生配置项，
+        // 否则设置页重进后看不到自定义供应商卡片，无法编辑/删除
+        let Some(mut item) = provider_manager.resolve_config_item(
+            &provider_id,
+            entry.as_ref().and_then(|e| e.custom_config.as_ref()),
+        ) else {
+            eprintln!("跳过无法解析的供应商配置: {}", provider_id);
             continue;
         };
-
-        let entry = app_config.get_provider_entry(&provider_id).await;
 
         // 内置供应商从 registry 查模板；自定义供应商从 custom_config 取
         let (env_key_name, env_oauth_token_name, provider_template_id, custom_config) = match &entry
@@ -531,8 +567,16 @@ async fn build_usage_summary(
     key_store: &KeyStore,
 ) -> Result<UsageSummary, String> {
     let base_item = provider_manager
-        .get_provider_config_item(provider_id)
-        .ok_or_else(|| format!("未知供应商: {}", provider_id))?;
+        .resolve_config_item(
+            provider_id,
+            entry.as_ref().and_then(|e| e.custom_config.as_ref()),
+        )
+        .ok_or_else(|| {
+            format!(
+                "未知供应商: {}（既不是内置供应商，也缺少自定义供应商配置，请检查该供应商的配置条目）",
+                provider_id
+            )
+        })?;
 
     // 解析环境变量名（自定义供应商用 custom_config.env_key_name，内置从 registry 查）
     let env_key_name = match entry.as_ref().and_then(|e| e.custom_config.as_ref()) {
@@ -558,18 +602,39 @@ async fn build_usage_summary(
     // 自定义供应商的 custom_config 引用（用于 fetch_api_usage）
     let custom_config_ref = entry.as_ref().and_then(|e| e.custom_config.as_ref());
 
+    // 修复 M14：同供应商多个 key 的查询并发执行（限流 + 保序），
+    // 结果仍按配置顺序归并，多 key 场景不再串行等待。
+    //
+    // 注意：future 在 for 循环里直接构造（而非 iter().map(closure)）。
+    // Tauri 命令宏会给 State 引用引入高阶生命周期，"闭包返回借用/捕获外部
+    // 引用的 async block" 会触发 FnOnce lifetime 不可泛化的编译错误；
+    // 循环构造 + stream::iter(Vec<Future>) 是成熟可行的等价写法。
+    let single_key = api_keys.len() == 1;
+    let mut api_key_futures = Vec::with_capacity(api_keys.len());
+    for api_key in &api_keys {
+        // 克隆 key 值，future 持有自有数据
+        let key_value = api_key.value.clone();
+        api_key_futures.push(async move {
+            provider_manager
+                .fetch_api_usage(provider_id, &key_value, custom_config_ref)
+                .await
+        });
+    }
+    let api_key_results: Vec<Result<(UsageData, Option<RateLimitData>), String>> =
+        futures::stream::iter(api_key_futures)
+            .buffered(USAGE_FETCH_CONCURRENCY)
+            .collect()
+            .await;
+
     let mut api_key_usages = Vec::new();
     let mut successful_usages = Vec::new();
     let mut api_errors = Vec::new();
     let mut rate_limit = None;
 
-    for api_key in &api_keys {
-        match provider_manager
-            .fetch_api_usage(provider_id, &api_key.value, custom_config_ref)
-            .await
-        {
+    for (api_key, result) in api_keys.iter().zip(api_key_results) {
+        match result {
             Ok((usage, item_rate_limit)) => {
-                if api_keys.len() == 1 {
+                if single_key {
                     rate_limit = item_rate_limit.clone();
                 }
 
@@ -603,10 +668,29 @@ async fn build_usage_summary(
     let mut subscription_summaries = Vec::new();
     let mut subscription_errors = Vec::new();
 
-    for subscription in subscriptions {
-        let sub_usage = provider_manager
-            .fetch_subscription_usage(provider_id, &subscription.value, custom_config_ref)
-            .await;
+    // 修复 M14：多订阅查询同样并发执行（限流 + 保序）
+    // key_store 透传给 Gemini 订阅链路用于缓存刷新后的 token（修复 M8）
+    let mut subscription_futures = Vec::with_capacity(subscriptions.len());
+    for subscription in &subscriptions {
+        // 克隆 token 值，future 持有自有数据
+        let token_value = subscription.value.clone();
+        subscription_futures.push(async move {
+            provider_manager
+                .fetch_subscription_usage(
+                    provider_id,
+                    &token_value,
+                    Some(key_store),
+                    custom_config_ref,
+                )
+                .await
+        });
+    }
+    let subscription_usages: Vec<SubscriptionUsage> = futures::stream::iter(subscription_futures)
+        .buffered(USAGE_FETCH_CONCURRENCY)
+        .collect()
+        .await;
+
+    for (subscription, sub_usage) in subscriptions.into_iter().zip(subscription_usages) {
         if matches!(sub_usage.status, ProviderStatus::Error) {
             if let Some(error_message) = sub_usage.error_message.clone() {
                 subscription_errors.push(format!("{}: {}", subscription.name, error_message));
@@ -660,6 +744,37 @@ async fn build_usage_summary(
         .await;
 
     Ok(summary)
+}
+
+/// 单个供应商拉取失败时的兜底摘要
+///
+/// 保证 `fetch_all_usage` 里一个供应商出错只影响自己的卡片，
+/// display_name 尽力从 registry / custom_config 解析，兜底用 provider_id。
+fn build_error_summary(
+    provider_id: &str,
+    entry: Option<&ProviderEntry>,
+    error: String,
+) -> UsageSummary {
+    let display_name = entry
+        .and_then(|e| e.custom_config.as_ref())
+        .map(|cfg| cfg.display_name.clone())
+        .or_else(|| {
+            crate::providers::registry::get(provider_id).map(|template| template.display_name)
+        })
+        .unwrap_or_else(|| provider_id.to_string());
+
+    UsageSummary {
+        provider_id: provider_id.to_string(),
+        display_name,
+        enabled: entry.map(|item| item.enabled).unwrap_or(true),
+        status: ProviderStatus::Error,
+        api_key_usages: Vec::new(),
+        usage: None,
+        subscriptions: Vec::new(),
+        rate_limit: None,
+        last_updated: Some(chrono::Utc::now().to_rfc3339()),
+        error_message: Some(error),
+    }
 }
 
 async fn load_provider_api_keys(

@@ -12,7 +12,12 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            // 必须带超时：网络挂起时避免刷新永久卡死
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("无法创建 HTTP 客户端"),
         }
     }
 }
@@ -98,51 +103,26 @@ impl UsageProvider for AnthropicProvider {
 
     async fn fetch_rate_limits(
         &self,
-        api_key: &str,
+        _api_key: &str,
     ) -> Result<Option<RateLimitData>, ProviderError> {
-        // 发一个轻量请求以获取响应头中的速率限制
-        let resp = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .body(r#"{"model":"claude-sonnet-4-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#)
-            .send()
-            .await?;
-
-        let headers = resp.headers();
-
-        let rpm = headers
-            .get("anthropic-ratelimit-requests-remaining")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-
-        let rpm_limit = headers
-            .get("anthropic-ratelimit-requests-limit")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-
-        let tpm = headers
-            .get("anthropic-ratelimit-tokens-remaining")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-
-        let tpm_limit = headers
-            .get("anthropic-ratelimit-tokens-limit")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-
-        if rpm.is_some() || tpm.is_some() {
-            Ok(Some(RateLimitData {
-                requests_per_minute: rpm,
-                requests_per_minute_limit: rpm_limit,
-                tokens_per_minute: tpm,
-                tokens_per_minute_limit: tpm_limit,
-            }))
-        } else {
-            Ok(None)
-        }
+        // 修复 M7：不再为展示 rate limit badge 主动 POST /v1/messages 探测。
+        //
+        // 背景：之前每次刷新（默认 5 分钟轮询 ≈ 288 次/天/key）都会额外发一个
+        // max_tokens=1 的真实 Messages 请求，只为读取响应头里的
+        // `anthropic-ratelimit-*` 系列字段——这是一次真实计费调用，
+        // 既产生费用又污染用量统计。
+        //
+        // 为什么不改成从上面的 cost_report GET 响应头里解析：
+        // `anthropic-ratelimit-*` 头是 Anthropic 官方文档为 Messages API
+        // 定义的响应头（见 https://docs.claude.com/en/api/rate-limits），
+        // cost_report 属于 Admin API，官方并未承诺返回 Messages 的限流头；
+        // 即使返回，语义也是 Admin API 自身的限流，与 badge 想展示的
+        // Messages API 限流不符，展示出来会误导用户。
+        //
+        // 结论：不为展示 badge 付出计费代价，rate limit 直接返回 None，
+        // 前端拿不到数据时自然不渲染 badge。原先 Admin key 401/403 被
+        // 调用方 `.ok()` 静默吞掉的问题也随探测移除而消失。
+        Ok(None)
     }
 
     async fn validate_key(&self, api_key: &str) -> Result<bool, ProviderError> {

@@ -53,6 +53,7 @@ impl ProviderManager {
             legacy_providers,
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .expect("无法创建 HTTP 客户端"),
             subscription_fetcher: subscription::SubscriptionFetcher::new(),
@@ -100,6 +101,22 @@ impl ProviderManager {
 
         items.sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
         items
+    }
+
+    /// 解析供应商配置项：内置供应商走 registry，自定义供应商从 custom_config 派生
+    ///
+    /// 修复 H-1：custom_ 前缀的自定义供应商不在 registry 中，仅靠
+    /// `get_provider_config_item` 会返回 None，导致整条用量拉取链路崩溃。
+    /// 所有面向"已配置供应商"的调用方都应走这个入口。
+    pub fn resolve_config_item(
+        &self,
+        provider_id: &str,
+        custom_config: Option<&CustomProviderConfig>,
+    ) -> Option<ProviderConfigItem> {
+        if let Some(item) = self.get_provider_config_item(provider_id) {
+            return Some(item);
+        }
+        custom_config.map(|cfg| config_item_from_custom(provider_id, cfg))
     }
 
     pub fn get_provider_config_item(&self, provider_id: &str) -> Option<ProviderConfigItem> {
@@ -174,14 +191,23 @@ impl ProviderManager {
     /// `account_id` 仅 openai_wham 使用：透传给 SubscriptionFetcher::fetch，
     /// 作为 `ChatGPT-Account-Id` header。传 None 时由 fetcher 内部自动检测
     /// （从 `~/.codex/auth.json` 的 `tokens.account_id` 读取）。
+    ///
+    /// `key_store` 仅 gemini 使用：缓存刷新后的 access_token（修复 M8）。
     pub async fn fetch_subscription_usage(
         &self,
         provider_id: &str,
         oauth_token: &str,
+        key_store: Option<&crate::config::encryption::KeyStore>,
         custom_config: Option<&CustomProviderConfig>,
     ) -> SubscriptionUsage {
-        self.fetch_subscription_usage_with_account(provider_id, oauth_token, None, custom_config)
-            .await
+        self.fetch_subscription_usage_with_account(
+            provider_id,
+            oauth_token,
+            None,
+            key_store,
+            custom_config,
+        )
+        .await
     }
 
     /// 获取单个供应商的订阅数据（显式传入 account_id）
@@ -190,6 +216,7 @@ impl ProviderManager {
         provider_id: &str,
         oauth_token: &str,
         account_id: Option<&str>,
+        key_store: Option<&crate::config::encryption::KeyStore>,
         custom_config: Option<&CustomProviderConfig>,
     ) -> SubscriptionUsage {
         let template = match self.resolve_template_for_query(provider_id, custom_config) {
@@ -213,7 +240,7 @@ impl ProviderManager {
             if let QueryType::Subscription { provider } = &spec.query_type {
                 return self
                     .subscription_fetcher
-                    .fetch(provider, oauth_token, account_id)
+                    .fetch(provider, oauth_token, account_id, key_store)
                     .await;
             }
         }
@@ -351,6 +378,29 @@ fn is_auth_error_message(msg: &str) -> bool {
         || msg.contains("AuthError")
         || msg.contains("HTTP 401")
         || msg.contains("HTTP 403")
+}
+
+/// 从自定义供应商配置构造 ProviderConfigItem
+///
+/// custom_ 前缀的自定义供应商不在 registry 中，配置项直接从
+/// `ProviderEntry.custom_config` 派生（display_name / env_key_name / capabilities）。
+pub fn config_item_from_custom(
+    provider_id: &str,
+    cfg: &CustomProviderConfig,
+) -> ProviderConfigItem {
+    let template = template_from_custom(provider_id, cfg);
+    ProviderConfigItem {
+        provider_id: template.id,
+        display_name: template.display_name,
+        enabled: false,
+        api_keys: Vec::new(),
+        subscriptions: Vec::new(),
+        capabilities: template.capabilities,
+        environment_variable_name: template.env_key_name,
+        active_api_key_id: None,
+        provider_template_id: None,
+        custom_config: Some(cfg.clone()),
+    }
 }
 
 /// 从自定义供应商配置构造一个临时 ProviderTemplate

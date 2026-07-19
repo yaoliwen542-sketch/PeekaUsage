@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
+futures = "0.3"
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
@@ -39,3 +40,11 @@ hex = "0.4"
 rquickjs = { version = "0.7", features = ["loader", "allocator"] }
 jsonpath-rust = "0.7"
 url = "2"
+
+# 任务 M11：Windows 写用户环境变量后需要广播 WM_SETTINGCHANGE。
+# 版本与 Cargo.lock 中已有的 windows-sys 0.61.x 对齐（dirs-sys/zbus 等传递依赖已在用）。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -213,10 +213,19 @@ impl UsageStatsStore {
     pub fn new(app_data_dir: PathBuf) -> Self {
         let stats_path = app_data_dir.join("usage_stats.json");
         let mut stats = if stats_path.exists() {
-            std::fs::read_to_string(&stats_path)
-                .ok()
-                .and_then(|content| serde_json::from_str::<UsageStatsFile>(&content).ok())
-                .unwrap_or_default()
+            match std::fs::read_to_string(&stats_path) {
+                Ok(content) => match serde_json::from_str::<UsageStatsFile>(&content) {
+                    Ok(stats) => stats,
+                    Err(error) => {
+                        // 修复 M9：统计文件损坏时备份为 usage_stats.json.bak 再回退空历史，
+                        // 避免 180 天历史样本彻底丢失且无任何现场可查。
+                        eprintln!("解析 usage_stats.json 失败: {}，回退空统计", error);
+                        crate::config::atomic::backup_corrupted_file(&stats_path);
+                        UsageStatsFile::default()
+                    }
+                },
+                Err(_) => UsageStatsFile::default(),
+            }
         } else {
             UsageStatsFile::default()
         };
@@ -239,7 +248,8 @@ impl UsageStatsStore {
                 .map_err(|error| format!("创建统计目录失败: {}", error))?;
         }
 
-        std::fs::write(&self.stats_path, content)
+        // 修复 M9：原子写入（tmp + rename），写入中途崩溃不会留下半截 usage_stats.json
+        crate::config::atomic::atomic_write(&self.stats_path, content.as_bytes())
             .map_err(|error| format!("写入统计文件失败: {}", error))?;
 
         Ok(())

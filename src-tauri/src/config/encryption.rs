@@ -17,7 +17,21 @@ impl KeyStore {
         let store_path = app_data_dir.join("keys.dat");
         let keys = if store_path.exists() {
             match std::fs::read_to_string(&store_path) {
-                Ok(content) => Self::decode_keys(&content),
+                Ok(content) => match Self::decode_keys(&content) {
+                    Some(keys) => keys,
+                    None => {
+                        // 修复 M9：密钥文件解码失败（写半截/被外部改坏）时，
+                        // 备份为 keys.dat.bak 再回退空存储，避免数据彻底丢失。
+                        // 空文件视为尚未写入的新文件，不算损坏。
+                        if content.trim().is_empty() {
+                            HashMap::new()
+                        } else {
+                            eprintln!("解码 keys.dat 失败，回退空密钥存储");
+                            crate::config::atomic::backup_corrupted_file(&store_path);
+                            HashMap::new()
+                        }
+                    }
+                },
                 Err(_) => HashMap::new(),
             }
         } else {
@@ -36,13 +50,14 @@ impl KeyStore {
         base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
     }
 
-    fn decode_keys(encoded: &str) -> HashMap<String, String> {
+    /// 解码密钥文件；任一步骤失败返回 None（调用方据此判定文件损坏）
+    fn decode_keys(encoded: &str) -> Option<HashMap<String, String>> {
         use base64::Engine;
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(encoded.trim().as_bytes())
-            .unwrap_or_default();
-        let json_str = String::from_utf8(decoded).unwrap_or_default();
-        serde_json::from_str(&json_str).unwrap_or_default()
+            .ok()?;
+        let json_str = String::from_utf8(decoded).ok()?;
+        serde_json::from_str(&json_str).ok()
     }
 
     async fn save(&self) -> Result<(), String> {
@@ -53,7 +68,9 @@ impl KeyStore {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建密钥目录失败: {}", e))?;
         }
 
-        std::fs::write(&self.store_path, encoded).map_err(|e| format!("保存密钥失败: {}", e))?;
+        // 修复 M9：原子写入（tmp + rename），写入中途崩溃不会留下半截 keys.dat
+        crate::config::atomic::atomic_write(&self.store_path, encoded.as_bytes())
+            .map_err(|e| format!("保存密钥失败: {}", e))?;
 
         Ok(())
     }

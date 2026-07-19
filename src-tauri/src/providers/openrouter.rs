@@ -12,7 +12,12 @@ pub struct OpenRouterProvider {
 impl OpenRouterProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            // 必须带超时：网络挂起时避免刷新永久卡死
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("无法创建 HTTP 客户端"),
         }
     }
 }

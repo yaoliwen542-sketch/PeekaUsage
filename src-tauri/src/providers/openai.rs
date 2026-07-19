@@ -12,8 +12,95 @@ pub struct OpenAIProvider {
 impl OpenAIProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            // 必须带超时：网络挂起时避免刷新永久卡死
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("无法创建 HTTP 客户端"),
         }
+    }
+
+    /// 调用 /v1/organization/costs 累计指定时间范围内的费用总额（单位：美元）。
+    ///
+    /// 修复 M6 单位问题：`amount.value` 是**美元小数**而不是美分，不再除以 100。
+    /// 依据：OpenAI 官方 OpenAPI 规范（github.com/openai/openai-openapi）中
+    /// `CostsResult.amount` 的描述为 "The monetary value in its associated
+    /// currency"（currency 为小写 ISO-4217，如 "usd"），且官方示例为
+    /// `"amount": {"value": 0.06, "currency": "usd"}`，即 0.06 美元。
+    ///
+    /// 修复 M6 分页问题：响应按 bucket 分页（`has_more` + `next_page` 游标，
+    /// 游标通过 `page` 查询参数回传）。旧代码只取第一页且未传 limit
+    /// （默认仅 7 个 bucket），月初第 8 天起的费用就会被漏计。
+    /// 这里显式传 `limit=180`（官方上限）并沿游标翻页累计，
+    /// 页数封顶 [`COSTS_MAX_PAGES`] 防死循环。
+    async fn fetch_monthly_costs(
+        &self,
+        api_key: &str,
+        start_timestamp: i64,
+        end_timestamp: i64,
+    ) -> Result<f64, ProviderError> {
+        let mut total_used = 0.0;
+        let mut page_cursor: Option<String> = None;
+
+        for page_index in 0..COSTS_MAX_PAGES {
+            let mut request = self
+                .client
+                .get("https://api.openai.com/v1/organization/costs")
+                .bearer_auth(api_key)
+                .query(&[
+                    ("start_time", start_timestamp.to_string()),
+                    ("end_time", end_timestamp.to_string()),
+                    ("group_by", "line_item".to_string()),
+                    ("limit", COSTS_PAGE_LIMIT.to_string()),
+                ]);
+            if let Some(cursor) = page_cursor.as_deref() {
+                // reqwest 的 .query() 会对游标做 percent-encoding
+                request = request.query(&[("page", cursor)]);
+            }
+
+            let resp = request.send().await?;
+
+            if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 {
+                return Err(ProviderError::AuthError("API Key 无效或权限不足".into()));
+            }
+
+            if !resp.status().is_success() {
+                if page_index == 0 {
+                    // 保持原有语义：首页非 2xx（除鉴权外）按 0 处理，
+                    // 让后付费账户继续走 subscription 限额展示
+                    return Ok(0.0);
+                }
+                // 后续页失败不能静默漏计（那正是 M6 要修的问题），
+                // 返回错误让前端展示异常，而不是一个偏低的金额
+                return Err(ProviderError::RequestError(format!(
+                    "HTTP {}",
+                    resp.status()
+                )));
+            }
+
+            let costs: CostsResponse = resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::ParseError(e.to_string()))?;
+
+            total_used += costs
+                .data
+                .iter()
+                .flat_map(|bucket| bucket.results.iter())
+                .map(|result| result.amount.value)
+                .sum::<f64>();
+
+            if costs.has_more {
+                if let Some(next) = costs.next_page.filter(|next| !next.is_empty()) {
+                    page_cursor = Some(next);
+                    continue;
+                }
+            }
+            break;
+        }
+
+        Ok(total_used)
     }
 }
 
@@ -22,6 +109,12 @@ impl OpenAIProvider {
 struct CostsResponse {
     #[serde(default)]
     data: Vec<CostBucket>,
+    /// 是否还有下一页 bucket（分页字段，修复 M6）
+    #[serde(default)]
+    has_more: bool,
+    /// 下一页游标，作为 `page` 查询参数回传（分页字段，修复 M6）
+    #[serde(default)]
+    next_page: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +131,12 @@ struct CostResult {
 struct CostAmount {
     value: f64,
 }
+
+/// costs API 单页 bucket 数上限（官方允许 1-180，默认 7；
+/// 不显式传 limit 时月初第 8 天起就会漏计，修复 M6）
+const COSTS_PAGE_LIMIT: u32 = 180;
+/// costs API 翻页次数上限，防 next_page 游标异常导致死循环
+const COSTS_MAX_PAGES: u32 = 20;
 
 /// /v1/dashboard/billing/subscription 响应
 #[derive(Debug, Deserialize)]
@@ -109,43 +208,15 @@ impl UsageProvider for OpenAIProvider {
         let start_of_month = now.format("%Y-%m-01").to_string();
         let end_date = now.format("%Y-%m-%d").to_string();
 
-        // 获取用量（costs API）
         let start_timestamp = chrono::NaiveDate::parse_from_str(&start_of_month, "%Y-%m-%d")
             .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
             .unwrap_or(0);
         let end_timestamp = now.timestamp();
 
-        let costs_url = format!(
-            "https://api.openai.com/v1/organization/costs?start_time={}&end_time={}&group_by=line_item",
-            start_timestamp, end_timestamp
-        );
-
-        let costs_resp = self
-            .client
-            .get(&costs_url)
-            .bearer_auth(api_key)
-            .send()
+        // 获取用量（costs API，含分页累计，修复 M6）
+        let total_used = self
+            .fetch_monthly_costs(api_key, start_timestamp, end_timestamp)
             .await?;
-
-        if costs_resp.status().as_u16() == 401 || costs_resp.status().as_u16() == 403 {
-            return Err(ProviderError::AuthError("API Key 无效或权限不足".into()));
-        }
-
-        let total_used = if costs_resp.status().is_success() {
-            let costs: CostsResponse = costs_resp
-                .json()
-                .await
-                .map_err(|e| ProviderError::ParseError(e.to_string()))?;
-            costs
-                .data
-                .iter()
-                .flat_map(|b| b.results.iter())
-                .map(|r| r.amount.value)
-                .sum::<f64>()
-                / 100.0 // API 返回的是美分
-        } else {
-            0.0
-        };
 
         // 尝试获取 subscription 限额
         let budget = match self

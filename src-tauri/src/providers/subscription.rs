@@ -57,7 +57,12 @@ struct OpenAIUsageWindow {
 impl SubscriptionFetcher {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            // 必须带超时：网络挂起时避免刷新永久卡死
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("无法创建 HTTP 客户端"),
         }
     }
 
@@ -69,11 +74,15 @@ impl SubscriptionFetcher {
     /// `account_id` 仅 openai_wham 使用：作为 `ChatGPT-Account-Id` header 发送，
     /// 用于多账号场景。来源通常是 `~/.codex/auth.json` 的 `tokens.account_id`，
     /// 由调用方通过 oauth_detect 解析后传入；None 时不附带该 header。
+    ///
+    /// `key_store` 仅 gemini 使用：缓存刷新后的 access_token（修复 M8），
+    /// 其它 provider 传 None 即可。
     pub async fn fetch(
         &self,
         provider: &str,
         oauth_token: &str,
         account_id: Option<&str>,
+        key_store: Option<&crate::config::encryption::KeyStore>,
     ) -> SubscriptionUsage {
         match provider {
             "anthropic_oauth" => self.fetch_anthropic_oauth(oauth_token).await,
@@ -81,7 +90,10 @@ impl SubscriptionFetcher {
             // Gemini：oauth_token 参数传入的是 ~/.gemini/oauth_creds.json 的完整 JSON
             // （含 access_token + refresh_token + expiry），由 gemini 模块解析并支持自动刷新。
             // account_id 参数对 Gemini 不适用（Gemini 不需要 ChatGPT-Account-Id）。
-            "gemini" => super::gemini::fetch_gemini_quota(&self.client, oauth_token).await,
+            // key_store 用于缓存刷新后的 token（修复 M8），避免每次轮询都打 token 端点。
+            "gemini" => {
+                super::gemini::fetch_gemini_quota(&self.client, oauth_token, key_store).await
+            }
             _ => SubscriptionUsage {
                 plan_name: None,
                 windows: vec![],

@@ -25,6 +25,8 @@ pub struct AppSettings {
     pub auto_expand_window_to_fit_content: bool,
     #[serde(default = "default_edge_dock_collapse_enabled")]
     pub edge_dock_collapse_enabled: bool,
+    #[serde(default = "default_island_visible")]
+    pub island_visible: bool,
     #[serde(default)]
     pub hide_taskbar_icon: bool,
     #[serde(default)]
@@ -128,6 +130,7 @@ impl Default for AppSettings {
             refresh_on_settings_close: false,
             auto_expand_window_to_fit_content: false,
             edge_dock_collapse_enabled: default_edge_dock_collapse_enabled(),
+            island_visible: default_island_visible(),
             hide_taskbar_icon: false,
             hide_taskbar_icon_hint_shown: false,
             language: AppLanguage::default(),
@@ -147,6 +150,11 @@ impl Default for AppSettings {
 }
 
 fn default_edge_dock_collapse_enabled() -> bool {
+    true
+}
+
+fn default_island_visible() -> bool {
+    // 旧配置缺省时默认显示灵动岛，保证老用户升级后行为不变
     true
 }
 
@@ -296,11 +304,20 @@ impl AppConfig {
         let config_path = app_data_dir.join("config.json");
         let config = if config_path.exists() {
             match std::fs::read_to_string(&config_path) {
-                Ok(content) => {
-                    let mut config: ConfigFile = serde_json::from_str(&content).unwrap_or_default();
-                    config.settings = config.settings.normalized();
-                    config
-                }
+                Ok(content) => match serde_json::from_str::<ConfigFile>(&content) {
+                    Ok(mut config) => {
+                        config.settings = config.settings.normalized();
+                        config
+                    }
+                    Err(error) => {
+                        // 修复 M9：解析失败不能静默重置为默认配置。
+                        // 先把损坏文件备份为 config.json.bak（用户可手动恢复），
+                        // 再回退默认配置，避免用户数据彻底丢失。
+                        eprintln!("解析 config.json 失败: {}，回退默认配置", error);
+                        crate::config::atomic::backup_corrupted_file(&config_path);
+                        ConfigFile::default()
+                    }
+                },
                 Err(_) => ConfigFile::default(),
             }
         } else {
@@ -323,7 +340,8 @@ impl AppConfig {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
         }
 
-        std::fs::write(&self.config_path, content)
+        // 修复 M9：原子写入（tmp + rename），写入中途崩溃不会留下半截 config.json
+        crate::config::atomic::atomic_write(&self.config_path, content.as_bytes())
             .map_err(|e| format!("写入配置文件失败: {}", e))?;
 
         Ok(())

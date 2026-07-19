@@ -151,7 +151,43 @@ $value = $env:PEEKA_ENV_VALUE
         }
     }
 
+    // 修复 M11：PowerShell 的 [Environment]::SetEnvironmentVariable 只写注册表
+    // 不广播，explorer 等已运行进程的环境块不更新，新终端仍读旧值（需重新登录）。
+    // 写完注册表后主动广播 WM_SETTINGCHANGE，让新启动的进程立即读到新值。
+    broadcast_windows_environment_change();
+
     Ok(())
+}
+
+/// 广播 WM_SETTINGCHANGE，通知系统"用户环境变量已变更"。
+///
+/// 使用 SendMessageTimeoutW + SMTO_ABORTIFHUNG：向所有顶层窗口广播时，
+/// 个别挂起的窗口最多阻塞 2 秒即跳过，不会卡死配置保存流程。
+/// 广播结果（个别窗口未响应）不影响写入本身，故忽略返回值。
+#[cfg(target_os = "windows")]
+fn broadcast_windows_environment_change() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+    };
+
+    // lParam 需要指向以 NUL 结尾的 UTF-16 字符串 "Environment"
+    let environment: Vec<u16> = "Environment"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let mut result: usize = 0;
+        SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            environment.as_ptr() as isize,
+            SMTO_ABORTIFHUNG,
+            2000,
+            &mut result,
+        );
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

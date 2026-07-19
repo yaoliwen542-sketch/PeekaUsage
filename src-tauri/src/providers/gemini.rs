@@ -8,18 +8,30 @@
 //! 当 token 过期时，用 Gemini CLI 公开的 client_id / client_secret 调用
 //! `https://oauth2.googleapis.com/token` 刷新。
 //!
+//! 修复 M8：刷新得到的新 access_token 会缓存进应用自己的 KeyStore
+//! （键名 `gemini_access_token_cache`，含过期时间与可能的轮换 refresh_token），
+//! 下次轮询优先使用未过期的缓存 token，不再每次都打 Google token 端点。
+//! 注意：**不会回写用户的 `~/.gemini/oauth_creds.json`**——该文件同时被
+//! Gemini CLI 使用，回写有冲突风险。
+//!
 //! 与 subscription.rs 的接口：`fetch_gemini_quota` 接收完整的 oauth_creds.json
 //! 文本（作为 `oauth_token` 参数传入），返回 `SubscriptionUsage`。
 
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::types::{window_labels, ProviderStatus, SubscriptionUsage, SubscriptionWindow};
+use crate::config::encryption::KeyStore;
 
 /// Gemini CLI 的 OAuth client_id（公开固定值，来自 cc-switch 调研）
 const GEMINI_CLIENT_ID: &str = "32555940559.apps.googleusercontent.com";
 /// Gemini CLI 的 OAuth client_secret（公开固定值）
 const GEMINI_CLIENT_SECRET: &str = "ZmssLNjJy2998hD4CTg2ejr2";
+
+/// 修复 M8：刷新后的 token 在 KeyStore 中的缓存键名
+const GEMINI_TOKEN_CACHE_KEY: &str = "gemini_access_token_cache";
+/// 过期判定安全余量：剩余有效期不足该秒数即视为过期，避免用"马上过期"的 token 发请求
+const TOKEN_EXPIRY_SKEW_SECONDS: i64 = 60;
 
 /// Gemini OAuth 凭据（~/.gemini/oauth_creds.json 的结构）
 #[derive(Debug, Deserialize)]
@@ -30,20 +42,45 @@ struct GeminiOauthCreds {
     expiry: Option<String>,
 }
 
+/// 修复 M8：KeyStore 中缓存的 token 结构（JSON 序列化后整体存入）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeminiTokenCache {
+    access_token: String,
+    /// RFC3339 过期时间（由 refresh 响应的 expires_in 换算）
+    expiry: Option<String>,
+    /// Google 若在 refresh 响应里轮换了 refresh_token，缓存最新值
+    refresh_token: Option<String>,
+}
+
+/// refresh 成功后的结果
+struct RefreshedToken {
+    access_token: String,
+    expiry: Option<String>,
+    /// 响应里带的新 refresh_token；未带则沿用发起本次刷新的那个
+    refresh_token: Option<String>,
+}
+
 /// 查询 Gemini 配额
 ///
 /// `oauth_creds_json` 是 `~/.gemini/oauth_creds.json` 的完整内容（含
 /// access_token + refresh_token + expiry）。整个 JSON 通过订阅的 oauth_token
 /// 字段透传进来，由本模块解析。
-pub async fn fetch_gemini_quota(client: &Client, oauth_creds_json: &str) -> SubscriptionUsage {
+///
+/// `key_store` 用于缓存刷新后的 token（修复 M8）；传 None 时退化为
+/// 每次过期都重新 refresh 的旧行为（主要用于测试）。
+pub async fn fetch_gemini_quota(
+    client: &Client,
+    oauth_creds_json: &str,
+    key_store: Option<&KeyStore>,
+) -> SubscriptionUsage {
     // 1. 解析凭据
     let creds: GeminiOauthCreds = match serde_json::from_str(oauth_creds_json) {
         Ok(c) => c,
         Err(e) => return error_usage(format!("解析 Gemini 凭据失败: {}", e)),
     };
 
-    // 2. 检查 token 是否过期，过期则 refresh
-    let token = match refresh_if_needed(client, &creds).await {
+    // 2. 解析可用的 access_token（文件 token -> 缓存 token -> refresh，修复 M8）
+    let token = match resolve_access_token(client, &creds, key_store).await {
         Ok(t) => t,
         Err(e) => return error_usage(format!("刷新 token 失败: {}", e)),
     };
@@ -61,30 +98,119 @@ pub async fn fetch_gemini_quota(client: &Client, oauth_creds_json: &str) -> Subs
     }
 }
 
-/// 若 access_token 已过期（或无 expiry 视为已过期），则用 refresh_token 换取新 token。
+/// 解析当前可用的 access_token。
 ///
-/// 成功返回可用的 access_token（原 token 或刷新后的新 token）。
-async fn refresh_if_needed(client: &Client, creds: &GeminiOauthCreds) -> Result<String, String> {
-    let need_refresh = creds
-        .expiry
-        .as_ref()
-        .map(|exp| {
-            chrono::DateTime::parse_from_rfc3339(exp)
-                .map(|dt| dt.with_timezone(&chrono::Utc) < chrono::Utc::now())
-                .unwrap_or(true)
-        })
-        .unwrap_or(true);
+/// 优先级（修复 M8）：
+/// 1. 文件里的 token 未过期 -> 直接用（Gemini CLI 是凭据的"源头"，
+///    用户重新登录 CLI 后能立即感知账号切换）
+/// 2. KeyStore 缓存的 token 未过期 -> 直接用（上次轮询刷新过，
+///    避免每 5 分钟都打一次 Google token 端点）
+/// 3. 两者都过期 -> refresh；refresh_token 优先用缓存里的最新值
+///    （Google 可能轮换 refresh_token，本地文件里的旧值可能已失效），
+///    缓存值失败再回退文件里的值；成功后把新 token 写回 KeyStore 缓存
+async fn resolve_access_token(
+    client: &Client,
+    creds: &GeminiOauthCreds,
+    key_store: Option<&KeyStore>,
+) -> Result<String, String> {
+    let cache = load_token_cache(key_store).await;
 
-    if !need_refresh {
+    if !token_expired(creds.expiry.as_deref()) {
         return Ok(creds.access_token.clone());
     }
 
-    let refresh_token = creds
-        .refresh_token
-        .as_ref()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "无 refresh_token，无法刷新".to_string())?;
+    if let Some(cache) = cache.as_ref() {
+        if !token_expired(cache.expiry.as_deref()) {
+            return Ok(cache.access_token.clone());
+        }
+    }
 
+    // 候选 refresh_token：缓存的最新值优先，文件值兜底，去重后依次尝试
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(rt) = cache
+        .as_ref()
+        .and_then(|c| c.refresh_token.as_ref())
+        .filter(|s| !s.is_empty())
+    {
+        candidates.push(rt.clone());
+    }
+    if let Some(rt) = creds.refresh_token.as_ref().filter(|s| !s.is_empty()) {
+        if !candidates.contains(rt) {
+            candidates.push(rt.clone());
+        }
+    }
+    if candidates.is_empty() {
+        return Err("无 refresh_token，无法刷新".to_string());
+    }
+
+    let mut last_error = String::new();
+    for refresh_token in &candidates {
+        match refresh_access_token(client, refresh_token).await {
+            Ok(refreshed) => {
+                let access_token = refreshed.access_token.clone();
+                save_token_cache(key_store, &refreshed).await;
+                return Ok(access_token);
+            }
+            Err(error) => {
+                last_error = error;
+            }
+        }
+    }
+
+    Err(last_error)
+}
+
+/// 判断 token 是否已过期（含安全余量）。
+///
+/// 无 expiry 或 expiry 解析失败一律视为已过期（与原行为一致）。
+fn token_expired(expiry: Option<&str>) -> bool {
+    let Some(expiry) = expiry else {
+        return true;
+    };
+    chrono::DateTime::parse_from_rfc3339(expiry)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                < chrono::Utc::now() + chrono::Duration::seconds(TOKEN_EXPIRY_SKEW_SECONDS)
+        })
+        .unwrap_or(true)
+}
+
+/// 从 KeyStore 读取缓存的 token；缓存缺失或损坏时静默视为无缓存
+async fn load_token_cache(key_store: Option<&KeyStore>) -> Option<GeminiTokenCache> {
+    let raw = key_store?.get_stored_key(GEMINI_TOKEN_CACHE_KEY).await?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// 把刷新后的 token 写入 KeyStore 缓存。
+///
+/// 只写应用自己的 KeyStore，不回写用户的 `~/.gemini/oauth_creds.json`。
+/// 写入失败只打日志，不影响本次查询（下次轮询会重新 refresh）。
+async fn save_token_cache(key_store: Option<&KeyStore>, refreshed: &RefreshedToken) {
+    let Some(key_store) = key_store else {
+        return;
+    };
+
+    let cache = GeminiTokenCache {
+        access_token: refreshed.access_token.clone(),
+        expiry: refreshed.expiry.clone(),
+        refresh_token: refreshed.refresh_token.clone(),
+    };
+
+    match serde_json::to_string(&cache) {
+        Ok(raw) => {
+            if let Err(error) = key_store.set_key(GEMINI_TOKEN_CACHE_KEY, &raw).await {
+                eprintln!("缓存 Gemini token 失败: {}", error);
+            }
+        }
+        Err(error) => eprintln!("序列化 Gemini token 缓存失败: {}", error),
+    }
+}
+
+/// 用 refresh_token 向 Google token 端点换取新 access_token
+async fn refresh_access_token(
+    client: &Client,
+    refresh_token: &str,
+) -> Result<RefreshedToken, String> {
     let resp = client
         .post("https://oauth2.googleapis.com/token")
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -103,11 +229,33 @@ async fn refresh_if_needed(client: &Client, creds: &GeminiOauthCreds) -> Result<
     }
 
     let token_resp: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    token_resp
+
+    let access_token = token_resp
         .get("access_token")
         .and_then(|t| t.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| "响应中无 access_token".to_string())
+        .ok_or_else(|| "响应中无 access_token".to_string())?;
+
+    // Google 返回 expires_in（秒），换算成绝对过期时间（RFC3339）存缓存
+    let expiry = token_resp
+        .get("expires_in")
+        .and_then(|v| v.as_i64())
+        .map(|seconds| (chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339());
+
+    // Google 偶尔会在 refresh 响应里轮换 refresh_token，有则缓存最新值，
+    // 没有则沿用本次使用的 refresh_token
+    let next_refresh_token = token_resp
+        .get("refresh_token")
+        .and_then(|t| t.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| Some(refresh_token.to_string()));
+
+    Ok(RefreshedToken {
+        access_token,
+        expiry,
+        refresh_token: next_refresh_token,
+    })
 }
 
 /// loadCodeAssist：拿到 Gemini 的 cloudaicompanionProject.id
@@ -319,5 +467,40 @@ mod tests {
         let json = r#"{"refresh_token":"rt"}"#;
         let result: Result<GeminiOauthCreds, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_expired_logic() {
+        // 无 expiry / 非法 expiry -> 视为过期
+        assert!(token_expired(None));
+        assert!(token_expired(Some("not-a-date")));
+
+        // 未来 1 小时 -> 未过期
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        assert!(!token_expired(Some(&future)));
+
+        // 过去 1 小时 -> 已过期
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        assert!(token_expired(Some(&past)));
+
+        // 30 秒后过期（小于 60 秒安全余量）-> 视为已过期
+        let soon = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
+        assert!(token_expired(Some(&soon)));
+    }
+
+    #[test]
+    fn test_gemini_token_cache_serde_roundtrip() {
+        let cache = GeminiTokenCache {
+            access_token: "at".to_string(),
+            expiry: Some("2026-07-17T10:00:00+00:00".to_string()),
+            refresh_token: Some("rt".to_string()),
+        };
+        let raw = serde_json::to_string(&cache).unwrap();
+        let parsed: GeminiTokenCache = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed.access_token, "at");
+        assert_eq!(parsed.refresh_token.as_deref(), Some("rt"));
+
+        // 损坏的缓存 JSON 解析失败 -> 调用方按无缓存处理
+        assert!(serde_json::from_str::<GeminiTokenCache>("{broken").is_err());
     }
 }
