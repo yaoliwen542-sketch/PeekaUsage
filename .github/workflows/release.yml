@@ -65,7 +65,7 @@ jobs:
 
     runs-on: ${{ matrix.platform.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 读取发版说明
         shell: bash
@@ -77,7 +77,7 @@ jobs:
             echo 'PEEKARELSE'
           } >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
 
