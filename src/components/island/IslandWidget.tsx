@@ -211,6 +211,13 @@ export default function IslandWidget() {
   const dragMovedRef = useRef(false);
   const lastWindowMoveAtRef = useRef(0);
   const positionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // expanded 的 ref 镜像：窗口失焦回调里需要读到最新展开状态
+  const expandedRef = useRef(false);
+  // 展开完成时间戳：展开瞬间的焦点抖动（setSize/setFocus 竞争）不触发失焦收起
+  const expandAtRef = useRef(0);
+  // 展开发生越界校正平移前的窗口位置：收起后恢复，
+  // 避免「展开-收起」循环把岛条逐步推离用户拖放的位置
+  const expandOriginRef = useRef<{ x: number; y: number } | null>(null);
 
   // 启动：加载用户设置 + 恢复位置 + 注册各类监听
   useEffect(() => {
@@ -218,6 +225,7 @@ export default function IslandWidget() {
     let unlistenUsage: UnlistenFn | null = null;
     let unlistenSettingsChanged: UnlistenFn | null = null;
     let unlistenMoved: UnlistenFn | null = null;
+    let unlistenFocus: UnlistenFn | null = null;
     let stopObservingSystemTheme: (() => void) | null = null;
     const win = getCurrentWindow();
     const windowLabel = win.label;
@@ -268,6 +276,18 @@ export default function IslandWidget() {
         }, POSITION_SAVE_DEBOUNCE_MS);
       });
 
+      // 展开态下窗口失焦（点击岛外任何位置）自动收起——浮层的标准交互。
+      // 展开后 400ms 内的失焦视为焦点抖动（setSize/setFocus 竞争）忽略
+      unlistenFocus = await win.onFocusChanged(({ payload: focused }) => {
+        if (focused || !expandedRef.current) {
+          return;
+        }
+        if (Date.now() - expandAtRef.current < 400) {
+          return;
+        }
+        setExpandedWithSize(false);
+      });
+
       stopObservingSystemTheme = observeSystemTheme(() => {
         if (useSettingsStore.getState().settings.theme === "system") {
           applyTheme("system");
@@ -280,6 +300,7 @@ export default function IslandWidget() {
       unlistenUsage?.();
       unlistenSettingsChanged?.();
       unlistenMoved?.();
+      unlistenFocus?.();
       stopObservingSystemTheme?.();
       if (positionSaveTimerRef.current) {
         clearTimeout(positionSaveTimerRef.current);
@@ -310,8 +331,42 @@ export default function IslandWidget() {
     try {
       if (nextExpanded) {
         await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
+        // 展开后窗口若超出所在显示器工作区（例如岛条贴在屏幕右缘），
+        // 平移回屏幕内——否则面板右缘（含收起按钮）会画到屏幕外
+        const monitor = await currentMonitor();
+        if (monitor) {
+          const scale = monitor.scaleFactor;
+          const pos = (await win.outerPosition()).toLogical(scale);
+          const areaPos = monitor.workArea.position.toLogical(scale);
+          const areaSize = monitor.workArea.size.toLogical(scale);
+          const maxX = areaPos.x + areaSize.width - EXPANDED_WIDTH;
+          const maxY = areaPos.y + areaSize.height - EXPANDED_HEIGHT;
+          const x = clamp(Math.round(pos.x), areaPos.x, Math.max(areaPos.x, maxX));
+          const y = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
+          if (x !== Math.round(pos.x) || y !== Math.round(pos.y)) {
+            expandOriginRef.current = { x: Math.round(pos.x), y: Math.round(pos.y) };
+            await win.setPosition(new LogicalPosition(x, y));
+          } else {
+            expandOriginRef.current = null;
+          }
+        }
+        // 展开后让岛窗口真正持有焦点：
+        // 1) 快捷设置的输入框需要焦点才能输入
+        // 2) 失焦自动收起依赖「先获得焦点、后失去焦点」的完整转换
+        expandAtRef.current = Date.now();
+        await win.setFocus().catch(() => {
+          // 权限未就绪等平台差异场景忽略，失焦收起会退化为仅按钮/Esc
+        });
       } else {
         await win.setSize(new LogicalSize(COLLAPSED_WIDTH, COLLAPSED_HEIGHT));
+        // 展开时若做过越界校正平移，收起后把岛条恢复到用户原始拖放位置
+        const origin = expandOriginRef.current;
+        expandOriginRef.current = null;
+        if (origin) {
+          await win.setPosition(new LogicalPosition(origin.x, origin.y)).catch(() => {
+            // 显示器热插拔等极端场景忽略，保持校正后的位置也可接受
+          });
+        }
       }
     } catch {
       // 窗口权限未就绪等场景忽略，面板仍按收起态展示
@@ -319,25 +374,40 @@ export default function IslandWidget() {
   }
 
   function setExpandedWithSize(nextExpanded: boolean) {
+    expandedRef.current = nextExpanded;
     setExpanded(nextExpanded);
     setExpandedProvider(null);
     setShowQuickSettings(false);
     void applyWindowSize(nextExpanded);
   }
 
-  // 收起态岛条：mousedown 时交给 Tauri/OS 拖动窗口
+  // 展开态下 Esc 收起
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setExpandedWithSize(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
+
+  // 收起态岛条：mousedown 只记录起点，不立即 startDragging——
+  // Windows 上 startDragging 会进入 OS 模态移动循环，可能吞掉 mouseup
+  // 导致纯点击不合成 click（时序竞争，表现为"有时点不开"）。
+  // 正确时序：mousemove 超过阈值判定为拖动后再 startDragging。
   function handleBarMouseDown(e: React.MouseEvent) {
     if (e.button !== 0 || expanded) {
       return;
     }
     dragStartClientRef.current = { x: e.clientX, y: e.clientY };
     dragMovedRef.current = false;
-    void getCurrentWindow().startDragging().catch(() => {
-      // 拖动权限未就绪时忽略，点击展开仍然可用
-    });
   }
 
-  // 部分平台 OS 拖动前仍会派发 mousemove，超过阈值则标记为拖动
+  // 移动超过阈值才交给 Tauri/OS 拖动窗口（此时鼠标仍按着，OS 从当前位置接管拖动）
   function handleBarMouseMove(e: React.MouseEvent) {
     const start = dragStartClientRef.current;
     if (!start || dragMovedRef.current) {
@@ -348,6 +418,10 @@ export default function IslandWidget() {
       || Math.abs(e.clientY - start.y) > DRAG_CLICK_SUPPRESS_PX
     ) {
       dragMovedRef.current = true;
+      dragStartClientRef.current = null;
+      void getCurrentWindow().startDragging().catch(() => {
+        // 拖动权限未就绪时忽略，点击展开仍然可用
+      });
     }
   }
 
@@ -422,7 +496,7 @@ export default function IslandWidget() {
               aria-label={t("island.collapse")}
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-                <path d="M2.5 3.5L5 6l2.5-2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M2.5 6.5L5 4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
           </div>

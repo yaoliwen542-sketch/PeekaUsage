@@ -1018,8 +1018,11 @@ cargo check
 
 - 灵动岛是第二个 Tauri 窗口（label `island`，200×40、alwaysOnTop、skipTaskbar）；权限走独立的 `capabilities/island.json`，**island 窗口调用任何新 Tauri API 前必须确认该 capability 已覆盖**，否则 ACL 静默拒绝
 - 两个窗口都已配置 `shadow: false`：**transparent + 无边框窗口必须禁用 DWM 阴影**，否则 Windows 会在窗口矩形边缘画一圈白色边框（岛条这类小窗口上尤其明显），新增窗口时保持该配置
-- 展开时 `setSize` 到 300×400，收起恢复 200×40；面板尺寸与窗口尺寸必须同步改，只改一边会被裁切
 - 拖动只走 `mousedown → getCurrentWindow().startDragging()`，禁止再混用 `data-tauri-drag-region` / `WebkitAppRegion` / 手写 mousemove（历史三套叠加 + 物理/逻辑像素混用已修掉）
+- **startDragging 必须在 mousemove 超过阈值后再调用**，不能在 mousedown 里立即调：Windows 上 startDragging 进入 OS 模态移动循环，纯点击时可能吞掉 mouseup 导致 click 不合成（表现为「岛有时点不开」的时序竞争）；当前阈值 5px
+- 展开时 `setSize` 到 300×400，收起恢复 200×40；面板尺寸与窗口尺寸必须同步改，只改一边会被裁切
+- 展开后要做**工作区越界校正**（岛贴屏幕右缘时展开面板会把收起按钮画到屏外）；若发生校正平移，**收起时必须恢复校正前位置**（`expandOriginRef`），否则「展开-收起」循环会把岛条逐步推离用户拖放的位置
+- 展开面板的关闭入口有三：**点击岛外失焦自动收起**（展开后 400ms 内的 blur 视为 setSize/setFocus 竞争抖动忽略）、**Esc**、**头部收起按钮**；展开时要 `setFocus()` 让岛真正持有焦点（快捷设置输入和失焦收起的完整焦点转换都依赖它），capability 需含 `core:window:allow-set-focus`
 - 位置持久化在 localStorage（逻辑像素），恢复时基于 monitor workArea 做离屏校验，不足一半可见则回退工作区顶部居中
 - 显隐开关：设置页「通用」最后一项 + 托盘勾选菜单项；持久化字段 `islandVisible`，默认 `true`，旧配置缺省兼容为 true；启动时 Rust 侧按配置恢复显隐，避免「先闪一下再隐藏」
 - 岛内必须先 `loadSettings()` 完成（`loaded` 门）再渲染快捷设置，否则 `saveSettings` 会基于 `DEFAULT_SETTINGS` 把用户配置整体洗成默认值
