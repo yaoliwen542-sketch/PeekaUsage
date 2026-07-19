@@ -34,7 +34,7 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
   // 注意：保留 titlebar 类名作为 JS 测量钩子（WidgetContainer 用它读取标题栏高度）
   return (
     <div
-      className="titlebar flex h-8 shrink-0 items-center justify-between border-b border-border bg-titlebar px-2"
+      className="titlebar flex h-8 shrink-0 items-center justify-between border-b border-white/6 bg-titlebar px-2"
       data-tauri-drag-region
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
@@ -42,7 +42,7 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
       <div className="flex items-center gap-2" data-tauri-drag-region>
         <span className="h-2 w-2 rounded-full bg-primary" />
         <span
-          className="text-xs font-semibold tracking-[0.3px] text-foreground-secondary"
+          className="text-xs font-semibold tracking-[0.3px] text-text-secondary"
           data-tauri-drag-region
         >
           PeekaUsage
@@ -51,8 +51,9 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
       <div className="flex gap-0.5">
         <button
           className={cn(
-            "flex h-6 w-6 items-center justify-center rounded-sm text-foreground-muted",
-            "transition-colors hover:bg-ghost-hover hover:text-foreground",
+            "flex h-6 w-6 items-center justify-center rounded-md text-text-muted",
+            "transition-colors duration-150 hover:bg-white/8 hover:text-text",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
           )}
           onClick={() => void minimizeWindow()}
           title={t("titleBar.minimize")}
@@ -63,8 +64,9 @@ export default function TitleBar({ onDragIntentStart }: TitleBarProps) {
         </button>
         <button
           className={cn(
-            "flex h-6 w-6 items-center justify-center rounded-sm text-foreground-muted",
-            "transition-colors hover:bg-danger hover:text-white",
+            "flex h-6 w-6 items-center justify-center rounded-md text-text-muted",
+            "transition-colors duration-150 hover:bg-danger hover:text-white",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
           )}
           onClick={() => void closeToTray()}
           title={t("titleBar.hideToTray")}

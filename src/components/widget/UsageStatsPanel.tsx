@@ -10,6 +10,7 @@ import type {
 } from "../../types/stats";
 import { formatCurrency, formatPercent } from "../../utils/formatters";
 import { getUsageStatsSnapshot } from "../../utils/ipc";
+import { cn } from "@/lib/utils";
 import ProviderIcon from "../common/ProviderIcon";
 
 type UsageStatsPanelProps = {
@@ -17,6 +18,18 @@ type UsageStatsPanelProps = {
   providers: UsageSummary[];
   onClose: () => void;
 };
+
+/** 指标小块：标签 + 等宽数字值，与卡片内的明细块视觉统一 */
+function MetricBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-md bg-white/4 px-2 py-1.5">
+      <span className="truncate text-[10px] text-text-muted">{label}</span>
+      <strong className="truncate text-[11px] font-semibold tabular-nums text-foreground" title={value}>
+        {value}
+      </strong>
+    </div>
+  );
+}
 
 export default function UsageStatsPanel({
   open,
@@ -86,12 +99,23 @@ export default function UsageStatsPanel({
   const lastSampleAt = getLatestSampleTime(snapshot?.providers ?? []);
 
   return (
-    <div className="stats-panel" role="dialog" aria-modal="false" aria-label={t("widget.stats.title")}>
-      <div className="stats-panel-header">
-        <div className="stats-panel-title-row">
-          <h3 className="stats-panel-title">{t("widget.stats.title")}</h3>
+    <div
+      className="flex min-h-0 w-full flex-1 flex-col gap-2.5 rounded-xl border border-white/8 bg-surface-elevated p-3 shadow-overlay [backdrop-filter:blur(var(--backdrop-blur))]"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t("widget.stats.title")}
+    >
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="m-0 truncate text-[13px] font-bold text-foreground">{t("widget.stats.title")}</h3>
           <button
-            className="stats-close-btn"
+            className={cn(
+              "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent",
+              "cursor-pointer text-text-secondary transition-colors duration-150",
+              "hover:bg-white/8 hover:text-text",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+              "[&_svg]:size-3.5",
+            )}
             type="button"
             aria-label={t("widget.stats.close")}
             onClick={onClose}
@@ -108,11 +132,20 @@ export default function UsageStatsPanel({
           </button>
         </div>
 
-        <div className="stats-range-switch" role="tablist" aria-label={t("widget.stats.range.ariaLabel")}>
+        <div
+          className="inline-flex items-center gap-0.5 self-start rounded-lg border border-white/6 bg-white/4 p-0.5"
+          role="tablist"
+          aria-label={t("widget.stats.range.ariaLabel")}
+        >
           {(["day", "month"] as const).map((item) => (
             <button
               key={item}
-              className={`stats-range-btn${range === item ? " is-active" : ""}`}
+              className={cn(
+                "h-6 min-w-[44px] cursor-pointer rounded-md border border-transparent px-2.5",
+                "text-[11px] font-semibold text-text-secondary transition-colors duration-150",
+                "hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+                range === item && "bg-white/10 text-foreground",
+              )}
               type="button"
               aria-pressed={range === item}
               onClick={() => setRange(item)}
@@ -124,11 +157,14 @@ export default function UsageStatsPanel({
       </div>
 
       {snapshot?.healthNotices.length ? (
-        <div className="stats-notices">
+        <div className="flex flex-col gap-1">
           {snapshot.healthNotices.map((notice) => (
             <div
               key={notice.code}
-              className={`stats-notice is-${notice.level}`}
+              className={cn(
+                "rounded-md border border-white/6 bg-white/3 px-2 py-1.5 text-[11px] leading-snug text-text-secondary",
+                notice.level === "warning" && "border-warning/30 bg-warning/10 text-warning",
+              )}
             >
               {t(`widget.stats.notices.${notice.code}`)}
             </div>
@@ -137,41 +173,48 @@ export default function UsageStatsPanel({
       ) : null}
 
       {loading && !snapshot ? (
-        <div className="stats-empty-state">{t("widget.stats.loading")}</div>
+        <div className="flex flex-1 items-center justify-center px-3 py-5 text-center text-[12px] text-text-muted">
+          {t("widget.stats.loading")}
+        </div>
       ) : error ? (
-        <div className="stats-empty-state is-error">
+        <div className="flex flex-1 items-center justify-center px-3 py-5 text-center text-[12px] text-error">
           {t("widget.stats.loadFailed", { message: error })}
         </div>
       ) : !snapshot || snapshot.providers.length === 0 ? (
-        <div className="stats-empty-state">{t("widget.stats.empty")}</div>
+        <div className="flex flex-1 items-center justify-center px-3 py-5 text-center text-[12px] text-text-muted">
+          {t("widget.stats.empty")}
+        </div>
       ) : (
-        <div className="stats-scroll-body">
-          <div className="stats-overview-grid">
-            <div className="stats-overview-card">
-              <span className="stats-overview-label">{t("widget.stats.summary.providerCount")}</span>
-              <strong className="stats-overview-value">{snapshot.providers.length}</strong>
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+              <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.providerCount")}</span>
+              <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">{snapshot.providers.length}</strong>
             </div>
-            <div className="stats-overview-card">
-              <span className="stats-overview-label">{t("widget.stats.summary.lastSampleAt")}</span>
-              <strong className="stats-overview-value">
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+              <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.lastSampleAt")}</span>
+              <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">
                 {lastSampleAt ? formatDateTime(lastSampleAt, locale) : t("widget.stats.value.unavailable")}
               </strong>
             </div>
-            <div className="stats-overview-card">
-              <span className="stats-overview-label">{t("widget.stats.summary.range")}</span>
-              <strong className="stats-overview-value">{t(`widget.stats.summary.${range}Description`)}</strong>
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+              <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.range")}</span>
+              <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">{t(`widget.stats.summary.${range}Description`)}</strong>
             </div>
           </div>
 
-          <div className="stats-provider-list">
+          <div className="flex flex-col gap-2">
             {snapshot.providers.map((provider) => (
-              <article key={provider.providerId} className="stats-provider-card">
-                <div className="stats-provider-header">
-                  <div className="stats-provider-title">
-                    <ProviderIcon providerId={provider.providerId} size={18} />
-                    <span>{provider.displayName}</span>
+              <article
+                key={provider.providerId}
+                className="flex flex-col gap-2 rounded-xl border border-white/6 bg-white/3 p-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5 text-[12px] font-bold text-foreground">
+                    <ProviderIcon providerId={provider.providerId} size={16} />
+                    <span className="truncate">{provider.displayName}</span>
                   </div>
-                  <span className="stats-provider-time">
+                  <span className="shrink-0 text-[10px] tabular-nums text-text-muted">
                     {provider.lastSampleAt
                       ? formatDateTime(provider.lastSampleAt, locale)
                       : t("widget.stats.value.unavailable")}
@@ -179,9 +222,9 @@ export default function UsageStatsPanel({
                 </div>
 
                 {provider.apiSummary ? (
-                  <div className="stats-section-card">
-                    <div className="stats-section-title">{t("widget.stats.api.title")}</div>
-                    <div className="stats-metric-grid">
+                  <div className="flex flex-col gap-1.5 rounded-lg bg-white/3 p-2">
+                    <div className="text-[11px] font-bold text-foreground">{t("widget.stats.api.title")}</div>
+                    <div className="grid grid-cols-2 gap-1.5">
                       <MetricBlock
                         label={t(`widget.stats.api.${range}Usage`)}
                         value={formatCurrency(provider.apiSummary.rangeUsed, provider.apiSummary.currency)}
@@ -209,29 +252,29 @@ export default function UsageStatsPanel({
                 ) : null}
 
                 {provider.subscriptionTrends.length ? (
-                  <div className="stats-section-card">
-                    <div className="stats-section-title">{t("widget.stats.subscription.title")}</div>
-                    <div className="stats-trend-list">
+                  <div className="flex flex-col gap-1.5 rounded-lg bg-white/3 p-2">
+                    <div className="text-[11px] font-bold text-foreground">{t("widget.stats.subscription.title")}</div>
+                    <div className="flex flex-col gap-1.5">
                       {provider.subscriptionTrends.map((trend) => (
                         <div
                           key={`${trend.subscriptionId}-${trend.kind}-${trend.label}`}
-                          className="stats-trend-card"
+                          className="flex flex-col gap-1.5 rounded-lg border border-white/6 bg-white/3 p-2"
                         >
-                          <div className="stats-trend-header">
-                            <div>
-                              <div className="stats-trend-name">{trend.subscriptionName}</div>
-                              <div className="stats-trend-label">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-[11px] font-bold text-foreground">{trend.subscriptionName}</div>
+                              <div className="truncate text-[10px] text-text-secondary">
                                 {trend.kind === "extraUsage"
                                   ? t("widget.subscription.extraUsageLabel")
                                   : getWindowLabel(trend.label, language)}
                               </div>
                             </div>
-                            <div className="stats-trend-current">
+                            <div className="shrink-0 text-[13px] font-bold tabular-nums text-primary-hover">
                               {formatPercent(trend.currentUtilization)}
                             </div>
                           </div>
 
-                          <div className="stats-metric-grid">
+                          <div className="grid grid-cols-2 gap-1.5">
                             <MetricBlock
                               label={t("widget.stats.subscription.currentUtilization")}
                               value={formatPercent(trend.currentUtilization)}
@@ -255,7 +298,7 @@ export default function UsageStatsPanel({
                           </div>
 
                           {trend.kind === "extraUsage" && trend.currentUsed != null && trend.currentLimit != null ? (
-                            <div className="stats-trend-extra-line">
+                            <div className="text-[10px] tabular-nums text-text-secondary">
                               {t("widget.stats.subscription.usedLimit", {
                                 used: formatCurrency(trend.currentUsed, trend.currency ?? "USD"),
                                 limit: formatCurrency(trend.currentLimit, trend.currency ?? "USD"),
@@ -264,7 +307,7 @@ export default function UsageStatsPanel({
                           ) : null}
 
                           {trend.resetsAt ? (
-                            <div className="stats-trend-reset">
+                            <div className="text-[10px] text-text-muted">
                               {t("widget.stats.subscription.resetAt", {
                                 time: formatDateTime(trend.resetsAt, locale),
                               })}
@@ -280,15 +323,6 @@ export default function UsageStatsPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function MetricBlock({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="stats-metric-block">
-      <span className="stats-metric-label">{label}</span>
-      <strong className="stats-metric-value">{value}</strong>
     </div>
   );
 }

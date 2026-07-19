@@ -48,16 +48,17 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
   return next;
 }
 
-/** 底部工具栏图标按钮的基础类名（is-active / spinning 等状态由调用方追加） */
+/** 底部工具栏幽灵图标按钮的基础类名（激活 / spinning 等状态由调用方追加） */
 const ICON_BTN_CLASS = cn(
-  "flex h-7 w-7 items-center justify-center rounded-sm border border-transparent",
-  "text-foreground-secondary cursor-pointer transition-colors",
-  "hover:bg-ghost-hover hover:border-border hover:text-foreground",
-  "disabled:opacity-55 disabled:cursor-not-allowed [&_svg]:size-4",
+  "flex h-7 w-7 items-center justify-center rounded-md border border-transparent",
+  "cursor-pointer text-text-secondary transition-colors duration-150",
+  "hover:bg-white/8 hover:text-text",
+  "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+  "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-4",
 );
 
-/** 激活态图标按钮（主色软背景） */
-const ICON_BTN_ACTIVE_CLASS = "bg-primary-soft-bg border-primary-soft-border text-primary-soft-text";
+/** 激活态图标按钮（仅用主色文字，不再使用突兀背景；! 保证 hover 时不被基础 hover 色覆盖） */
+const ICON_BTN_ACTIVE_CLASS = "text-primary!";
 
 export default function WidgetContainer({
   onOpenSettings,
@@ -523,15 +524,75 @@ export default function WidgetContainer({
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
-      <div
-        ref={cardListRef}
-        className={cn(
-          "relative flex flex-1 flex-col overflow-y-auto py-2 pl-3.5 pr-[18px]",
-          isDragging && "select-none",
-        )}
-      >
+      {/* 列表区独立相对容器：统计抽屉挂在滚动容器外，避免随列表滚动 */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={cardListRef}
+          className={cn(
+            "relative flex flex-1 flex-col overflow-y-auto px-3 py-2.5",
+            isDragging && "select-none",
+          )}
+        >
+          {/* 左侧隐形窗口拖拽热区（不遮挡卡片） */}
+          <div
+            className="absolute top-2 bottom-2 left-0 z-[2] w-2 cursor-grab rounded-full active:cursor-grabbing"
+            data-tauri-drag-region
+            onMouseDown={handleWindowDragIntentMouseDown}
+          />
+          {/* 右侧隐形窗口拖拽热区：收窄内移，避开 4px 滚动条 */}
+          <div
+            className="absolute top-2 bottom-2 right-1.5 z-[2] w-1.5 cursor-grab rounded-full active:cursor-grabbing"
+            data-tauri-drag-region
+            onMouseDown={handleWindowDragIntentMouseDown}
+          />
+          <div
+            ref={cardListContentRef}
+            className={cn(
+              "flex flex-col gap-2.5",
+              orderedProviders.length === 0 && "min-h-full",
+              isStatsOpen && "pointer-events-none opacity-[0.14] blur-[1px]",
+            )}
+          >
+            {orderedProviders.length > 0 ? (
+              orderedProviders.map((provider) => (
+                <div
+                  key={provider.providerId}
+                  ref={(element) => {
+                    if (element) {
+                      cardRefs.current.set(provider.providerId, element);
+                    } else {
+                      cardRefs.current.delete(provider.providerId);
+                    }
+                  }}
+                  className={getCardClass(provider.providerId)}
+                  style={getCardStyle(provider.providerId)}
+                  onPointerDown={(event) => startDrag(provider.providerId, event)}
+                >
+                  <ProviderCard
+                    provider={provider}
+                    displayMode={settings.widgetDisplayMode}
+                    useCompactColorMarkers={settings.compactColorMarkersEnabled}
+                    isRefreshing={isRefreshing || !!refreshingProviders[provider.providerId]}
+                    onRefresh={() => void manualRefreshProvider(provider.providerId)}
+                  />
+                </div>
+              ))
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-xs text-text-muted">
+                <p>{t("widget.emptyState.title")}</p>
+                <button
+                  className="cursor-pointer rounded-md text-xs text-primary underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+                  onClick={onOpenSettings}
+                >
+                  {t("widget.emptyState.action")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
         {isStatsOpen && (
-          <div className="absolute inset-2 z-[7] flex animate-[statsDrawerSlideUp_180ms_ease]">
+          <div className="absolute inset-x-2 top-2 bottom-2 z-[7] flex animate-[statsDrawerSlideUp_180ms_ease]">
             <UsageStatsPanel
               open={isStatsOpen}
               providers={orderedProviders}
@@ -539,58 +600,9 @@ export default function WidgetContainer({
             />
           </div>
         )}
-        <div
-          className="absolute top-2 bottom-2 left-0 z-[2] w-2 cursor-grab rounded-full active:cursor-grabbing"
-          data-tauri-drag-region
-          onMouseDown={handleWindowDragIntentMouseDown}
-        />
-        <div
-          className="absolute top-2 bottom-2 right-2 z-[2] w-2 cursor-grab rounded-full active:cursor-grabbing"
-          data-tauri-drag-region
-          onMouseDown={handleWindowDragIntentMouseDown}
-        />
-        <div
-          ref={cardListContentRef}
-          className={cn(
-            "flex flex-col gap-2",
-            orderedProviders.length === 0 && "min-h-full",
-            isStatsOpen && "pointer-events-none opacity-[0.14] blur-[1px]",
-          )}
-        >
-          {orderedProviders.length > 0 ? (
-            orderedProviders.map((provider) => (
-              <div
-                key={provider.providerId}
-                ref={(element) => {
-                  if (element) {
-                    cardRefs.current.set(provider.providerId, element);
-                  } else {
-                    cardRefs.current.delete(provider.providerId);
-                  }
-                }}
-                className={getCardClass(provider.providerId)}
-                style={getCardStyle(provider.providerId)}
-                onPointerDown={(event) => startDrag(provider.providerId, event)}
-              >
-                <ProviderCard
-                  provider={provider}
-                  displayMode={settings.widgetDisplayMode}
-                  useCompactColorMarkers={settings.compactColorMarkersEnabled}
-                  isRefreshing={isRefreshing || !!refreshingProviders[provider.providerId]}
-                  onRefresh={() => void manualRefreshProvider(provider.providerId)}
-                />
-              </div>
-            ))
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-xs text-foreground-muted">
-              <p>{t("widget.emptyState.title")}</p>
-              <button className="cursor-pointer text-xs text-primary underline" onClick={onOpenSettings}>{t("widget.emptyState.action")}</button>
-            </div>
-          )}
-        </div>
       </div>
 
-      <div ref={footerRef} className="flex shrink-0 items-center justify-end gap-1 border-t border-border px-2 py-1">
+      <div ref={footerRef} className="flex shrink-0 items-center justify-end gap-1 border-t border-white/6 px-2 py-1">
         <div
           className="flex min-h-7 flex-1 cursor-grab items-center pr-1 active:cursor-grabbing"
           data-tauri-drag-region
@@ -599,7 +611,7 @@ export default function WidgetContainer({
           {layoutStatusText && (
             <span
               className={cn(
-                "pointer-events-none text-[10px] text-foreground-muted transition-colors",
+                "pointer-events-none text-[10px] text-text-muted transition-colors",
                 layoutSaveState === "saving" && "text-info",
                 layoutSaveState === "saved" && "text-success",
                 layoutSaveState === "error" && "text-danger",
@@ -679,8 +691,8 @@ export default function WidgetContainer({
               <div
                 ref={themeMenuRef}
                 className={cn(
-                  "absolute bottom-[calc(100%+6px)] left-1/2 z-[8] flex -translate-x-1/2 items-center gap-1",
-                  "rounded-md border border-border bg-surface p-1 shadow-[0_10px_24px_rgba(15,23,42,0.14)]",
+                  "absolute bottom-[calc(100%+6px)] left-1/2 z-[8] flex -translate-x-1/2 items-center gap-0.5",
+                  "rounded-lg border border-white/8 bg-surface-elevated p-1 shadow-overlay",
                   "[backdrop-filter:blur(var(--backdrop-blur))]",
                 )}
               >
@@ -688,10 +700,11 @@ export default function WidgetContainer({
                   <button
                     key={option.value}
                     className={cn(
-                      "flex h-[30px] w-[30px] items-center justify-center rounded-sm border border-transparent p-0",
-                      "text-foreground-secondary transition-colors",
-                      "hover:bg-ghost-hover hover:border-border hover:text-foreground",
-                      settings.theme === option.value && ICON_BTN_ACTIVE_CLASS,
+                      "flex h-7 w-7 items-center justify-center rounded-md border border-transparent p-0",
+                      "cursor-pointer text-text-secondary transition-colors duration-150",
+                      "hover:bg-white/8 hover:text-text",
+                      "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+                      settings.theme === option.value && "bg-white/8 text-primary!",
                     )}
                     title={option.label}
                     aria-label={option.label}
