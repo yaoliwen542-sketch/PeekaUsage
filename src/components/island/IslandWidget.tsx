@@ -7,11 +7,14 @@ import {
   LogicalSize,
 } from "@tauri-apps/api/window";
 import ProviderIcon from "../common/ProviderIcon";
+import { usageFillClass } from "../widget/SubscriptionBadge";
 import type { UsageSummary } from "../../types/provider";
 import {
   MAX_POLLING_INTERVAL,
   MIN_POLLING_INTERVAL,
   normalizePollingInterval,
+  type PollingMode,
+  type PollingUnit,
 } from "../../types/settings";
 import { useProviderStore } from "../../stores/providerStore";
 import {
@@ -24,6 +27,7 @@ import { useI18n } from "../../i18n";
 import { getWindowLabel } from "../../i18n/windowLabels";
 import { applyTheme, observeSystemTheme } from "../../utils/theme";
 import { toLogicalWindowPosition } from "../../utils/windowBounds";
+import { cn } from "@/lib/utils";
 
 const ISLAND_POSITION_KEY = "peekausage.island.position";
 
@@ -42,6 +46,8 @@ const DRAG_CLICK_SUPPRESS_MS = 250;
 const POSITION_SAVE_DEBOUNCE_MS = 300;
 /** 恢复位置失效时的回退位置：屏幕工作区顶部居中，距顶 12px */
 const FALLBACK_TOP_MARGIN = 12;
+/** 收起态岛条内平铺供应商数上限：超过后切换为横向轮播 */
+const COLLAPSED_TILE_LIMIT = 2;
 
 type SavedIslandPosition = { x: number; y: number };
 
@@ -100,6 +106,13 @@ function getRemainingText(s: UsageSummary): string {
   return `${Math.round(util)}%`;
 }
 
+/** 数字状态色：阈值与主界面 usageFillClass 一致（<60 正常 / 60-85 警告 / ≥85 危险） */
+function usageTextClass(percent: number): string {
+  if (percent < 60) return "text-success";
+  if (percent < 85) return "text-warning";
+  return "text-danger";
+}
+
 /**
  * 启动时恢复灵动岛位置。
  * 参考主窗口 windowBounds 的 normalize 思路：基于当前显示器工作区校验，
@@ -150,7 +163,7 @@ async function restoreIslandPosition() {
  * 灵动岛组件
  *
  * 交互：
- * - 收起态：小胶囊，显示最高用量供应商图标 + 百分比
+ * - 收起态：圆角胶囊，平铺 / 轮播各供应商摘要（图标 + 状态色利用率 + 迷你进度条）
  * - 点击展开：窗口扩为 300x400，显示所有供应商摘要 + 刷新 + 供应商详情 + 快捷设置
  * - 收起态拖动走 Tauri startDragging（OS 级拖动，避免物理/逻辑像素混用与 IPC 风暴）
  * - 位置持久化（localStorage，逻辑像素，启动时做离屏校验）
@@ -328,20 +341,23 @@ export default function IslandWidget() {
   }
 
   const enabledSummaries = summaries.filter((s) => s.enabled);
-  const topProvider = enabledSummaries
-    .map((s) => ({ summary: s, util: getProviderUtil(s) }))
-    .sort((a, b) => b.util - a.util)[0];
 
   // 展开态
   if (expanded) {
     return (
-      <div className="island-panel flex h-full w-full flex-col gap-2 overflow-hidden rounded-2xl border border-border/50 bg-surface/98 p-3 shadow-xl backdrop-blur-md">
+      <div className="island-panel flex h-full w-full flex-col overflow-hidden rounded-xl border border-white/6 bg-card shadow-xl backdrop-blur-md">
         {/* 顶部栏：标题 + 刷新 + 设置 + 收起（展开面板区域不挂拖动） */}
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-text">{t("island.title")}</span>
+        <div className="flex h-10 shrink-0 items-center justify-between px-3">
+          <span className="text-[13px] font-semibold text-foreground">{t("island.title")}</span>
           <div className="flex items-center gap-1">
             <button
-              className="flex h-6 w-6 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-elevated hover:text-text"
+              type="button"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors duration-150",
+                "hover:bg-white/8 hover:text-text",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+              )}
               onClick={() => void refreshAll()}
               disabled={isRefreshing}
               title={t("island.refresh")}
@@ -353,10 +369,17 @@ export default function IslandWidget() {
               </svg>
             </button>
             <button
-              className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors hover:bg-surface-elevated hover:text-text ${showQuickSettings ? "text-primary bg-primary/10" : "text-text-tertiary"}`}
+              type="button"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150",
+                "hover:bg-white/8 hover:text-text",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+                showQuickSettings ? "bg-white/10 text-foreground" : "text-text-secondary",
+              )}
               onClick={() => { setShowQuickSettings(!showQuickSettings); setExpandedProvider(null); }}
               title={t("island.quickSettings")}
               aria-label={t("island.quickSettings")}
+              aria-pressed={showQuickSettings}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <circle cx="6" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.2" />
@@ -364,7 +387,12 @@ export default function IslandWidget() {
               </svg>
             </button>
             <button
-              className="flex h-6 w-6 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-surface-elevated hover:text-text"
+              type="button"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors duration-150",
+                "hover:bg-white/8 hover:text-text",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+              )}
               onClick={() => setExpandedWithSize(false)}
               title={t("island.collapse")}
               aria-label={t("island.collapse")}
@@ -376,51 +404,48 @@ export default function IslandWidget() {
           </div>
         </div>
 
-        {/* 快捷设置面板：设置未加载完成时显示加载态，避免基于默认值误保存 */}
-        {showQuickSettings && (
-          settingsLoaded ? (
-            <IslandQuickSettings />
-          ) : (
-            <div className="flex items-center justify-center rounded-md border border-border bg-surface-elevated p-2 text-[11px] text-text-tertiary">
-              {t("island.loading")}
-            </div>
-          )
-        )}
-
-        {/* 供应商列表 */}
-        <div className="island-scroll flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        {/* 供应商列表：紧凑版主界面卡片（图标 + 名称 + 状态色数字 + 4px 进度条） */}
+        <div className="island-scroll min-h-0 flex-1 divide-y divide-white/5 overflow-y-auto">
           {enabledSummaries.length === 0 && (
-            <div className="flex flex-1 items-center justify-center text-[11px] text-text-tertiary">
+            <div className="flex h-full items-center justify-center text-[11px] text-text-tertiary">
               {t("island.noData")}
             </div>
           )}
           {enabledSummaries.map((s) => {
-            const util = getProviderUtil(s);
+            const util = clamp(getProviderUtil(s), 0, 100);
             const isExpanded = expandedProvider === s.providerId;
             return (
-              <div key={s.providerId} className="rounded-md">
+              <div key={s.providerId}>
                 <button
-                  className="flex w-full items-center gap-2 px-1.5 py-1.5 rounded-md transition-colors hover:bg-surface-elevated text-left"
+                  type="button"
+                  className={cn(
+                    "flex w-full flex-col gap-1.5 px-3 py-2.5 text-left transition-colors duration-150",
+                    "hover:bg-white/4 focus-visible:outline-none focus-visible:bg-white/6",
+                  )}
                   onClick={() => setExpandedProvider(isExpanded ? null : s.providerId)}
+                  aria-expanded={isExpanded}
                 >
-                  <ProviderIcon providerId={s.providerId} size={16} />
-                  <span className="text-xs text-text flex-1 truncate">{s.displayName}</span>
-                  <div className="h-1.5 w-14 rounded-full bg-border overflow-hidden">
+                  <div className="flex items-center gap-2">
+                    <ProviderIcon providerId={s.providerId} size={16} />
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground" title={s.displayName}>
+                      {s.displayName}
+                    </span>
+                    <span className={cn("shrink-0 text-[13px] font-semibold tabular-nums", usageTextClass(util))}>
+                      {getRemainingText(s)}
+                    </span>
+                  </div>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-progress-track">
                     <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${Math.min(util, 100)}%`,
-                        backgroundColor: util > 80 ? "var(--color-error)" : util > 50 ? "var(--color-warning)" : "var(--color-success)",
-                      }}
+                      className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(util))}
+                      style={{ width: `${util}%` }}
                     />
                   </div>
-                  <span className="text-[11px] text-text-secondary w-12 text-right">{getRemainingText(s)}</span>
                 </button>
                 {/* 供应商详情展开 */}
                 {isExpanded && (
-                  <div className="flex flex-col gap-1 px-2 py-1.5 ml-5 border-l border-border">
+                  <div className="mx-3 mb-2 flex flex-col gap-1 border-l border-white/10 pl-3">
                     {s.usage && (
-                      <div className="flex justify-between text-[10px] text-text-tertiary">
+                      <div className="flex justify-between text-[10px] text-text-muted">
                         <span>{t("island.usageUsed", { used: s.usage.totalUsed.toFixed(2), currency: s.usage.currency })}</span>
                         {s.usage.totalBudget !== null && (
                           <span>{t("island.usageTotal", { total: s.usage.totalBudget.toFixed(2), currency: s.usage.currency })}</span>
@@ -429,17 +454,17 @@ export default function IslandWidget() {
                     )}
                     {s.subscriptions.map((sub) => (
                       <div key={sub.subscriptionId} className="flex flex-col gap-0.5">
-                        <span className="text-[10px] text-text-tertiary">{sub.subscriptionName}</span>
+                        <span className="text-[10px] text-text-muted">{sub.subscriptionName}</span>
                         {sub.usage.windows.map((w) => (
                           <div key={w.label} className="flex justify-between text-[10px] text-text-secondary">
                             <span>{getWindowLabel(w.label, language)}</span>
-                            <span>{Math.round(w.utilization)}%</span>
+                            <span className="tabular-nums">{Math.round(w.utilization)}%</span>
                           </div>
                         ))}
                       </div>
                     ))}
                     {s.rateLimit && (
-                      <div className="text-[10px] text-text-tertiary">
+                      <div className="text-[10px] text-text-muted">
                         {s.rateLimit.requestsPerMinute && `${s.rateLimit.requestsPerMinute}/${s.rateLimit.requestsPerMinuteLimit} RPM`}
                       </div>
                     )}
@@ -452,6 +477,19 @@ export default function IslandWidget() {
             );
           })}
         </div>
+
+        {/* 快捷设置（底部固定）：设置未加载完成时显示加载态，避免基于默认值误保存 */}
+        {showQuickSettings && (
+          <div className="shrink-0 border-t border-white/6 px-3 py-2">
+            {settingsLoaded ? (
+              <IslandQuickSettings />
+            ) : (
+              <div className="flex items-center justify-center py-3 text-[11px] text-text-tertiary">
+                {t("island.loading")}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -460,38 +498,99 @@ export default function IslandWidget() {
   if (summaries.length === 0) {
     return (
       <div
-        className="flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border/50 bg-surface/95 px-3 shadow-md backdrop-blur-md"
+        className="flex h-full w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-full border border-white/8 bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-white/16"
         onMouseDown={handleBarMouseDown}
         onMouseMove={handleBarMouseMove}
         onMouseUp={handleBarMouseUp}
         onClick={handleBarClick}
       >
-        <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-        <span className="text-xs font-medium text-text-secondary">PeekaUsage</span>
+        <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />
+        <span className="truncate text-[12px] font-medium text-text-secondary">PeekaUsage</span>
       </div>
     );
   }
 
-  // 收起态：显示最高用量供应商
+  // 收起态：平铺或横向轮播各供应商摘要
+  const useMarquee = enabledSummaries.length > COLLAPSED_TILE_LIMIT;
+  // 轮播时复制一份实现无缝循环；第二份对辅助技术隐藏
+  const marqueeItems = useMarquee ? [...enabledSummaries, ...enabledSummaries] : enabledSummaries;
+
   return (
     <div
-      className="flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border/50 bg-surface/95 px-3 shadow-md backdrop-blur-md"
+      className="flex h-full w-full cursor-pointer select-none items-center overflow-hidden rounded-full border border-white/8 bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-white/16"
       onMouseDown={handleBarMouseDown}
       onMouseMove={handleBarMouseMove}
       onMouseUp={handleBarMouseUp}
       onClick={handleBarClick}
     >
-      {topProvider ? (
-        <>
-          <ProviderIcon providerId={topProvider.summary.providerId} size={16} />
-          <span className="text-xs font-semibold text-text">{Math.round(topProvider.util)}%</span>
-          {enabledSummaries.length > 1 && (
-            <span className="text-[10px] text-text-tertiary">+{enabledSummaries.length - 1}</span>
-          )}
-        </>
+      {enabledSummaries.length === 0 ? (
+        <span className="truncate text-[12px] text-text-secondary">{t("island.noData")}</span>
       ) : (
-        <span className="text-xs text-text-secondary">{t("island.noData")}</span>
+        <div
+          className={cn("flex w-max items-center", useMarquee && "island-marquee-track")}
+          style={useMarquee ? { animationDuration: `${enabledSummaries.length * 4}s` } : undefined}
+        >
+          {marqueeItems.map((s, index) => (
+            <CollapsedProviderItem
+              key={`${s.providerId}-${index}`}
+              summary={s}
+              ariaHidden={useMarquee && index >= enabledSummaries.length}
+            />
+          ))}
+        </div>
       )}
+    </div>
+  );
+}
+
+/** 收起态单个供应商摘要：14px 图标 + 状态色利用率 + 4px 迷你进度条 */
+function CollapsedProviderItem({ summary, ariaHidden }: { summary: UsageSummary; ariaHidden?: boolean }) {
+  const util = clamp(getProviderUtil(summary), 0, 100);
+  return (
+    // pr-4 放在条目上而不是容器 gap 上，保证轮播两份拷贝宽度严格一致、循环无跳动
+    <div className="flex shrink-0 items-center gap-1.5 pr-4" aria-hidden={ariaHidden || undefined}>
+      <ProviderIcon providerId={summary.providerId} size={14} />
+      <span className={cn("text-[12px] font-semibold leading-none tabular-nums", usageTextClass(util))}>
+        {Math.round(util)}%
+      </span>
+      <div className="h-1 w-8 overflow-hidden rounded-full bg-progress-track">
+        <div
+          className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(util))}
+          style={{ width: `${util}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** 岛内向分段控件：与设置页子导航一致的 segmented pill 风格（小尺寸版） */
+function IslandSegmented<T extends string>(props: {
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  ariaLabel: string;
+  onChange: (value: T) => void;
+}) {
+  const { options, value, ariaLabel, onChange } = props;
+  return (
+    <div className="inline-flex shrink-0 gap-0.5 rounded-full bg-white/5 p-0.5" role="group" aria-label={ariaLabel}>
+      {options.map((option) => {
+        const isActive = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={isActive}
+            className={cn(
+              "flex h-6 items-center justify-center whitespace-nowrap rounded-full px-2.5 text-[11px] transition-colors duration-150",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30",
+              isActive ? "bg-white/10 font-medium text-foreground" : "text-text-secondary hover:text-text",
+            )}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -516,6 +615,15 @@ function IslandQuickSettings() {
   const intervalDraftRef = useRef(intervalDraft);
 
   const opacityValue = opacityDraft ?? settings.windowOpacity;
+
+  const pollingModeOptions: Array<{ value: PollingMode; label: string }> = [
+    { value: "auto", label: t("settings.polling.auto") },
+    { value: "manual", label: t("settings.polling.manual") },
+  ];
+  const pollingUnitOptions: Array<{ value: PollingUnit; label: string }> = [
+    { value: "seconds", label: t("common.secondsShort") },
+    { value: "minutes", label: t("common.minutesShort") },
+  ];
 
   function clearIntervalSaveTimer() {
     if (intervalSaveTimerRef.current) {
@@ -592,10 +700,15 @@ function IslandQuickSettings() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border bg-surface-elevated p-2">
+    <div className="flex flex-col gap-2">
+      {/* 分区标题 */}
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary">
+        {t("island.quickSettings")}
+      </div>
+
       {/* 透明度 */}
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-text-secondary w-12">{t("island.opacity")}</span>
+        <span className="w-10 shrink-0 text-[11px] text-text-secondary">{t("island.opacity")}</span>
         <input
           type="range"
           min="10"
@@ -605,16 +718,22 @@ function IslandQuickSettings() {
           onPointerUp={finalizeOpacity}
           onKeyUp={finalizeOpacity}
           onBlur={finalizeOpacity}
-          className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-border"
+          className="opacity-slider h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-border"
+          aria-label={t("island.opacity")}
         />
-        <span className="text-[11px] text-text-tertiary w-8 text-right">{opacityValue}%</span>
+        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-text-secondary">{opacityValue}%</span>
       </div>
-      {/* 刷新间隔 */}
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-text-secondary w-12">{t("island.refreshInterval")}</span>
-        {settings.pollingMode === "manual" ? (
-          <span className="text-[11px] text-text-tertiary flex-1">{t("island.manualOnly")}</span>
-        ) : (
+
+      {/* 刷新：模式分段 + 数值输入 + 单位分段（数值输入保留原有防抖 / 失焦保存） */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="w-10 shrink-0 text-[11px] text-text-secondary">{t("island.refreshInterval")}</span>
+        <IslandSegmented
+          options={pollingModeOptions}
+          value={settings.pollingMode}
+          ariaLabel={t("settings.polling.modeAriaLabel")}
+          onChange={(value) => void saveSettings({ pollingMode: value })}
+        />
+        {settings.pollingMode !== "manual" && (
           <>
             <input
               type="number"
@@ -623,28 +742,34 @@ function IslandQuickSettings() {
               value={intervalDraft}
               onChange={handleIntervalChange}
               onBlur={handleIntervalBlur}
-              className="h-6 w-12 rounded border border-border bg-background px-1 text-[11px] text-text"
+              aria-label={t("settings.polling.intervalAriaLabel")}
+              className={cn(
+                "h-6 w-12 rounded-md border border-white/10 bg-white/5 px-1.5 text-[11px] tabular-nums text-foreground",
+                "outline-none transition-colors focus:border-white/20",
+              )}
             />
-            <span className="text-[11px] text-text-tertiary">
-              {settings.pollingUnit === "minutes" ? t("island.unitMinutes") : t("island.unitSeconds")}
-            </span>
+            <IslandSegmented
+              options={pollingUnitOptions}
+              value={settings.pollingUnit}
+              ariaLabel={t("settings.polling.unitAriaLabel")}
+              onChange={(value) => void saveSettings({ pollingUnit: value })}
+            />
           </>
         )}
       </div>
+
       {/* 主题 */}
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-text-secondary w-12">{t("island.theme")}</span>
-        <div className="flex gap-1">
-          {(["light", "dark", "system"] as const).map((mode) => (
-            <button
-              key={mode}
-              className={`h-6 px-2 rounded text-[11px] transition-colors ${settings.theme === mode ? "bg-primary text-primary-foreground" : "bg-surface text-text-tertiary hover:text-text"}`}
-              onClick={() => void saveSettings({ theme: mode })}
-            >
-              {mode === "light" ? t("island.themeLight") : mode === "dark" ? t("island.themeDark") : t("island.themeSystem")}
-            </button>
-          ))}
-        </div>
+        <span className="w-10 shrink-0 text-[11px] text-text-secondary">{t("island.theme")}</span>
+        <IslandSegmented
+          options={(["light", "dark", "system"] as const).map((mode) => ({
+            value: mode,
+            label: mode === "light" ? t("island.themeLight") : mode === "dark" ? t("island.themeDark") : t("island.themeSystem"),
+          }))}
+          value={settings.theme}
+          ariaLabel={t("island.theme")}
+          onChange={(mode) => void saveSettings({ theme: mode })}
+        />
       </div>
     </div>
   );

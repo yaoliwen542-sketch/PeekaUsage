@@ -78,6 +78,36 @@ input {
   }
 }
 
+/* 收起态供应商摘要横向轮播：仅 transform 平移，性能友好；
+   条目自带右侧 padding（不用容器 gap），保证两份拷贝宽度一致、循环无跳动 */
+.island-marquee-track {
+  animation-name: island-marquee;
+  animation-duration: 16s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+/* hover 时暂停轮播，便于看清当前数值 */
+.island-marquee-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes island-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .island-marquee-track {
+    animation: none;
+  }
+}
+
 /* 展开面板内供应商列表的细滚动条 */
 .island-scroll {
   scrollbar-width: thin;
