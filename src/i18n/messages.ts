@@ -71,6 +71,10 @@ export const messages = {
         advanced: "高级",
         updates: "更新",
       },
+      groups: {
+        preferences: "偏好",
+        windowBehavior: "窗口与行为",
+      },
       updates: {
         title: "版本说明与更新",
         currentVersion: "当前版本",
@@ -448,6 +452,10 @@ export const messages = {
         advanced: "進階",
         updates: "更新",
       },
+      groups: {
+        preferences: "偏好",
+        windowBehavior: "視窗與行為",
+      },
       updates: {
         title: "版本說明與更新",
         currentVersion: "目前版本",
@@ -824,6 +832,10 @@ export const messages = {
         providers: "Providers",
         advanced: "Advanced",
         updates: "Updates",
+      },
+      groups: {
+        preferences: "Preferences",
+        windowBehavior: "Window & Behavior",
       },
       updates: {
         title: "Version & Updates",

@@ -344,7 +344,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
       <button
         ref={triggerRef}
         className={cn(
-          "inline-flex min-h-8 w-full cursor-pointer items-center justify-between gap-2.5 rounded-sm border border-border",
+          "inline-flex min-h-8 w-full cursor-pointer items-center justify-between gap-2.5 rounded-lg border border-border",
           "bg-surface px-2.5 py-1.5 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-[border-color,background,box-shadow,transform]",
           "hover:border-border-hover hover:bg-surface-hover",
           "focus-visible:border-primary-soft-border focus-visible:shadow-[0_0_0_3px_var(--color-primary-soft-bg)] focus-visible:outline-none",
@@ -383,7 +383,7 @@ export default function AppSelect<T extends SelectValue = SelectValue>({
         <div
           ref={panelRef}
           className={cn(
-            "fixed z-[1100] overflow-y-auto rounded-md border border-border bg-surface-elevated p-1.5 shadow-overlay",
+            "fixed z-[1100] overflow-y-auto rounded-lg border border-border bg-surface-elevated p-1.5 shadow-overlay",
             "[backdrop-filter:blur(var(--backdrop-blur))]",
           )}
           style={panelStyle}

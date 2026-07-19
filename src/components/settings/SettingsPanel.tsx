@@ -19,6 +19,7 @@ import { syncLaunchAtStartup } from "../../utils/autostart";
 import { getProviderConfigs, getProviderTemplates, setWindowSkipTaskbar } from "../../utils/ipc";
 import AppSelect, { type AppSelectGroup, type SelectOption } from "../common/AppSelect";
 import ProviderIcon from "../common/ProviderIcon";
+import { Switch } from "@/components/ui/switch";
 import ProviderConfig from "./ProviderConfig";
 import { ProviderWizardDialog } from "./ProviderWizardDialog";
 import UpdateSettings from "./UpdateSettings";
@@ -35,6 +36,77 @@ type SettingsMenuItem =
     id: SettingsSectionId;
     label: string;
   };
+
+/* ===== 设置页共享视觉常量（与 ProviderConfig / UpdateSettings 中的同款类保持同步） ===== */
+/** 分组标题：12px 大写弱色 */
+const GROUP_TITLE_CLASS = "px-1 text-xs font-medium uppercase tracking-wide text-text-tertiary";
+/** 分组卡片容器 */
+const GROUP_CARD_CLASS = "overflow-hidden rounded-xl border border-border bg-card";
+/** 组内行：行式布局，控件靠右 */
+const SETTING_ROW_CLASS = "flex items-center justify-between gap-3 px-3.5 py-2.5";
+/** 行主文案 */
+const ROW_LABEL_CLASS = "text-[13px] leading-[1.35] text-text";
+/** 行辅助说明 */
+const ROW_HINT_CLASS = "text-xs leading-[1.4] text-text-muted";
+/** 数值输入框（轮询间隔等） */
+const INTERVAL_INPUT_CLASS = "h-7 w-14 shrink-0 rounded-lg border border-border bg-surface px-2 text-center text-xs text-text transition-colors duration-150 [appearance:textfield] hover:border-border-hover focus:border-primary-soft-border focus:outline-none focus:ring-1 focus:ring-primary/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+
+/** 开关行：整行可点击，右侧为统一 Switch */
+function ToggleRow(props: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { label, hint, checked, disabled, onChange } = props;
+  return (
+    <label className={`${SETTING_ROW_CLASS} ${disabled ? "cursor-default" : "cursor-pointer"}`}>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className={ROW_LABEL_CLASS}>{label}</span>
+        {hint && <span className={ROW_HINT_CLASS}>{hint}</span>}
+      </span>
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        aria-label={label}
+        onCheckedChange={onChange}
+      />
+    </label>
+  );
+}
+
+/** 分段控件：与新子导航一致的 segmented 风格 */
+function SegmentedControl<T extends string>(props: {
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  ariaLabel: string;
+  onChange: (value: T) => void;
+}) {
+  const { options, value, ariaLabel, onChange } = props;
+  return (
+    <div className="inline-flex gap-0.5 rounded-full bg-ghost p-0.5" role="group" aria-label={ariaLabel}>
+      {options.map((option) => {
+        const isActive = option.value === value;
+        return (
+          <button
+            key={option.value}
+            className={`flex h-6 items-center justify-center rounded-full px-2.5 text-[11.5px] whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50 ${
+              isActive
+                ? "bg-surface-elevated font-medium text-text shadow-sm"
+                : "text-text-secondary hover:text-text"
+            }`}
+            type="button"
+            aria-pressed={isActive}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function BackIcon() {
   return (
@@ -100,9 +172,6 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     { id: "advanced", label: t("settings.sections.advanced") },
     { id: "updates", label: t("settings.sections.updates") },
   ]), [t]);
-
-  const activeSectionLabel = sectionItems.find((item) => item.id === activeSection)?.label
-    ?? t("settings.sections.general");
 
   // 已配置供应商集合与可选模板：memo 化保证引用稳定，
   // 否则每次渲染都生成新数组，会连带击穿下游 draft 的 useMemo
@@ -477,255 +546,189 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   const sectionContent: Record<SettingsSectionId, ReactNode> = {
     general: (
-      <section className="settings-section settings-section-page">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.general")}</h3>
+      <section className="flex flex-col gap-3">
         {generalNotice && (
-          <div className="save-result is-success" role="status">
+          <div
+            className="rounded-lg border border-success-soft-border bg-success-soft-bg px-3 py-2 text-xs text-success-soft-text"
+            role="status"
+          >
             {generalNotice}
           </div>
         )}
-        <div className="setting-row">
-          <label>{t("settings.language.label")}</label>
-          <div className="setting-select-wrap">
-            <AppSelect
-              modelValue={settings.language}
-              options={languageOptions}
-              ariaLabel={t("settings.language.ariaLabel")}
-              onChange={(value) => void saveSettings({ language: value })}
-            />
-          </div>
-        </div>
 
-        <div className="setting-row setting-row-polling">
-          <label>{t("settings.polling.label")}</label>
-          <div className="polling-control">
-            <div className="polling-segment" role="group" aria-label={t("settings.polling.modeAriaLabel")}>
-              {pollingModeOptions.map((option) => (
-                <button
-                  key={option.value}
-                  className={`polling-segment-button${settings.pollingMode === option.value ? " is-active" : ""}`}
-                  type="button"
-                  aria-pressed={settings.pollingMode === option.value}
-                  onClick={() => void saveSettings({ pollingMode: option.value })}
-                >
-                  {option.label}
-                </button>
-              ))}
+        {/* 偏好：语言 / 全局刷新 / 透明度 */}
+        <div className="flex flex-col gap-1.5">
+          <h3 className={GROUP_TITLE_CLASS}>{t("settings.groups.preferences")}</h3>
+          <div className={`${GROUP_CARD_CLASS} divide-y divide-border`}>
+            <div className={SETTING_ROW_CLASS}>
+              <span className={ROW_LABEL_CLASS}>{t("settings.language.label")}</span>
+              <div className="w-[148px] shrink-0">
+                <AppSelect
+                  modelValue={settings.language}
+                  options={languageOptions}
+                  ariaLabel={t("settings.language.ariaLabel")}
+                  onChange={(value) => void saveSettings({ language: value })}
+                />
+              </div>
             </div>
-            {!isManualPolling && (
-              <div className="polling-auto-inline">
-                <input
-                  className="polling-interval-input"
-                  type="number"
-                  inputMode="numeric"
-                  min={MIN_POLLING_INTERVAL}
-                  max={MAX_POLLING_INTERVAL}
-                  value={pollingIntervalDraft}
-                  aria-label={t("settings.polling.intervalAriaLabel")}
-                  onChange={(event) => setPollingIntervalDraft(event.target.value)}
-                  onBlur={() => {
-                    const parsed = Number.parseInt(pollingIntervalDraft, 10);
-                    const nextValue = normalizePollingInterval(
-                      Number.isNaN(parsed) ? settings.pollingInterval : parsed,
-                    );
-                    setPollingIntervalDraft(String(nextValue));
 
-                    if (nextValue !== settings.pollingInterval) {
-                      void saveSettings({ pollingInterval: nextValue });
-                    }
+            <div className={`${SETTING_ROW_CLASS} flex-wrap gap-y-2`}>
+              <span className={ROW_LABEL_CLASS}>{t("settings.polling.label")}</span>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+                <SegmentedControl
+                  options={pollingModeOptions}
+                  value={settings.pollingMode}
+                  ariaLabel={t("settings.polling.modeAriaLabel")}
+                  onChange={(value) => void saveSettings({ pollingMode: value })}
+                />
+                {!isManualPolling && (
+                  <>
+                    <input
+                      className={INTERVAL_INPUT_CLASS}
+                      type="number"
+                      inputMode="numeric"
+                      min={MIN_POLLING_INTERVAL}
+                      max={MAX_POLLING_INTERVAL}
+                      value={pollingIntervalDraft}
+                      aria-label={t("settings.polling.intervalAriaLabel")}
+                      onChange={(event) => setPollingIntervalDraft(event.target.value)}
+                      onBlur={() => {
+                        const parsed = Number.parseInt(pollingIntervalDraft, 10);
+                        const nextValue = normalizePollingInterval(
+                          Number.isNaN(parsed) ? settings.pollingInterval : parsed,
+                        );
+                        setPollingIntervalDraft(String(nextValue));
+
+                        if (nextValue !== settings.pollingInterval) {
+                          void saveSettings({ pollingInterval: nextValue });
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          (event.target as HTMLInputElement).blur();
+                        }
+                      }}
+                    />
+                    <SegmentedControl
+                      options={pollingUnitOptions}
+                      value={settings.pollingUnit}
+                      ariaLabel={t("settings.polling.unitAriaLabel")}
+                      onChange={(value) => void saveSettings({ pollingUnit: value })}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className={SETTING_ROW_CLASS}>
+              <label className={`${ROW_LABEL_CLASS} shrink-0`} htmlFor="window-opacity-range">{t("settings.opacity.label")}</label>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <input
+                  id="window-opacity-range"
+                  className="opacity-slider h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-border"
+                  type="range"
+                  min="10"
+                  max="100"
+                  step="1"
+                  value={opacityDraft}
+                  onInput={(event) => {
+                    const value = Number.parseInt((event.target as HTMLInputElement).value, 10);
+                    setOpacityDraft(value);
+                    void updateOpacity(value, false);
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      (event.target as HTMLInputElement).blur();
-                    }
+                  onChange={(event) => {
+                    const value = Number.parseInt((event.target as HTMLInputElement).value, 10);
+                    setOpacityDraft(value);
+                    void updateOpacity(value, true);
                   }}
                 />
-                <div className="polling-segment polling-unit-segment" role="group" aria-label={t("settings.polling.unitAriaLabel")}>
-                  {pollingUnitOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      className={`polling-segment-button${settings.pollingUnit === option.value ? " is-active" : ""}`}
-                      type="button"
-                      aria-pressed={settings.pollingUnit === option.value}
-                      onClick={() => void saveSettings({ pollingUnit: option.value })}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                <span className="w-9 shrink-0 text-right text-xs font-medium tabular-nums text-text-secondary">{opacityDraft}%</span>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
-        <div className="setting-row setting-row-slider">
-          <label htmlFor="window-opacity-range">{t("settings.opacity.label")}</label>
-          <div className="flex items-center gap-2">
-            <input
-              id="window-opacity-range"
-              className="opacity-slider h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border"
-              type="range"
-              min="10"
-              max="100"
-              step="1"
-              value={opacityDraft}
-              onInput={(event) => {
-                const value = Number.parseInt((event.target as HTMLInputElement).value, 10);
-                setOpacityDraft(value);
-                void updateOpacity(value, false);
-              }}
-              onChange={(event) => {
-                const value = Number.parseInt((event.target as HTMLInputElement).value, 10);
-                setOpacityDraft(value);
-                void updateOpacity(value, true);
-              }}
-            />
-            <span className="text-xs font-medium text-text-secondary w-10 text-right">{opacityDraft}%</span>
-          </div>
-        </div>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.launchAtStartup.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.launchAtStartup.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+        {/* 窗口与行为 */}
+        <div className="flex flex-col gap-1.5">
+          <h3 className={GROUP_TITLE_CLASS}>{t("settings.groups.windowBehavior")}</h3>
+          <div className={`${GROUP_CARD_CLASS} divide-y divide-border`}>
+            <ToggleRow
+              label={t("settings.launchAtStartup.label")}
+              hint={t("settings.launchAtStartup.hint")}
               checked={settings.launchAtStartup}
               disabled={launchAtStartupPending}
-              onChange={(event) => void handleLaunchAtStartupChange(event.target.checked)}
+              onChange={(checked) => void handleLaunchAtStartupChange(checked)}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.hideTaskbarIcon.label")}</span>
-            <span className="text-[11px] text-text-tertiary">
-              {isWindows
+            <ToggleRow
+              label={t("settings.hideTaskbarIcon.label")}
+              hint={isWindows
                 ? t("settings.hideTaskbarIcon.hint")
                 : t("settings.hideTaskbarIcon.unsupportedHint")}
-            </span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
               checked={isWindows ? settings.hideTaskbarIcon : false}
               disabled={!isWindows || hideTaskbarPending || launchAtStartupPending}
-              onChange={(event) => void handleHideTaskbarIconChange(event.target.checked)}
+              onChange={(checked) => void handleHideTaskbarIconChange(checked)}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.refreshOnBack.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.refreshOnBack.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+            <ToggleRow
+              label={t("settings.refreshOnBack.label")}
+              hint={t("settings.refreshOnBack.hint")}
               checked={settings.refreshOnSettingsClose}
-              onChange={(event) => void saveSettings({ refreshOnSettingsClose: event.target.checked })}
+              onChange={(checked) => void saveSettings({ refreshOnSettingsClose: checked })}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.autoExpandWindow.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.autoExpandWindow.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+            <ToggleRow
+              label={t("settings.autoExpandWindow.label")}
+              hint={t("settings.autoExpandWindow.hint")}
               checked={settings.autoExpandWindowToFitContent}
-              onChange={(event) => void saveSettings({ autoExpandWindowToFitContent: event.target.checked })}
+              onChange={(checked) => void saveSettings({ autoExpandWindowToFitContent: checked })}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.edgeDockCollapse.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.edgeDockCollapse.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+            <ToggleRow
+              label={t("settings.edgeDockCollapse.label")}
+              hint={t("settings.edgeDockCollapse.hint")}
               checked={settings.edgeDockCollapseEnabled}
-              onChange={(event) => void saveSettings({ edgeDockCollapseEnabled: event.target.checked })}
+              onChange={(checked) => void saveSettings({ edgeDockCollapseEnabled: checked })}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.compactColorMarkers.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.compactColorMarkers.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+            <ToggleRow
+              label={t("settings.compactColorMarkers.label")}
+              hint={t("settings.compactColorMarkers.hint")}
               checked={settings.compactColorMarkersEnabled}
-              onChange={(event) => void saveSettings({ compactColorMarkersEnabled: event.target.checked })}
+              onChange={(checked) => void saveSettings({ compactColorMarkersEnabled: checked })}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
-
-        <label className="setting-row setting-row-toggle">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.islandVisible.label")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.islandVisible.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
+            <ToggleRow
+              label={t("settings.islandVisible.label")}
+              hint={t("settings.islandVisible.hint")}
               checked={settings.islandVisible}
-              onChange={(event) => void saveSettings({ islandVisible: event.target.checked })}
+              onChange={(checked) => void saveSettings({ islandVisible: checked })}
             />
-            <span className="switch-track" />
-          </span>
-        </label>
+          </div>
+        </div>
       </section>
     ),
     providers: (
-      <section className="settings-section settings-section-page">
+      <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.providers")}</h3>
+          <h3 className={GROUP_TITLE_CLASS}>{t("settings.sections.providers")}</h3>
           {!draftProviderConfig && providerSelectGroups.some((group) => group.options.length > 0) && (
-            <div className="add-provider-select">
+            <div className="w-[172px] max-w-[56%] shrink-0">
               <AppSelect
                 modelValue={providerSelectValue}
                 groups={providerSelectGroups}
                 placeholder={t("settings.providerSelect.addPlaceholder")}
                 ariaLabel={t("settings.providerSelect.addPlaceholder")}
-                className="provider-add-select"
+                triggerClassName="min-h-7 rounded-lg px-2.5 py-1"
                 onChange={(value) => handleProviderSelectChange(value)}
                 renderSelected={(option) => (
-                  <span className={`provider-select-value${option ? "" : " is-placeholder"}`}>
+                  <span className={`flex min-w-0 items-center gap-1.5 ${option ? "" : "text-text-muted"}`}>
                     {option ? (
                       <>
-                        <ProviderIcon providerId={option.icon ?? option.value} size={18} />
-                        <span className="provider-select-text">{option.label}</span>
-                        {option.badge && <span className="provider-select-badge">{option.badge}</span>}
+                        <ProviderIcon providerId={option.icon ?? option.value} size={16} />
+                        <span className="truncate text-xs text-text">{option.label}</span>
+                        {option.badge && (
+                          <span className="shrink-0 rounded-full border border-primary-soft-border bg-primary-soft-bg px-1.5 py-px text-[9px] font-semibold text-primary-soft-text">
+                            {option.badge}
+                          </span>
+                        )}
                       </>
                     ) : (
-                      <span className="provider-select-text">{t("settings.providerSelect.addPlaceholder")}</span>
+                      <span className="truncate text-xs">{t("settings.providerSelect.addPlaceholder")}</span>
                     )}
                   </span>
                 )}
@@ -767,7 +770,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         )}
 
         {providerConfigs.length === 0 && !draftProviderConfig && (
-          <div className="border border-dashed border-primary/30 rounded-md p-4 text-xs text-text-secondary text-center">
+          <div className="rounded-xl border border-dashed border-primary-soft-border bg-ghost p-4 text-center text-xs text-text-secondary">
             <span>{t("settings.providersSection.empty")}</span>
           </div>
         )}
@@ -801,68 +804,46 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       </section>
     ),
     advanced: (
-      <section className="settings-section settings-section-page">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.5px] text-text-tertiary">{t("settings.sections.advanced")}</h3>
+      <section className="flex flex-col gap-3">
+        <div className={GROUP_CARD_CLASS}>
+          <ToggleRow
+            label={t("settings.advancedSection.title")}
+            hint={t("settings.advancedSection.hint")}
+            checked={settings.providerPollingOverridesEnabled}
+            onChange={(checked) => void saveSettings({ providerPollingOverridesEnabled: checked })}
+          />
         </div>
 
-        <label className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 transition-colors hover:border-border-strong">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-text">{t("settings.advancedSection.title")}</span>
-            <span className="text-[11px] text-text-tertiary">{t("settings.advancedSection.hint")}</span>
-          </span>
-          <span className="switch">
-            <input
-              className="switch-input"
-              type="checkbox"
-              checked={settings.providerPollingOverridesEnabled}
-              onChange={(event) => void saveSettings({ providerPollingOverridesEnabled: event.target.checked })}
-            />
-            <span className="switch-track" />
-          </span>
-        </label>
-
         {settings.providerPollingOverridesEnabled && configuredPollingProviders.length === 0 && (
-          <div className="border border-dashed border-primary/30 rounded-md p-4 text-xs text-text-secondary text-center">
+          <div className="rounded-xl border border-dashed border-primary-soft-border bg-ghost p-4 text-center text-xs text-text-secondary">
             <span>{t("settings.advancedSection.empty")}</span>
           </div>
         )}
 
         {settings.providerPollingOverridesEnabled && configuredPollingProviders.length > 0 && (
-          <div className="provider-polling-list">
+          <div className={`${GROUP_CARD_CLASS} divide-y divide-border`}>
             {configuredPollingProviders.map((config) => {
               const providerPollingSettings = getProviderPollingSettings(config.providerId);
 
               return (
-                <div key={config.providerId} className="provider-polling-item">
-                  <div className="provider-polling-meta">
+                <div key={config.providerId} className="flex flex-col gap-2 px-3.5 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
                     <ProviderIcon providerId={config.providerId} size={16} />
-                    <span className="provider-polling-name">{config.displayName}</span>
+                    <span className="truncate text-[13px] font-medium text-text">{config.displayName}</span>
                   </div>
 
-                  <div className="polling-control polling-control-compact">
-                    <div
-                      className="polling-segment polling-segment-compact"
-                      role="group"
-                      aria-label={`${config.displayName} ${t("settings.polling.modeAriaLabel")}`}
-                    >
-                      {pollingModeOptions.map((option) => (
-                        <button
-                          key={option.value}
-                          className={`polling-segment-button polling-segment-button-compact${providerPollingSettings.pollingMode === option.value ? " is-active" : ""}`}
-                          type="button"
-                          aria-pressed={providerPollingSettings.pollingMode === option.value}
-                          onClick={() => void saveProviderPollingSettings(config.providerId, { pollingMode: option.value })}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <SegmentedControl
+                      options={pollingModeOptions}
+                      value={providerPollingSettings.pollingMode}
+                      ariaLabel={`${config.displayName} ${t("settings.polling.modeAriaLabel")}`}
+                      onChange={(value) => void saveProviderPollingSettings(config.providerId, { pollingMode: value })}
+                    />
 
                     {providerPollingSettings.pollingMode !== "manual" && (
-                      <div className="polling-auto-inline polling-auto-inline-compact">
+                      <>
                         <input
-                          className="polling-interval-input polling-interval-input-compact"
+                          className={INTERVAL_INPUT_CLASS}
                           type="number"
                           inputMode="numeric"
                           min={MIN_POLLING_INTERVAL}
@@ -895,24 +876,13 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
                             }
                           }}
                         />
-                        <div
-                          className="polling-segment polling-unit-segment polling-segment-compact"
-                          role="group"
-                          aria-label={`${config.displayName} ${t("settings.polling.unitAriaLabel")}`}
-                        >
-                          {pollingUnitOptions.map((option) => (
-                            <button
-                              key={option.value}
-                              className={`polling-segment-button polling-segment-button-compact${providerPollingSettings.pollingUnit === option.value ? " is-active" : ""}`}
-                              type="button"
-                              aria-pressed={providerPollingSettings.pollingUnit === option.value}
-                              onClick={() => void saveProviderPollingSettings(config.providerId, { pollingUnit: option.value })}
-                            >
-                              {option.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                        <SegmentedControl
+                          options={pollingUnitOptions}
+                          value={providerPollingSettings.pollingUnit}
+                          ariaLabel={`${config.displayName} ${t("settings.polling.unitAriaLabel")}`}
+                          onChange={(value) => void saveProviderPollingSettings(config.providerId, { pollingUnit: value })}
+                        />
+                      </>
                     )}
                   </div>
                 </div>
@@ -927,45 +897,49 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-background">
-      <div className="settings-header">
+      {/* 头部：返回 + 标题（单行，不再渲染子页副标题） */}
+      <header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-3">
         <button
-          className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors duration-150 hover:bg-ghost-hover hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
           type="button"
           aria-label={t("common.back")}
           onClick={onBack}
         >
           <BackIcon />
         </button>
+        <h1 className="truncate text-[15px] font-semibold text-text">{t("settings.title")}</h1>
+      </header>
 
-        <div className="settings-title-group">
-          <span className="settings-title">{t("settings.title")}</span>
-          <span className="settings-subtitle">{activeSectionLabel}</span>
+      {/* 子导航：segmented 控件 */}
+      <div className="shrink-0 border-b border-border px-3 py-1.5">
+        <div className="flex gap-0.5 rounded-full bg-ghost p-0.5" role="tablist" aria-label={t("settings.navigationAriaLabel")}>
+          {sectionItems.map((item) => {
+            const isActive = item.id === activeSection;
+
+            return (
+              <button
+                key={item.id}
+                className={`flex h-7 flex-1 items-center justify-center gap-1 rounded-full px-2 text-[12.5px] whitespace-nowrap transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50 ${
+                  isActive
+                    ? "bg-surface-elevated font-medium text-text shadow-sm"
+                    : "text-text-secondary hover:text-text"
+                }`}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => handleSectionSelect(item.id)}
+              >
+                <span className="truncate">{item.label}</span>
+                {item.id === "updates" && hasUpdate && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" aria-hidden="true" />
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div className="settings-subnav" role="tablist" aria-label={t("settings.navigationAriaLabel")}>
-        {sectionItems.map((item) => {
-          const isActive = item.id === activeSection;
-
-          return (
-            <button
-              key={item.id}
-              className={`settings-subnav-item${isActive ? " is-active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => handleSectionSelect(item.id)}
-            >
-              <span className="settings-subnav-label">{item.label}</span>
-              {item.id === "updates" && hasUpdate && (
-                <span className="settings-subnav-badge" aria-hidden="true" />
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="settings-body">
+      <div className="flex-1 overflow-y-auto px-3 py-3">
         {sectionContent[activeSection]}
       </div>
     </div>

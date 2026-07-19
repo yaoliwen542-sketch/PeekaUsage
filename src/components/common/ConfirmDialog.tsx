@@ -48,7 +48,7 @@ export default function ConfirmDialog({
       }}
     >
       <DialogContent
-        className="w-full gap-3.5 rounded-md border-border bg-surface p-4 shadow-drag sm:max-w-[360px]"
+        className="w-full gap-3.5 rounded-xl border-border bg-surface p-4 shadow-drag sm:max-w-[360px]"
         showCloseButton={false}
         aria-label={resolvedAriaLabel}
       >

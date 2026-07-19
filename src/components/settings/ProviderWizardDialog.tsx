@@ -40,10 +40,10 @@ const ICON_CHOICES = ["custom", "deepseek", "newapi", "openai", "anthropic", "op
 const FIELD_LABEL_CLASS = "text-[11px] font-semibold text-foreground-secondary";
 /** 字段提示通用样式 */
 const FIELD_HINT_CLASS = "text-[10px] leading-[1.5] text-foreground-muted";
-/** 单行输入框通用样式（对齐旧 wizard-input：32px 高、12px 字号） */
-const WIZARD_INPUT_CLASS = "h-8 rounded-sm border-border bg-surface px-2.5 py-1.5 text-xs";
-/** 分段选择器按钮基础样式 */
-const SEGMENT_BUTTON_CLASS = "cursor-pointer border-0 bg-surface px-3.5 py-1.5 text-xs text-foreground-muted transition-colors hover:bg-surface-hover";
+/** 单行输入框通用样式（32px 高、12px 字号，与设置页行式控件统一） */
+const WIZARD_INPUT_CLASS = "h-8 rounded-lg border-border bg-surface px-2.5 py-1.5 text-xs";
+/** 分段选择器按钮基础样式（与设置页 segmented 控件一致） */
+const SEGMENT_BUTTON_CLASS = "flex h-7 cursor-pointer items-center rounded-full border-0 bg-transparent px-3 text-xs text-text-secondary transition-colors duration-150 hover:text-text";
 
 /** 自定义供应商 3 步创建向导 */
 export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizardDialogProps) {
@@ -193,7 +193,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
       }}
     >
       <DialogContent
-        className="w-full gap-3 rounded-md border-border bg-surface px-5 pt-[18px] pb-4 shadow-drag sm:max-w-[520px]"
+        className="w-full gap-3 rounded-xl border-border bg-surface px-5 pt-[18px] pb-4 shadow-drag sm:max-w-[520px]"
         showCloseButton={false}
         aria-label={t("settings.wizard.ariaLabel")}
       >
@@ -244,7 +244,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                       key={iconChoice}
                       type="button"
                       className={cn(
-                        "flex h-9 w-9 cursor-pointer items-center justify-center rounded-sm border border-border bg-surface p-0",
+                        "flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface p-0",
                         "transition-[border-color,background,box-shadow] hover:border-border-hover hover:bg-surface-hover",
                         icon === iconChoice && "border-primary-soft-border bg-primary-soft-bg shadow-[0_0_0_2px_var(--color-primary-soft-bg)]",
                       )}
@@ -260,14 +260,14 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
 
               <div className="flex flex-col gap-2">
                 <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.authScheme")}</label>
-                <div className="inline-flex self-start overflow-hidden rounded-sm border border-border" role="group" aria-label={t("settings.wizard.authScheme")}>
+                <div className="inline-flex gap-0.5 self-start rounded-full bg-ghost p-0.5" role="group" aria-label={t("settings.wizard.authScheme")}>
                   {AUTH_SCHEME_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
                       className={cn(
                         SEGMENT_BUTTON_CLASS,
-                        authScheme === option.value && "bg-primary-soft-bg text-primary-soft-text",
+                        authScheme === option.value && "bg-surface-elevated font-medium text-text shadow-sm",
                       )}
                       aria-pressed={authScheme === option.value}
                       onClick={() => setAuthScheme(option.value)}
@@ -285,10 +285,10 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
               {/* 修复 I-3：阶段 1 自定义供应商只支持 Script 查询，移除 Balance/Script 切换器 */}
               <div className="flex flex-col gap-2">
                 <label className={FIELD_LABEL_CLASS}>{t("settings.wizard.queryType")}</label>
-                <div className="inline-flex self-start overflow-hidden rounded-sm border border-border" role="group" aria-label={t("settings.wizard.queryType")}>
+                <div className="inline-flex gap-0.5 self-start rounded-full bg-ghost p-0.5" role="group" aria-label={t("settings.wizard.queryType")}>
                   <button
                     type="button"
-                    className={cn(SEGMENT_BUTTON_CLASS, "bg-primary-soft-bg text-primary-soft-text")}
+                    className={cn(SEGMENT_BUTTON_CLASS, "bg-surface-elevated font-medium text-text shadow-sm")}
                     aria-pressed={true}
                     disabled
                   >
@@ -331,7 +331,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                 <textarea
                   id="wizard-script-code"
                   className={cn(
-                    "w-full resize-y rounded-sm border border-border bg-surface px-2.5 py-2 font-mono text-[11px] leading-[1.5] text-foreground tab-size-2",
+                    "w-full resize-y rounded-lg border border-border bg-surface px-2.5 py-2 font-mono text-[11px] leading-[1.5] text-foreground tab-size-2",
                     "transition-[border-color,box-shadow] focus:border-primary-soft-border focus:shadow-[0_0_0_3px_var(--color-primary-soft-bg)] focus:outline-none",
                   )}
                   value={scriptCode}
@@ -397,7 +397,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
               </div>
 
               <label
-                className="flex cursor-pointer items-center justify-between gap-2.5 rounded-md border border-border bg-surface px-3 py-2.5"
+                className="flex cursor-pointer items-center justify-between gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5"
                 htmlFor="wizard-allow-http"
               >
                 <span className="flex min-w-0 flex-col gap-0.5">
@@ -428,7 +428,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
                   {testResult && (
                     <div
                       className={cn(
-                        "rounded-sm border px-2.5 py-2 text-[11px]",
+                        "rounded-lg border px-2.5 py-2 text-[11px]",
                         testResult.ok
                           ? "border-success-soft-border bg-success-soft-bg text-success-soft-text"
                           : "border-danger-soft-border bg-danger-soft-bg text-danger-soft-text",
@@ -442,7 +442,7 @@ export function ProviderWizardDialog({ open, onClose, onConfirm }: ProviderWizar
               )}
 
               {/* 配置摘要预览 */}
-              <div className="mt-1 rounded-sm border border-border bg-surface-hover px-3 py-2.5">
+              <div className="mt-1 rounded-lg border border-border bg-surface-hover px-3 py-2.5">
                 <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-foreground-muted">
                   {t("settings.wizard.summaryTitle")}
                 </div>
