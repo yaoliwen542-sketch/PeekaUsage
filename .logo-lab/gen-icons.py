@@ -42,13 +42,14 @@ for name, size in png_targets.items():
     print("wrote", name, size)
 
 # ---------- icon.ico（16~256 多尺寸，256 用 PNG 压缩） ----------
+# 注意：必须用「最大帧 + append_images 其余帧」且不传 sizes 参数，
+# 让每帧按自身尺寸写入；传 sizes 会导致 Pillow 只写入一帧
 ico_sizes = [16, 24, 32, 48, 64, 128, 256]
 frames = [pick(s) for s in ico_sizes]
-frames[0].save(
+frames[-1].save(
     ICONS / "icon.ico",
     format="ICO",
-    sizes=[(s, s) for s in ico_sizes],
-    append_images=frames[1:],
+    append_images=frames[:-1],
 )
 print("wrote icon.ico", ico_sizes)
 
