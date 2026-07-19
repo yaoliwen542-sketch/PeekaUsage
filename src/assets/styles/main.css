@@ -2,9 +2,13 @@
 @import "./settings.css";
 @import "./widget.css";
 
+/*
+ * 注意：不要在这里加 `* { margin: 0; padding: 0 }` 之类的通配 reset！
+ * Tailwind v4 的工具类都在 @layer utilities 中，未分层的通配 reset 会
+ * 压过所有 padding/margin 工具类（层叠层级高于一切分层样式）。
+ * 外边距/内边距清零已由 index.css 的 Tailwind preflight（@layer base）完成。
+ */
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 

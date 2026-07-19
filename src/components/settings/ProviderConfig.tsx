@@ -527,7 +527,7 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                     )}
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Button
-                        variant="softGhost"
+                        variant="soft"
                         size="xs"
                         disabled={validatingKeyId === item.id || !item.value.trim() || item.value.includes("...")}
                         type="button"

@@ -551,8 +551,9 @@ export default function IslandWidget() {
               aria-pressed={showQuickSettings}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <circle cx="6" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-                <path d="M6 1v1.5M6 9.5V11M11 6H9.5M2.5 6H1M9.5 9.5l-1-1M3.5 3.5l1 1M9.5 2.5l-1 1M3.5 8.5l1-1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <path d="M1.5 3.5h9M1.5 8.5h9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <circle cx="4" cy="3.5" r="1.4" fill="currentColor" />
+                <circle cx="8" cy="8.5" r="1.4" fill="currentColor" />
               </svg>
             </button>
             <button

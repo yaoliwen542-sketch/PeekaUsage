@@ -641,6 +641,15 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 进入设置页时窗口若小于 `SETTINGS_MIN_WIDTH/HEIGHT`（App.tsx，当前 420×540）会临时扩大并做工作区越界校正，返回主界面时恢复进入前尺寸；扩窗/恢复都必须 `markProgrammaticWindowResize()`，且边缘吸附收起/预览态跳过
 - 设置页是独立的最小尺寸语义：不要把设置页扩窗后的尺寸当作主浮窗尺寸对待，返回时恢复触发的 onResized 防抖链路会让持久化自然收敛回浮窗尺寸
 
+### 样式层叠约束（血泪教训）
+
+- **严禁**在任何 CSS 文件里写未分层的通配 reset（如 `* { margin: 0; padding: 0 }`）
+- Tailwind v4 的全部工具类都在 `@layer utilities` 中；未分层样式在层叠中**压过所有分层样式**，一条 `* { padding: 0 }` 会让全 app 的 `p-*` / `px-*` / `py-*` / `m-*` 工具类集体失效，且元素自身查不出任何异常（`getBoundingClientRect` 无溢出、类名都在）
+- 历史上这个 bug 导致全 app 间距丢失、内容贴边/被裁，表面像「窗口太窄」，实际是 padding 被清零；手写组件类（如 `.titlebar` 自带 padding）不受影响，所以表现为「部分区域正常、部分区域贴边」
+- 清零外边距/内边距已由 `index.css` 的 Tailwind preflight（`@layer base`）完成，不需要也不允许再写一份
+- 手写组件样式如需与工具类共存，优先放进 `@layer components`，保证工具类永远可覆盖
+- 排查布局诡异问题时的核武器：用 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"` 启动应用，走 CDP `Runtime.evaluate` 直接读计算样式（注意 websocket 要 `suppress_origin`）
+
 ### 跨平台约束
 
 - 这个项目后续不只支持 Windows，还要兼容 Linux 和 macOS
