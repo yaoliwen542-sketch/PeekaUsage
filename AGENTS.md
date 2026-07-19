@@ -1,4 +1,4 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 ## 语言规范
 
@@ -426,7 +426,7 @@
 - 收起态不能覆盖正常窗口的 `windowSize` / `windowPosition` 持久化；持久化应继续保存展开态边界
 - 收起态要暂停主界面按内容自动调高/调低窗口高度，避免和边缘细条状态打架
 - 设置页“通用”里提供该功能开关，持久化字段是 `edgeDockCollapseEnabled`
-- 该开关固定放在“自动调整窗口高度以适应内容”后，作为通用配置的最后一个条目
+- 该开关放在“自动调整窗口高度以适应内容”后；注意通用区其后还有紧凑色标（`compactColorMarkers`）和“显示灵动岛”（`islandVisible`），灵动岛开关固定为通用区最后一个条目
 
 ### 22. Anthropic 已支持更多订阅窗口与 Extra Usage 展示
 
@@ -950,7 +950,8 @@ cargo check
 - 阶段 2-A 已实现：Kimi / GLM / MiniMax（CodingPlan）接入 registry
 - 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
 - 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
-- 阶段 3 待实现：SiliconFlow / StepFun / Novita + 火山方舟 AK/SK + Gemini OAuth
+- 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token，registry 现内置 12 家
+- Gemini 刷新后的 access_token / 新 refresh_token 缓存进 KeyStore（键 `gemini_access_token_cache`），禁止回写用户 `~/.gemini/oauth_creds.json`；查询按「文件 token → 缓存 token → refresh」解析，过期判定留 60 秒余量
 
 ### 24. OAuth 凭据自动检测 + ChatGPT-Account-Id + Claude seven_day_opus 已接入
 
@@ -978,4 +979,75 @@ cargo check
   - `User-Agent` 改为 `codex-cli`（与 cc-switch 一致）
 - `SubscriptionFetcher::fetch` / `ProviderManager::fetch_subscription_usage` 签名透传 `account_id`；新增 `fetch_subscription_usage_with_account` 供未来显式传入
 - `DetectedToken` 结构新增 `accountId` 字段（`#[serde(default)]`，camelCase），前端 `ipc.ts::DetectedToken` 同步新增可选 `accountId`
+
+### 25. UI 框架已迁移 Tailwind 4 + shadcn/ui（双轨过渡中）
+
+文件：
+
+- `src/index.css`
+- `src/components/ui/`
+- `src/i18n/windowLabels.ts`
+- `src/assets/styles/`（settings.css / widget.css / common.css / main.css，待消化）
+
+当前要求：
+
+- 设计 token 统一在 `index.css` 的 Tailwind 4 `@theme`，包括 `--color-error`、`--color-text-tertiary`（曾缺失导致 38+ 处工具类静默失效，已补）
+- 暗色值只维护 `:root` 里的 `--color-dark-*` 源值块；`[data-theme="dark"]` 与 `prefers-color-scheme` 回退块只做 `var()` 映射，新增暗色 token 先登记源值再映射
+- `src/components/ui/` 里 dialog / button / input / switch 在用，其余 shadcn 组件（select/tabs/slider/scroll-area/tooltip/badge/card/separator）暂为死代码，清理前不要新增对它们的引用
+- 旧 CSS 四个文件仍在承担大量样式：新代码一律用 Tailwind，改到哪个组件就顺手迁移对应样式，最终目标是删除旧 CSS
+- 透明度滑杆统一用 `index.css` 末尾的 `.opacity-slider` 类（webkit/moz 双伪元素，含可见滑块），不要再写裸 `appearance-none` range
+- 订阅窗口 label 的 i18n 映射统一走 `src/i18n/windowLabels.ts` 的 `getWindowLabel(label, language)`，ProviderCard / SubscriptionBadge / UsageStatsPanel / IslandWidget 共用，禁止在组件里重复实现
+- `main.tsx` 按窗口 label 动态导入样式：主窗口加载 `main.css`，灵动岛只加载 `index.css` + `island.css`
+
+### 26. 灵动岛（island 窗口）已可用
+
+文件：
+
+- `src-tauri/tauri.conf.json`
+- `src-tauri/capabilities/island.json`
+- `src/components/island/IslandWidget.tsx`
+- `src/assets/styles/island.css`
+- `src/stores/settingsStore.ts`
+- `src-tauri/src/tray/mod.rs`
+- `src-tauri/src/commands/settings_commands.rs`
+- `src-tauri/src/lib.rs`
+- `src/App.tsx`
+- `src/i18n/messages.ts`
+
+当前要求：
+
+- 灵动岛是第二个 Tauri 窗口（label `island`，200×40、alwaysOnTop、skipTaskbar）；权限走独立的 `capabilities/island.json`，**island 窗口调用任何新 Tauri API 前必须确认该 capability 已覆盖**，否则 ACL 静默拒绝
+- 展开时 `setSize` 到 300×400，收起恢复 200×40；面板尺寸与窗口尺寸必须同步改，只改一边会被裁切
+- 拖动只走 `mousedown → getCurrentWindow().startDragging()`，禁止再混用 `data-tauri-drag-region` / `WebkitAppRegion` / 手写 mousemove（历史三套叠加 + 物理/逻辑像素混用已修掉）
+- 位置持久化在 localStorage（逻辑像素），恢复时基于 monitor workArea 做离屏校验，不足一半可见则回退工作区顶部居中
+- 显隐开关：设置页「通用」最后一项 + 托盘勾选菜单项；持久化字段 `islandVisible`，默认 `true`，旧配置缺省兼容为 true；启动时 Rust 侧按配置恢复显隐，避免「先闪一下再隐藏」
+- 岛内必须先 `loadSettings()` 完成（`loaded` 门）再渲染快捷设置，否则 `saveSettings` 会基于 `DEFAULT_SETTINGS` 把用户配置整体洗成默认值
+- 设置跨窗口同步：`saveSettings` IPC 成功后 `emit("settings-changed", { source, settings })`；对端 `applySyncedSettings` 只更新内存、不落盘、不再广播，防回环
+- 快捷设置保存与主窗口同约定：滑杆拖动中只预览不保存，松手才落盘；数字输入防抖
+- 托盘菜单文本已 i18n：`tray/mod.rs` 的 `TrayTexts` 按 `config.language` 三选一；`save_settings` 检测到 `language` 或 `island_visible` 变化会重建托盘菜单
+- 岛内文案全部走 `messages.ts` 的 `island.*`，禁止硬编码
+
+### 27. 后端稳健性修复批次（2026-07-19）
+
+文件：
+
+- `src-tauri/src/config/atomic.rs`（新增）
+- `src-tauri/src/config/app_config.rs`、`encryption.rs`、`system_env.rs`
+- `src-tauri/src/stats/mod.rs`
+- `src-tauri/src/commands/provider_commands.rs`、`update_commands.rs`、`window_commands.rs`
+- `src-tauri/src/providers/`（mod.rs、subscription.rs、openai.rs、anthropic.rs、openrouter.rs、gemini.rs）
+- `src/composables/usePolling.ts`
+
+当前要求：
+
+- `config.json` / `keys.dat` / `usage_stats.json` 全部走 `atomic.rs` 原子写入（tmp + rename）；解析失败备份为 `.bak` 再回退默认，新增文件写入必须复用该 helper
+- `fetch_all_usage` 已并发化（futures `buffered(4)` 保序，供应商间 + 多 key/多订阅两层）；单供应商失败用 `build_error_summary` 塞进该卡片 `error_message`，不得再 `?` 传播拖垮全部
+- 所有 reqwest client 必须带 `timeout(30s)` + `connect_timeout(10s)`；订阅查询与 legacy providers 已全部补齐
+- Anthropic 已移除 rate limit 计费探测（`fetch_rate_limits` 恒 `None`），badge 不再显示；**不要加回 `POST /v1/messages` 探测**——每次刷新都是真实计费调用
+- OpenAI costs：`amount.value` 官方口径是美元小数（openai-openapi 规范），**禁止再 `/100`**；已支持分页（`limit=180`，页数封顶 20）
+- Windows 写用户环境变量后会广播 `WM_SETTINGCHANGE`；已运行进程仍需重启才能感知属平台限制
+- 轮询定时器按「策略指纹」（供应商 id + mode/interval/unit 序列化）重建，providers 数据刷新不再重置定时器；新增影响调度的设置字段时必须同步加入指纹
+- 更新状态契约是 camelCase：`"upToDate"`（不是 `"up-to-date"`），前后端保持一致
+- 分供应商轮询覆盖对任意 provider id 生效，不再有三供应商白名单
+- GitHub Release 链接统一指向 `yaoliwen542-sketch/PeekaUsage`
 
