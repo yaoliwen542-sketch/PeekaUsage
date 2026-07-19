@@ -223,8 +223,9 @@ export default function IslandWidget() {
   // 展开发生越界校正平移前的窗口位置：收起后恢复，
   // 避免「展开-收起」循环把岛条逐步推离用户拖放的位置
   const expandOriginRef = useRef<{ x: number; y: number } | null>(null);
-  // 展开面板根元素：ResizeObserver 监听内容高度，窗口高度跟随内容
-  const panelRef = useRef<HTMLDivElement | null>(null);
+  // 供应商列表 / 快捷设置容器：高度同步时测量内容高度用
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const quickSettingsRef = useRef<HTMLDivElement | null>(null);
 
   // 启动：加载用户设置 + 恢复位置 + 注册各类监听
   useEffect(() => {
@@ -404,19 +405,29 @@ export default function IslandWidget() {
 
   // 展开后面板高度跟随内容：供应商少时不留大片空白，
   // 供应商多 / 打开快捷设置 / 展开详情时增高（超上限后面板内列表滚动）。
-  // 面板自身是 max-h-full + 内容自然撑开，这里只把窗口高度同步到面板实际高度
+  //
+  // 注意：不能用 ResizeObserver 观察面板自身——面板是 max-h-full，
+  // 内容一旦超出当前窗口高度就被夹住，面板高度不再变化，回调再也不触发，
+  // 形成「窗口等面板变高、面板等窗口变高」的死锁（快捷设置被截断的根因）。
+  // 改为显式跟踪内容状态（列表数据 / 详情展开 / 快捷设置 / 设置加载 / 语言），
+  // 用「固定头部 + 列表 scrollHeight + 快捷设置实际高度」直接计算期望高度：
+  // 列表是 overflow-y-auto，其 scrollHeight 恒等于内容全高，不受 flex 夹取影响。
   useEffect(() => {
     if (!expanded) {
       return;
     }
-    const el = panelRef.current;
-    if (!el) {
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const syncWindowHeight = () => {
+    const timer = setTimeout(() => {
+      const listEl = listRef.current;
+      if (!listEl) {
+        return;
+      }
+      const headerH = 40; // 顶部栏 h-10
+      const quickSettingsH = showQuickSettings && quickSettingsRef.current
+        ? quickSettingsRef.current.offsetHeight
+        : 0;
+      const panelBorder = 2; // 面板上下 1px 边框
       const panelH = clamp(
-        Math.ceil(el.getBoundingClientRect().height),
+        Math.ceil(headerH + listEl.scrollHeight + quickSettingsH + panelBorder),
         EXPANDED_MIN_HEIGHT,
         EXPANDED_MAX_HEIGHT,
       );
@@ -446,22 +457,9 @@ export default function IslandWidget() {
           // 窗口 API 不可用时忽略，面板按 max-h-full 内部滚动
         }
       })();
-    };
-    const observer = new ResizeObserver(() => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      timer = setTimeout(syncWindowHeight, 60);
-    });
-    observer.observe(el);
-    syncWindowHeight();
-    return () => {
-      observer.disconnect();
-      if (timer) {
-        clearTimeout(timer);
-      }
-    };
-  }, [expanded]);
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [expanded, summaries, expandedProvider, showQuickSettings, settingsLoaded, language]);
 
   // 收起态岛条：mousedown 只记录起点，不立即 startDragging——
   // Windows 上 startDragging 会进入 OS 模态移动循环，可能吞掉 mouseup
@@ -512,7 +510,6 @@ export default function IslandWidget() {
   if (expanded) {
     return (
       <div
-        ref={panelRef}
         className="island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-white/6 bg-card shadow-xl backdrop-blur-md"
       >
         {/* 顶部栏：标题 + 刷新 + 设置 + 收起（展开面板区域不挂拖动） */}
@@ -523,7 +520,7 @@ export default function IslandWidget() {
               type="button"
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors duration-150",
-                "hover:bg-white/8 hover:text-text",
+                "hover:bg-ghost hover:text-text",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
                 "disabled:cursor-not-allowed disabled:opacity-50",
               )}
@@ -541,9 +538,9 @@ export default function IslandWidget() {
               type="button"
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150",
-                "hover:bg-white/8 hover:text-text",
+                "hover:bg-ghost hover:text-text",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
-                showQuickSettings ? "bg-white/10 text-foreground" : "text-text-secondary",
+                showQuickSettings ? "bg-ghost text-foreground" : "text-text-secondary",
               )}
               onClick={() => { setShowQuickSettings(!showQuickSettings); setExpandedProvider(null); }}
               title={t("island.quickSettings")}
@@ -560,7 +557,7 @@ export default function IslandWidget() {
               type="button"
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors duration-150",
-                "hover:bg-white/8 hover:text-text",
+                "hover:bg-ghost hover:text-text",
                 "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
               )}
               onClick={() => setExpandedWithSize(false)}
@@ -576,7 +573,7 @@ export default function IslandWidget() {
 
         {/* 供应商列表：紧凑版主界面卡片（图标 + 名称 + 状态色数字 + 4px 进度条）。
             不用 flex-1 撑满——高度由内容决定，窗口随面板高度收缩；超上限时这里滚动 */}
-        <div className="island-scroll min-h-0 divide-y divide-white/5 overflow-y-auto">
+        <div ref={listRef} className="island-scroll min-h-0 divide-y divide-border overflow-y-auto">
           {enabledSummaries.length === 0 && (
             <div className="flex items-center justify-center py-8 text-[11px] text-text-tertiary">
               {t("island.noData")}
@@ -591,7 +588,7 @@ export default function IslandWidget() {
                   type="button"
                   className={cn(
                     "flex w-full flex-col gap-1.5 px-3 py-2.5 text-left transition-colors duration-150",
-                    "hover:bg-white/4 focus-visible:outline-none focus-visible:bg-white/6",
+                    "hover:bg-ghost focus-visible:outline-none focus-visible:bg-ghost",
                   )}
                   onClick={() => setExpandedProvider(isExpanded ? null : s.providerId)}
                   aria-expanded={isExpanded}
@@ -622,7 +619,7 @@ export default function IslandWidget() {
                 </button>
                 {/* 供应商详情展开 */}
                 {isExpanded && (
-                  <div className="mx-3 mb-2 flex flex-col gap-1 border-l border-white/10 pl-3">
+                  <div className="mx-3 mb-2 flex flex-col gap-1 border-l border-border pl-3">
                     {s.usage && (
                       <div className="flex justify-between text-[10px] text-text-muted">
                         <span>{t("island.usageUsed", { used: s.usage.totalUsed.toFixed(2), currency: s.usage.currency })}</span>
@@ -659,7 +656,7 @@ export default function IslandWidget() {
 
         {/* 快捷设置（底部固定）：设置未加载完成时显示加载态，避免基于默认值误保存 */}
         {showQuickSettings && (
-          <div className="shrink-0 border-t border-white/6 px-3 py-2">
+          <div ref={quickSettingsRef} className="shrink-0 border-t border-border px-3 py-2">
             {settingsLoaded ? (
               <IslandQuickSettings />
             ) : (
@@ -749,7 +746,9 @@ function CollapsedProviderItem({ summary, ariaHidden }: { summary: UsageSummary;
   );
 }
 
-/** 岛内向分段控件：与设置页子导航一致的 segmented pill 风格（小尺寸版） */
+/** 岛内向分段控件：与设置页子导航一致的 segmented pill 风格（小尺寸版）。
+    颜色必须走主题变量（bg-ghost / bg-surface-elevated），
+    不能用 bg-white/N——浅色主题下会完全隐形 */
 function IslandSegmented<T extends string>(props: {
   options: Array<{ value: T; label: string }>;
   value: T;
@@ -758,7 +757,7 @@ function IslandSegmented<T extends string>(props: {
 }) {
   const { options, value, ariaLabel, onChange } = props;
   return (
-    <div className="inline-flex shrink-0 gap-0.5 rounded-full bg-white/5 p-0.5" role="group" aria-label={ariaLabel}>
+    <div className="inline-flex shrink-0 gap-0.5 rounded-full bg-ghost p-0.5" role="group" aria-label={ariaLabel}>
       {options.map((option) => {
         const isActive = option.value === value;
         return (
@@ -767,9 +766,9 @@ function IslandSegmented<T extends string>(props: {
             type="button"
             aria-pressed={isActive}
             className={cn(
-              "flex h-6 items-center justify-center whitespace-nowrap rounded-full px-2.5 text-[11px] transition-colors duration-150",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30",
-              isActive ? "bg-white/10 font-medium text-foreground" : "text-text-secondary hover:text-text",
+              "flex h-6 items-center justify-center whitespace-nowrap rounded-full px-2 text-[11px] transition-colors duration-150",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50",
+              isActive ? "bg-surface-elevated font-medium text-text shadow-sm" : "text-text-secondary hover:text-text",
             )}
             onClick={() => onChange(option.value)}
           >
@@ -930,8 +929,8 @@ function IslandQuickSettings() {
               onBlur={handleIntervalBlur}
               aria-label={t("settings.polling.intervalAriaLabel")}
               className={cn(
-                "h-6 w-12 rounded-md border border-white/10 bg-white/5 px-1.5 text-[11px] tabular-nums text-foreground",
-                "outline-none transition-colors focus:border-white/20",
+                "h-6 w-12 rounded-md border border-border bg-surface-elevated px-1.5 text-[11px] tabular-nums text-foreground",
+                "outline-none transition-colors focus:border-primary/60",
               )}
             />
             <IslandSegmented
