@@ -1,0 +1,135 @@
+name: Release
+
+# 推送 v* 标签触发：校验版本一致性 → 三平台构建发布 → 校验 latest.json
+# 发版流程：先补 .github/release-notes/vX.Y.Z.md，再 git tag vX.Y.Z && git push origin vX.Y.Z
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: 校验版本与发版说明
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 标签名与三处版本号必须一致
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "tag=$TAG package=$PKG tauri.conf=$CONF cargo=$CARGO"
+          if [ "$TAG" != "$PKG" ] || [ "$PKG" != "$CONF" ] || [ "$CONF" != "$CARGO" ]; then
+            echo "::error::版本号不一致：tag=$TAG package.json=$PKG tauri.conf.json=$CONF Cargo.toml=$CARGO"
+            exit 1
+          fi
+
+      - name: 发版说明必须存在
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ ! -s ".github/release-notes/v${TAG}.md" ]; then
+            echo "::error::缺少发版说明 .github/release-notes/v${TAG}.md"
+            exit 1
+          fi
+
+  build:
+    name: 构建并发布（${{ matrix.platform.name }}）
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: windows-x64
+            os: windows-latest
+            args: ""
+          - name: linux-x64
+            os: ubuntu-22.04
+            args: --config src-tauri/tauri.linux.conf.json
+          - name: macos-x64
+            os: macos-latest
+            args: --config src-tauri/tauri.macos.conf.json --target x86_64-apple-darwin
+            rustTargets: x86_64-apple-darwin
+          - name: macos-arm64
+            os: macos-latest
+            args: --config src-tauri/tauri.macos.conf.json --target aarch64-apple-darwin
+            rustTargets: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 读取发版说明
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          {
+            echo 'RELEASE_BODY<<PEEKARELSE'
+            cat ".github/release-notes/v${TAG}.md"
+            echo 'PEEKARELSE'
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rustTargets || '' }}
+
+      - name: 安装 Linux 打包依赖
+        if: matrix.platform.name == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl file libfuse2 \
+            libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建并上传 Release 产物
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "PeekaUsage ${{ github.ref_name }}"
+          releaseBody: ${{ env.RELEASE_BODY }}
+          args: ${{ matrix.platform.args }}
+
+  verify-updater:
+    name: 校验 latest.json 可访问且合法
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 轮询校验 latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest/download/latest.json"
+          TAG="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 20); do
+            if BODY=$(curl -fsL "$URL" 2>/dev/null); then
+              if echo "$BODY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.version||!j.platforms)process.exit(1);console.log('latest.json version:',j.version)})"; then
+                echo "$BODY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(j.version!=='$TAG'){console.error('latest.json 版本',j.version,'与标签','$TAG','不符');process.exit(1)}})"
+                echo "latest.json 校验通过"
+                exit 0
+              fi
+            fi
+            echo "等待 latest.json 就绪（$i/20）..."
+            sleep 15
+          done
+          echo "::error::latest.json 不可访问或内容非法。若是首次发版，请确认仓库 secrets 已配置 TAURI_SIGNING_PRIVATE_KEY（及密码），否则 tauri-action 不会生成 latest.json。"
+          exit 1
