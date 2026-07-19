@@ -27,7 +27,7 @@ const OAUTH_METHOD_URLS: Partial<Record<string, string>> = {
 /** 卡片内小标题 */
 const FIELD_LABEL_CLASS = "text-xs font-medium text-text-secondary";
 /** 辅助说明 */
-const FIELD_HINT_CLASS = "text-xs leading-[1.5] text-text-muted";
+const FIELD_HINT_CLASS = "text-[11px] leading-[1.5] text-text-muted";
 /** 单行文本输入框 */
 const TEXT_INPUT_CLASS = "h-7 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs text-text transition-colors duration-150 placeholder:text-text-muted focus:border-primary-soft-border focus:outline-none focus:ring-1 focus:ring-primary/40";
 
@@ -509,14 +509,17 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                         placeholder={t("settings.providerConfig.keyName", { index: index + 1 })}
                       />
                       {renderColorPicker(`apiKey:${item.id}`, item.color, (nextColor) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, color: nextColor } : currentItem)))}
-                      <Button
-                        variant="softGhost"
-                        size="xs"
+                      <button
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors duration-150 hover:bg-danger-soft-bg hover:text-danger focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger/40"
                         type="button"
+                        title={t("settings.providerConfig.deleteKey")}
+                        aria-label={t("settings.providerConfig.deleteKey")}
                         onClick={() => { setApiKeys((current) => current.length === 1 ? [createEmptyApiKey(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}
                       >
-                        {t("settings.providerConfig.deleteKey")}
-                      </Button>
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                          <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                      </button>
                     </div>
                     <ApiKeyInput modelValue={item.value} placeholder={apiKeyInputPlaceholder} onChange={(value) => setApiKeys((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, value } : currentItem))} />
                     {showVolcengineKeyHint && index === 0 && (
@@ -631,14 +634,17 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                         placeholder={t("settings.providerConfig.subscriptionName", { index: index + 1 })}
                       />
                       {renderColorPicker(`subscription:${item.id}`, item.color, (nextColor) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, color: nextColor } : currentItem)))}
-                      <Button
-                        variant="softGhost"
-                        size="xs"
+                      <button
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors duration-150 hover:bg-danger-soft-bg hover:text-danger focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-danger/40"
                         type="button"
+                        title={t("settings.providerConfig.deleteSubscription")}
+                        aria-label={t("settings.providerConfig.deleteSubscription")}
                         onClick={() => { setSubscriptions((current) => current.length === 1 ? [createEmptySubscription(0)] : current.filter((_, currentIndex) => currentIndex !== index)); setSaveResult(null); }}
                       >
-                        {t("settings.providerConfig.deleteSubscription")}
-                      </Button>
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                          <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                      </button>
                     </div>
                     <ApiKeyInput modelValue={item.oauthToken} placeholder={config.providerId === "anthropic" ? "sk-ant-oat01-..." : config.providerId === "gemini" ? '{"access_token":"...","refresh_token":"..."}' : "eyJ..."} onChange={(value) => setSubscriptions((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, oauthToken: value } : currentItem))} />
                     {item.source && <div className={FIELD_HINT_CLASS}>{t("settings.providerConfig.detectedSource", { source: item.source })}</div>}
@@ -668,11 +674,11 @@ export default function ProviderConfig(props: ProviderConfigProps) {
           <div className="flex items-center justify-between gap-2 border-t border-border px-3.5 py-2.5">
             {isCreateMode ? (
               <>
-                <Button variant="softGhost" size="xs" type="button" onClick={onCanceled}>{t("common.cancel")}</Button>
+                <Button variant="softGhost" size="sm" type="button" onClick={onCanceled}>{t("common.cancel")}</Button>
                 <Button
                   variant="soft"
-                  size="xs"
-                  className="min-w-[72px]"
+                  size="sm"
+                  className="min-w-[80px]"
                   disabled={saving || !hasAnyCredential}
                   type="button"
                   onClick={() => void handleSave()}
@@ -684,7 +690,7 @@ export default function ProviderConfig(props: ProviderConfigProps) {
               <>
                 <Button
                   variant="softDanger"
-                  size="xs"
+                  size="sm"
                   disabled={saving || removing}
                   type="button"
                   onClick={() => setShowRemoveDialog(true)}
@@ -693,8 +699,8 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                 </Button>
                 <Button
                   variant="soft"
-                  size="xs"
-                  className="min-w-[72px]"
+                  size="sm"
+                  className="min-w-[80px]"
                   disabled={saving || !hasChanges || !hasAnyCredential}
                   type="button"
                   onClick={() => void handleSave()}

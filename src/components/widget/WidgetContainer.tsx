@@ -9,6 +9,7 @@ import type { ThemeMode } from "../../types/settings";
 import { saveProviderOrder } from "../../utils/ipc";
 import { fitCurrentWindowHeight, shouldSuppressAutoFit } from "../../utils/windowBounds";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import OpacityHandle from "./OpacityHandle";
 import ProviderCard from "./ProviderCard";
 import UsageStatsPanel from "./UsageStatsPanel";
@@ -549,7 +550,9 @@ export default function WidgetContainer({
             ref={cardListContentRef}
             className={cn(
               "flex flex-col gap-2.5",
-              orderedProviders.length === 0 && "min-h-full",
+              // 空态撑满仅在 autoFit 关闭时用于垂直居中；
+              // autoFit 开启时必须让内容保持自然高度，否则窗口高度自参照永不收敛
+              orderedProviders.length === 0 && !settings.autoExpandWindowToFitContent && "min-h-full",
               isStatsOpen && "pointer-events-none opacity-[0.14] blur-[1px]",
             )}
           >
@@ -578,14 +581,17 @@ export default function WidgetContainer({
                 </div>
               ))
             ) : (
-              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-xs text-text-muted">
-                <p>{t("widget.emptyState.title")}</p>
-                <button
-                  className="cursor-pointer rounded-md text-xs text-primary underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
-                  onClick={onOpenSettings}
-                >
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-ghost text-text-tertiary">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                    <path d="M3 15V9.5M9 15V4.5M15 15v-8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                    <path d="M1.8 15.5h14.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <p className="text-xs text-text-muted">{t("widget.emptyState.title")}</p>
+                <Button variant="soft" size="sm" type="button" onClick={onOpenSettings}>
                   {t("widget.emptyState.action")}
-                </button>
+                </Button>
               </div>
             )}
           </div>

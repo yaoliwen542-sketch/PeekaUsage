@@ -128,7 +128,7 @@ impl Default for AppSettings {
             provider_polling_overrides: HashMap::new(),
             compact_color_markers_enabled: false,
             refresh_on_settings_close: false,
-            auto_expand_window_to_fit_content: false,
+            auto_expand_window_to_fit_content: true,
             edge_dock_collapse_enabled: default_edge_dock_collapse_enabled(),
             island_visible: default_island_visible(),
             hide_taskbar_icon: false,

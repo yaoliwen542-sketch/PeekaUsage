@@ -317,6 +317,11 @@ export default function ProviderCard({
   }
 
   const hero = isCompact ? null : buildHero();
+  // 单订阅且 Hero 大数字 caption 已含计划名（单订阅时 caption = 窗口标签 · 计划名），
+  // 订阅明细块不再重复显示计划名
+  const hideSubscriptionPlanLabel = provider.subscriptions.length === 1
+    && provider.subscriptions[0]?.usage.status === "success"
+    && hero?.kind === "percent";
   const hasCompactContent = provider.subscriptions.some((item) => item.usage.status === "success" && item.usage.windows.length > 0)
     || compactApiItems.length > 0;
 
@@ -461,7 +466,11 @@ export default function ProviderCard({
               )}
 
               {provider.subscriptions.map((subscription) => (
-                <SubscriptionBadge key={subscription.subscriptionId} subscription={subscription} />
+                <SubscriptionBadge
+                  key={subscription.subscriptionId}
+                  subscription={subscription}
+                  hidePlanLabel={hideSubscriptionPlanLabel}
+                />
               ))}
 
               {hasApiUsage && renderApiSection()}

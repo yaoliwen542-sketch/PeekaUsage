@@ -52,9 +52,11 @@ export function UsageBar({ percent, size = "md", showLabel = true, labelClassNam
 
 type SubscriptionBadgeProps = {
   subscription: SubscriptionUsageSummary;
+  /** 单订阅且 Hero 大数字已带计划名时隐藏右侧计划名，避免同屏重复 */
+  hidePlanLabel?: boolean;
 };
 
-export default function SubscriptionBadge({ subscription }: SubscriptionBadgeProps) {
+export default function SubscriptionBadge({ subscription, hidePlanLabel = false }: SubscriptionBadgeProps) {
   const { t, language } = useI18n();
   const usage = subscription.usage;
   const planLabel = usage.planName ?? t("widget.subscription.fallbackPlan");
@@ -85,7 +87,7 @@ export default function SubscriptionBadge({ subscription }: SubscriptionBadgePro
             {label}
           </span>
           {secondaryText && (
-            <span className="truncate text-[9px] leading-[1.35] text-text-muted" title={secondaryTitle}>
+            <span className="truncate text-[10px] leading-[1.35] text-text-muted" title={secondaryTitle}>
               {secondaryText}
             </span>
           )}
@@ -130,9 +132,11 @@ export default function SubscriptionBadge({ subscription }: SubscriptionBadgePro
         <span className="min-w-0 truncate text-[12px] font-semibold text-foreground" title={subscription.subscriptionName}>
           {subscription.subscriptionName}
         </span>
-        <span className="shrink-0 truncate text-[10px] text-text-muted" title={planLabel}>
-          {planLabel}
-        </span>
+        {!hidePlanLabel && (
+          <span className="shrink-0 truncate text-[10px] text-text-muted" title={planLabel}>
+            {planLabel}
+          </span>
+        )}
       </div>
 
       {/* extraUsage 渲染独立于 windows 数组：Anthropic 可能只返回 extra_usage

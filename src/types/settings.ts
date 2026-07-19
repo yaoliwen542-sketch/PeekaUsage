@@ -71,7 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   providerPollingOverrides: {},
   compactColorMarkersEnabled: false,
   refreshOnSettingsClose: false,
-  autoExpandWindowToFitContent: false,
+  autoExpandWindowToFitContent: true,
   edgeDockCollapseEnabled: true,
   islandVisible: true,
   hideTaskbarIcon: false,
