@@ -5,8 +5,8 @@
 > A small desktop widget that lives in the corner of your screen and lets you quickly check OpenAI, Anthropic, and OpenRouter subscription quotas, API usage, budget, balance, and rate limits without constantly bouncing between terminals and dashboards.
 
 <p align="center">
-  <a href="https://github.com/StarChen4/PeekaUsage/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/StarChen4/PeekaUsage?label=release" /></a>
-  <a href="https://github.com/StarChen4/PeekaUsage/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/StarChen4/PeekaUsage" /></a>
+  <a href="https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/yaoliwen542-sketch/PeekaUsage?label=release" /></a>
+  <a href="https://github.com/yaoliwen542-sketch/PeekaUsage/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/yaoliwen542-sketch/PeekaUsage" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue" />
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20React-orange" />
 </p>
@@ -88,7 +88,7 @@ If you also have AI quota anxiety, this app will not cure it — but it can at l
 
 ## Download
 
-Download the latest build from [GitHub Releases](https://github.com/StarChen4/PeekaUsage/releases/latest).
+Download the latest build from [GitHub Releases](https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest).
 
 Current release artifacts include:
 

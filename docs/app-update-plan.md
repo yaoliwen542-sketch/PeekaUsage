@@ -1,6 +1,6 @@
 # 应用内更新与版本说明方案
 
-状态：待实施
+状态：已实现（2026-07-19：update_commands.rs / updateStore.ts / UpdateSettings.tsx 均已落地）
 
 最后更新：2026-03-24
 
@@ -46,7 +46,7 @@
 
 当前版本号后提供“查看更新日志”按钮，默认跳转到 GitHub Release 中该版本的页面：
 
-- 格式：`https://github.com/StarChen4/PeekaUsage/releases/tag/v{version}`
+- 格式：`https://github.com/yaoliwen542-sketch/PeekaUsage/releases/tag/v{version}`
 - 例如当前 `0.1.4` 跳转到 `v0.1.4`
 
 原因：
