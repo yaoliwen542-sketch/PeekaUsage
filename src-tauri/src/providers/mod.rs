@@ -14,7 +14,6 @@ pub mod types;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use traits::{ProviderError, UsageProvider};
 use types::*;
@@ -33,8 +32,6 @@ pub struct ProviderManager {
     http_client: reqwest::Client,
     /// 订阅查询器
     subscription_fetcher: subscription::SubscriptionFetcher,
-    /// 缓存
-    cache: RwLock<HashMap<String, UsageSummary>>,
 }
 
 impl ProviderManager {
@@ -57,7 +54,6 @@ impl ProviderManager {
                 .build()
                 .expect("无法创建 HTTP 客户端"),
             subscription_fetcher: subscription::SubscriptionFetcher::new(),
-            cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -142,11 +138,15 @@ impl ProviderManager {
     /// 2. 不在 legacy_providers 里的（deepseek / newapi 预设 / 自定义）走 registry 模板分发：
     ///    从 template.queries 过滤出 is_usage_query() 的，按 QueryType 分发到
     ///    balance / coding_plan / script_engine，依次尝试
+    ///
+    /// `key_store` 用于读取存进 KeyStore 的 NewAPI 凭据（阶段 2，见 script 分支）；
+    /// 仅内存查询（如脚本预演）可传 None。
     pub async fn fetch_api_usage(
         &self,
         provider_id: &str,
         api_key: &str,
         custom_config: Option<&CustomProviderConfig>,
+        key_store: Option<&crate::config::encryption::KeyStore>,
     ) -> Result<(UsageData, Option<RateLimitData>), String> {
         // 优先走 legacy provider（openai/anthropic/openrouter，已验证的旧实现）
         // 修复 C-1/C-2：registry 不再为这三家配置 Balance 模板，按量查询直接复用 legacy fetch_usage
@@ -164,7 +164,10 @@ impl ProviderManager {
 
         let mut last_error: Option<ProviderError> = None;
         for spec in template.queries.iter().filter(|q| q.is_usage_query()) {
-            match self.execute_usage_query(spec, api_key, custom_config).await {
+            match self
+                .execute_usage_query(provider_id, spec, api_key, custom_config, key_store)
+                .await
+            {
                 Ok(usage) => {
                     // 新版供应商暂无 rate_limit 查询能力（阶段 2 扩展）
                     return Ok((usage, None));
@@ -269,9 +272,11 @@ impl ProviderManager {
     /// 执行单条用量查询
     async fn execute_usage_query(
         &self,
+        provider_id: &str,
         spec: &QuerySpec,
         api_key: &str,
         custom_config: Option<&CustomProviderConfig>,
+        key_store: Option<&crate::config::encryption::KeyStore>,
     ) -> Result<UsageData, ProviderError> {
         match &spec.query_type {
             QueryType::Balance {
@@ -279,6 +284,17 @@ impl ProviderManager {
                 auth,
                 field_map,
             } => {
+                // 修复 L15：DeepSeek 的 balance_infos 是多币种数组（每个条目自带 currency），
+                // 通用模板只能取 [0] 且币种写死 USD，国内 CNY 账号会显示错币种。
+                // 走特化实现：优先 CNY 条目，币种取条目实际值；URL/认证仍来自模板。
+                if provider_id == "deepseek" {
+                    return balance::execute_deepseek_balance_query(
+                        &self.http_client,
+                        url,
+                        api_key,
+                    )
+                    .await;
+                }
                 balance::execute_balance_query(&self.http_client, url, auth, field_map, api_key)
                     .await
             }
@@ -300,10 +316,10 @@ impl ProviderManager {
                     .and_then(|c| c.script.as_ref())
                     .map(|s| s.timeout_ms)
                     .unwrap_or(15000);
-                // 修复 C-3：从 custom_config 读取 accessToken / userId（阶段 1 临时方案：
-                // 明文存储于 custom_config，阶段 2 迁移到 KeyStore）
-                let access_token = custom_config.and_then(|c| c.access_token.as_deref());
-                let user_id = custom_config.and_then(|c| c.user_id.as_deref());
+                // NewAPI 凭据（阶段 2）：custom_config 不再明文保存 accessToken/userId，
+                // 查询时优先用配置里的显式值（向导保存前测试场景），否则从 KeyStore 读取
+                let (access_token, user_id) =
+                    resolve_script_credentials(provider_id, custom_config, key_store).await;
                 script_engine::run(
                     &self.http_client,
                     code,
@@ -311,28 +327,26 @@ impl ProviderManager {
                     base_url,
                     allow_http,
                     timeout_ms,
-                    access_token,
-                    user_id,
+                    access_token.as_deref(),
+                    user_id.as_deref(),
                 )
                 .await
             }
         }
     }
 
-    /// 缓存汇总结果
-    pub async fn cache_summary(&self, provider_id: &str, summary: UsageSummary) {
-        let mut cache = self.cache.write().await;
-        cache.insert(provider_id.to_string(), summary);
-    }
-
     /// 验证 Key
     ///
     /// 旧版 provider 走 trait，新版（deepseek/newapi/自定义）走 registry 的 validate 逻辑。
+    ///
+    /// `key_store` 用于解析存进 KeyStore 的 NewAPI 凭据（阶段 2）：前端对保存过的
+    /// 自定义供应商做验证时回传的是掩码值，需要从 KeyStore 取真实凭据。
     pub async fn validate_key(
         &self,
         provider_id: &str,
         api_key: &str,
         custom_config: Option<&CustomProviderConfig>,
+        key_store: Option<&crate::config::encryption::KeyStore>,
     ) -> Result<bool, String> {
         // 旧版 provider 优先
         if let Some(legacy) = self.legacy_providers.get(provider_id) {
@@ -347,7 +361,7 @@ impl ProviderManager {
         // 瞬时错误（网络 RequestError / 限流 RateLimited）以及其它错误（ParseError 等）
         // 一律向上抛 Err，让前端展示 "无法验证（网络错误）" 而不是误判 key 无效。
         match self
-            .fetch_api_usage(provider_id, api_key, custom_config)
+            .fetch_api_usage(provider_id, api_key, custom_config, key_store)
             .await
         {
             Ok(_) => Ok(true),
@@ -360,6 +374,70 @@ impl ProviderManager {
 impl Default for ProviderManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 解析脚本查询用的 accessToken / userId（NewAPI 凭据，阶段 2）。
+///
+/// 取值优先级：
+/// 1. custom_config 里的显式明文值（向导保存前「测试脚本」场景，用户刚输入的新值）
+/// 2. KeyStore 中已保存的值（保存后的正式存储位置；前端回显的掩码占位符也落到这里）
+///
+/// 返回 (access_token, user_id)，均为 Option；未设置时为 None。
+async fn resolve_script_credentials(
+    provider_id: &str,
+    custom_config: Option<&CustomProviderConfig>,
+    key_store: Option<&crate::config::encryption::KeyStore>,
+) -> (Option<String>, Option<String>) {
+    let Some(cfg) = custom_config else {
+        return (None, None);
+    };
+
+    let token = resolve_one_script_credential(
+        cfg.access_token.as_deref(),
+        key_store,
+        &format!("{}::custom::access_token", provider_id),
+    )
+    .await;
+    let user_id = resolve_one_script_credential(
+        cfg.user_id.as_deref(),
+        key_store,
+        &format!("{}::custom::user_id", provider_id),
+    )
+    .await;
+
+    (token, user_id)
+}
+
+/// 单个脚本凭据的取值规则：
+/// - 配置里为 None / 掩码占位符 -> 用 KeyStore 已存储值
+/// - 配置里为空串 -> 视为未设置
+/// - 配置里为明文 -> 直接使用（保存前测试场景）
+async fn resolve_one_script_credential(
+    inline: Option<&str>,
+    key_store: Option<&crate::config::encryption::KeyStore>,
+    storage_key: &str,
+) -> Option<String> {
+    let stored = match key_store {
+        Some(store) => store.get_stored_key(storage_key).await,
+        None => None,
+    };
+
+    match inline {
+        None => stored,
+        Some(value)
+            if crate::config::encryption::is_masked_placeholder(value, stored.as_deref()) =>
+        {
+            stored
+        }
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
     }
 }
 

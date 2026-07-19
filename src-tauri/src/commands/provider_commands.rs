@@ -5,7 +5,7 @@ use futures::StreamExt;
 use crate::config::app_config::{
     AppConfig, ProviderApiKeyEntry, ProviderEntry, ProviderSubscriptionEntry,
 };
-use crate::config::encryption::KeyStore;
+use crate::config::encryption::{is_masked_placeholder, mask_secret, KeyStore};
 use crate::config::system_env::sync_active_api_key_envs;
 use crate::providers::types::*;
 use crate::providers::ProviderManager;
@@ -153,11 +153,19 @@ pub async fn get_provider_configs(
             Some(entry) if entry.custom_config.is_some() => {
                 // 自定义供应商
                 let cfg = entry.custom_config.as_ref().unwrap();
+                // NewAPI 凭据（阶段 2）：读到旧明文自动迁 KeyStore，返回前端的值一律掩码
+                let display_cfg = prepare_custom_config_for_display(
+                    &provider_id,
+                    cfg,
+                    app_config.inner(),
+                    key_store.inner(),
+                )
+                .await;
                 (
                     cfg.env_key_name.clone().unwrap_or_default(),
                     None,
                     None,
-                    entry.custom_config.clone(),
+                    Some(display_cfg),
                 )
             }
             _ => {
@@ -269,6 +277,26 @@ pub async fn save_provider_config(
         }
     }
 
+    // NewAPI 凭据迁 KeyStore（阶段 2）：accessToken/userId 不再随 custom_config 明文落盘。
+    // 明文新值写 KeyStore、空串清除、None 或未修改的掩码占位符保持原值；
+    // 保存进 config.json 的 custom_config 一律清掉这两个字段。
+    if let Some(cfg) = custom_config.as_mut() {
+        persist_custom_credential(
+            cfg.access_token.as_deref(),
+            &custom_access_token_storage_key(&provider_id),
+            key_store.inner(),
+        )
+        .await?;
+        persist_custom_credential(
+            cfg.user_id.as_deref(),
+            &custom_user_id_storage_key(&provider_id),
+            key_store.inner(),
+        )
+        .await?;
+        cfg.access_token = None;
+        cfg.user_id = None;
+    }
+
     // 解析环境变量名（自定义供应商用 custom_config.env_key_name，内置从 registry 查）
     let env_key_name = match &custom_config {
         Some(cfg) => cfg.env_key_name.clone().unwrap_or_default(),
@@ -368,14 +396,20 @@ pub async fn save_provider_config(
 
     for key in &sanitized_api_keys {
         let storage_key = api_key_storage_key(&provider_id, &key.id);
+        let stored = key_store.get_stored_key(&storage_key).await;
 
-        if key.value.contains("...") {
-            if key_store.get_stored_key(&storage_key).await.is_none() {
-                if let Some(legacy_value) = key_store.get_key(&provider_id, &env_key_name).await {
-                    key_store.set_key(&storage_key, &legacy_value).await?;
-                }
-            }
+        // 修复 L6：掩码判定改为「值等于上次保存值的掩码串」，
+        // 真实包含 "..." 的 key 不再被误判为占位符而丢失
+        if is_masked_placeholder(&key.value, stored.as_deref()) {
             continue;
+        }
+
+        // 旧版兼容：值形似掩码且当前无已存储值时，尝试从旧版单 key 存储迁移
+        if key.value.contains("...") && stored.is_none() {
+            if let Some(legacy_value) = key_store.get_key(&provider_id, &env_key_name).await {
+                key_store.set_key(&storage_key, &legacy_value).await?;
+                continue;
+            }
         }
 
         key_store.set_key(&storage_key, &key.value).await?;
@@ -415,8 +449,10 @@ pub async fn save_provider_config(
 
     for subscription in &sanitized_subscriptions {
         let storage_key = subscription_storage_key(&provider_id, &subscription.id);
+        let stored = key_store.get_stored_key(&storage_key).await;
 
-        if subscription.oauth_token.contains("...") {
+        // 修复 L6：同 API Key，掩码判定改为与已存储值的掩码串精确比较
+        if is_masked_placeholder(&subscription.oauth_token, stored.as_deref()) {
             continue;
         }
 
@@ -466,6 +502,14 @@ pub async fn remove_provider_config(
         .set_key(&oauth_storage_key(&provider_id), "")
         .await?;
 
+    // NewAPI 凭据（阶段 2 起存 KeyStore）一并清理；无对应条目时为空操作
+    key_store
+        .set_key(&custom_access_token_storage_key(&provider_id), "")
+        .await?;
+    key_store
+        .set_key(&custom_user_id_storage_key(&provider_id), "")
+        .await?;
+
     app_config
         .save_provider_entry(
             &provider_id,
@@ -499,9 +543,15 @@ pub async fn validate_api_key(
     api_key: String,
     custom_config: Option<CustomProviderConfig>,
     provider_manager: State<'_, ProviderManager>,
+    key_store: State<'_, KeyStore>,
 ) -> Result<bool, String> {
     provider_manager
-        .validate_key(&provider_id, &api_key, custom_config.as_ref())
+        .validate_key(
+            &provider_id,
+            &api_key,
+            custom_config.as_ref(),
+            Some(key_store.inner()),
+        )
         .await
 }
 
@@ -616,7 +666,7 @@ async fn build_usage_summary(
         let key_value = api_key.value.clone();
         api_key_futures.push(async move {
             provider_manager
-                .fetch_api_usage(provider_id, &key_value, custom_config_ref)
+                .fetch_api_usage(provider_id, &key_value, custom_config_ref, Some(key_store))
                 .await
         });
     }
@@ -738,10 +788,6 @@ async fn build_usage_summary(
         last_updated: Some(chrono::Utc::now().to_rfc3339()),
         error_message,
     };
-
-    provider_manager
-        .cache_summary(provider_id, summary.clone())
-        .await;
 
     Ok(summary)
 }
@@ -935,6 +981,108 @@ fn subscription_storage_key(provider_id: &str, subscription_id: &str) -> String 
     format!("{}::subscription::{}", provider_id, subscription_id)
 }
 
+/// NewAPI 凭据（accessToken）在 KeyStore 中的键名（阶段 2：不再明文落盘 config.json）
+fn custom_access_token_storage_key(provider_id: &str) -> String {
+    format!("{}::custom::access_token", provider_id)
+}
+
+/// NewAPI 凭据（userId）在 KeyStore 中的键名（阶段 2：不再明文落盘 config.json）
+fn custom_user_id_storage_key(provider_id: &str) -> String {
+    format!("{}::custom::user_id", provider_id)
+}
+
+/// 保存自定义供应商的 NewAPI 凭据到 KeyStore（阶段 2 修复：凭据不再明文落盘）
+///
+/// incoming 语义：
+/// - None：前端未提供该字段 -> 保持 KeyStore 原值
+/// - 掩码占位符（等于已存储值的掩码串）：前端原样回显 -> 保持 KeyStore 原值
+/// - 其它（含空串）：写入 KeyStore；空串由 KeyStore::set_key 转为删除
+async fn persist_custom_credential(
+    incoming: Option<&str>,
+    storage_key: &str,
+    key_store: &KeyStore,
+) -> Result<(), String> {
+    match incoming {
+        None => Ok(()),
+        Some(value) => {
+            let stored = key_store.get_stored_key(storage_key).await;
+            if is_masked_placeholder(value, stored.as_deref()) {
+                return Ok(());
+            }
+            key_store.set_key(storage_key, value.trim()).await
+        }
+    }
+}
+
+/// 准备返回前端的自定义供应商配置（NewAPI 凭据，阶段 2 修复）
+///
+/// 两件事：
+/// 1. 旧配置自动迁移：config.json 里残留明文 accessToken/userId 时写入 KeyStore，
+///    并持久化清掉 custom_config 里的明文（此后不再明文落盘）；
+///    迁移失败只打日志，下次读取会重试，不阻断配置展示。
+/// 2. 前端回显：从 KeyStore 取实际值掩码后放入返回的 custom_config，
+///    与 API Key 的掩码语义一致（前端原样回传 = 未修改）。
+async fn prepare_custom_config_for_display(
+    provider_id: &str,
+    cfg: &CustomProviderConfig,
+    app_config: &AppConfig,
+    key_store: &KeyStore,
+) -> CustomProviderConfig {
+    let mut display = cfg.clone();
+    let mut migrated = false;
+
+    if let Some(plain) = cfg.access_token.as_deref().filter(|s| !s.is_empty()) {
+        match key_store
+            .set_key(&custom_access_token_storage_key(provider_id), plain)
+            .await
+        {
+            Ok(()) => migrated = true,
+            Err(error) => eprintln!(
+                "迁移 {} 的 accessToken 到 KeyStore 失败: {}",
+                provider_id, error
+            ),
+        }
+    }
+    if let Some(plain) = cfg.user_id.as_deref().filter(|s| !s.is_empty()) {
+        match key_store
+            .set_key(&custom_user_id_storage_key(provider_id), plain)
+            .await
+        {
+            Ok(()) => migrated = true,
+            Err(error) => eprintln!("迁移 {} 的 userId 到 KeyStore 失败: {}", provider_id, error),
+        }
+    }
+
+    if migrated {
+        if let Some(mut entry) = app_config.get_provider_entry(provider_id).await {
+            if let Some(stored_cfg) = entry.custom_config.as_mut() {
+                stored_cfg.access_token = None;
+                stored_cfg.user_id = None;
+            }
+            if let Err(error) = app_config.save_provider_entry(provider_id, entry).await {
+                eprintln!("清除 {} 的明文 NewAPI 凭据失败: {}", provider_id, error);
+            }
+        }
+    }
+
+    let stored_token = key_store
+        .get_stored_key(&custom_access_token_storage_key(provider_id))
+        .await;
+    let stored_user = key_store
+        .get_stored_key(&custom_user_id_storage_key(provider_id))
+        .await;
+    display.access_token = stored_token
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(mask_secret);
+    display.user_id = stored_user
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(mask_secret);
+
+    display
+}
+
 fn normalize_key_name(name: &str, index: usize) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -985,15 +1133,8 @@ fn default_subscription_name(provider_id: &str) -> String {
 }
 
 fn mask_value(value: &str) -> String {
-    if value.is_empty() {
-        return String::new();
-    }
-
-    if value.len() <= 8 {
-        return "****".to_string();
-    }
-
-    format!("{}...{}", &value[..4], &value[value.len() - 4..])
+    // 修复 L6：统一走 char 边界安全的共享实现（原实现按字节切片，多字节 UTF-8 落在边界会 panic）
+    mask_secret(value)
 }
 
 /// 获取所有可选供应商模板（含内置，用于设置页"新增供应商"下拉）

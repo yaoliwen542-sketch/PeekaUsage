@@ -49,7 +49,32 @@ struct KeyInfoData {
 
 #[derive(Debug, Deserialize)]
 struct KeyRateLimit {
+    /// 每个限流窗口允许的请求次数（窗口长度见 interval）
     requests: Option<u64>,
+    /// 限流窗口，如 "10s"（语义：每 interval 最多 requests 次）
+    interval: Option<String>,
+}
+
+/// 把 OpenRouter rate_limit 的 interval 字符串（如 "10s" / "1m" / "1h"）解析为秒数。
+/// 缺省或解析失败按 60 秒处理（即把 requests 理解为"每分钟 N 次"）。
+fn rate_limit_interval_seconds(interval: Option<&str>) -> u64 {
+    let Some(raw) = interval else {
+        return 60;
+    };
+    let trimmed = raw.trim();
+    let split_at = trimmed
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(trimmed.len());
+    let (digits, unit) = trimmed.split_at(split_at);
+    let value: u64 = digits.parse().unwrap_or(60);
+    let seconds = match unit {
+        "s" => value,
+        "m" => value.saturating_mul(60),
+        "h" => value.saturating_mul(3600),
+        "d" => value.saturating_mul(86400),
+        _ => 60,
+    };
+    seconds.max(1)
 }
 
 #[async_trait]
@@ -154,9 +179,21 @@ impl UsageProvider for OpenRouterProvider {
             .map_err(|e| ProviderError::ParseError(e.to_string()))?;
 
         if let Some(rl) = key_info.data.rate_limit {
+            // 修复 L5：OpenRouter 的 rate_limit 语义是"每个 interval 窗口最多 requests 次"
+            // （如 {requests: 200, interval: "10s"}），没有"当前已用/剩余"字段。
+            // 原实现把 remaining 和 limit 都填 requests，徽章恒显示无信息的 "RPM: N/N"。
+            // 现换算为每分钟上限填入 limit，当前速率留 None（API 不提供，不编造）。
+            let requests_per_minute_limit = rl.requests.map(|requests| {
+                let window_seconds = rate_limit_interval_seconds(rl.interval.as_deref());
+                // 向上取整：(requests * 60 + window - 1) / window
+                requests
+                    .saturating_mul(60)
+                    .saturating_add(window_seconds - 1)
+                    / window_seconds
+            });
             Ok(Some(RateLimitData {
-                requests_per_minute: rl.requests,
-                requests_per_minute_limit: rl.requests,
+                requests_per_minute: None,
+                requests_per_minute_limit,
                 tokens_per_minute: None,
                 tokens_per_minute_limit: None,
             }))
@@ -174,5 +211,22 @@ impl UsageProvider for OpenRouterProvider {
             .await?;
 
         Ok(resp.status().is_success())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rate_limit_interval_seconds() {
+        assert_eq!(rate_limit_interval_seconds(Some("10s")), 10);
+        assert_eq!(rate_limit_interval_seconds(Some("1m")), 60);
+        assert_eq!(rate_limit_interval_seconds(Some("2h")), 7200);
+        assert_eq!(rate_limit_interval_seconds(Some("1d")), 86400);
+        // 缺省 / 非法值按每分钟理解；0 窗口钳制为 1 秒防除零
+        assert_eq!(rate_limit_interval_seconds(None), 60);
+        assert_eq!(rate_limit_interval_seconds(Some("garbage")), 60);
+        assert_eq!(rate_limit_interval_seconds(Some("0s")), 1);
     }
 }

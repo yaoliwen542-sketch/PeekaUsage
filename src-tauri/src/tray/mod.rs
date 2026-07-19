@@ -77,6 +77,7 @@ fn show_main_window(app: &AppHandle) {
 
 fn recenter_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        // 修复 L18：记录操作前的置顶状态，用于读不到设置时的兜底
         let was_always_on_top = window.is_always_on_top().unwrap_or(false);
 
         if window.is_minimized().unwrap_or(false) {
@@ -88,13 +89,20 @@ fn recenter_main_window(app: &AppHandle) {
         let _ = window.center();
         let _ = window.set_focus();
 
-        if !was_always_on_top {
-            let window = window.clone();
-            tauri::async_runtime::spawn(async move {
-                sleep(Duration::from_millis(1200)).await;
-                let _ = window.set_always_on_top(false);
-            });
-        }
+        let app_handle = app.clone();
+        let window = window.clone();
+        tauri::async_runtime::spawn(async move {
+            sleep(Duration::from_millis(1200)).await;
+            // 修复 L18：1.2s 后不能无条件 set_always_on_top(false)——
+            // 用户在这 1.2s 内手动开启置顶会被改回。
+            // 优先按持久化设置恢复（窗口置顶状态平时就由 settings.always_on_top 驱动，
+            // 用户刚做的切换此时已保存）；读不到设置时回退到操作前的窗口状态。
+            let target = match app_handle.try_state::<AppConfig>() {
+                Some(config) => config.get_settings().await.always_on_top,
+                None => was_always_on_top,
+            };
+            let _ = window.set_always_on_top(target);
+        });
     }
 }
 

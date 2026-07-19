@@ -31,6 +31,9 @@ struct AnthropicExtraUsage {
     monthly_limit: Option<f64>,
     used_credits: Option<f64>,
     utilization: Option<f64>,
+    /// 部分版本的 OAuth usage 响应会带 extra_usage 的重置时间；
+    /// 不带时由调用方回退为本地按账期推算（见 fetch_anthropic_oauth）
+    resets_at: Option<String>,
 }
 
 // ===== OpenAI 订阅 =====
@@ -210,13 +213,20 @@ impl SubscriptionFetcher {
             let monthly_limit_usd = e.monthly_limit.map(|c| (c / 100.0 * 100.0).round() / 100.0);
             let used_usd = e.used_credits.map(|c| (c / 100.0 * 100.0).round() / 100.0);
             let utilization = e.utilization.map(|u| u * 100.0);
-            let resets_at = next_month_iso();
+            // 修复 L17：优先使用 API 返回的 resets_at；响应不带该字段时回退本地推算
+            // （extra usage 按自然月账期重置，取下月 1 号 0 点 UTC）。
+            // 该回退是账期语义的推算值而非 API 实测值，但语义诚实：
+            // extra usage 确实按月重置，不会误导前端。
+            let resets_at = e
+                .resets_at
+                .filter(|s| !s.is_empty())
+                .or_else(|| Some(next_month_iso()));
             ExtraUsage {
                 is_enabled: e.is_enabled,
                 monthly_limit_usd,
                 used_usd,
                 utilization,
-                resets_at: Some(resets_at),
+                resets_at,
             }
         });
 
@@ -318,10 +328,9 @@ impl SubscriptionFetcher {
 
         if let Some(ref rl) = data.rate_limit {
             if let Some(ref w) = rl.primary_window {
-                let label = w
-                    .limit_window_seconds
-                    .map(|s| format_window_duration(s))
-                    .unwrap_or_else(|| "主窗口".into());
+                // 修复 L7：label 用机器常量（前端经 windowLabels 映射各语言文案），
+                // 不再硬编码中文「5小时」「7天」「主窗口」
+                let label = openai_window_label(w.limit_window_seconds, window_labels::PRIMARY);
                 windows.push(SubscriptionWindow {
                     label,
                     utilization: w.used_percent.unwrap_or(0.0),
@@ -333,10 +342,7 @@ impl SubscriptionFetcher {
                 });
             }
             if let Some(ref w) = rl.secondary_window {
-                let label = w
-                    .limit_window_seconds
-                    .map(|s| format_window_duration(s))
-                    .unwrap_or_else(|| "次窗口".into());
+                let label = openai_window_label(w.limit_window_seconds, window_labels::SECONDARY);
                 windows.push(SubscriptionWindow {
                     label,
                     utilization: w.used_percent.unwrap_or(0.0),
@@ -374,16 +380,48 @@ fn next_month_iso() -> String {
         .unwrap_or_default()
 }
 
-/// 把秒数格式化为可读的窗口时长
-fn format_window_duration(seconds: u64) -> String {
-    if seconds >= 86400 {
-        let days = seconds / 86400;
-        format!("{}天", days)
-    } else if seconds >= 3600 {
-        let hours = seconds / 3600;
-        format!("{}小时", hours)
-    } else {
-        let mins = seconds / 60;
-        format!("{}分钟", mins)
+/// OpenAI wham 订阅窗口的机器常量标签（修复 L7）
+///
+/// ChatGPT 后端的 limit_window_seconds：主窗口通常 18000（5 小时）、
+/// 次窗口通常 604800（7 天）。能按时长归类就用 five_hour / seven_day；
+/// 无法归类（新版窗口时长）时用调用方给的兜底常量（primary / secondary），
+/// 前端通过 windowLabels 映射成各语言文案。
+fn openai_window_label(limit_window_seconds: Option<u64>, fallback: &str) -> String {
+    const FIVE_HOUR_SECONDS: u64 = 5 * 3600;
+    const SEVEN_DAY_SECONDS: u64 = 7 * 86400;
+    match limit_window_seconds {
+        Some(FIVE_HOUR_SECONDS) => window_labels::FIVE_HOUR.to_string(),
+        Some(SEVEN_DAY_SECONDS) => window_labels::SEVEN_DAY.to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openai_window_label_known_durations() {
+        assert_eq!(
+            openai_window_label(Some(18000), window_labels::PRIMARY),
+            "five_hour"
+        );
+        assert_eq!(
+            openai_window_label(Some(604800), window_labels::SECONDARY),
+            "seven_day"
+        );
+    }
+
+    #[test]
+    fn test_openai_window_label_fallback() {
+        // 无法按时长归类时用兜底常量；缺失时长同样兜底
+        assert_eq!(
+            openai_window_label(Some(3600), window_labels::PRIMARY),
+            "primary"
+        );
+        assert_eq!(
+            openai_window_label(None, window_labels::SECONDARY),
+            "secondary"
+        );
     }
 }

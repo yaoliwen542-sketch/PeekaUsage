@@ -15,6 +15,19 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例插件必须尽量最早注册（官方要求），避免其它插件的初始化在第二实例里白跑。
+        // 第二实例启动时回调聚焦已有主窗口，随后插件自动终止第二实例，
+        // 防止双开并发写 config.json / keys.dat / usage_stats.json 互相覆盖。
+        // 灵动岛窗口随主窗口同属一个进程，无需单独处理。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                if window.is_minimized().unwrap_or(false) {
+                    let _ = window.unminimize();
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_autostart::init(
@@ -87,12 +100,21 @@ pub fn run() {
             commands::settings_commands::save_settings,
             commands::stats_commands::get_usage_stats_snapshot,
             commands::taskbar_commands::set_window_skip_taskbar,
-            commands::window_commands::set_window_opacity,
             commands::window_commands::detect_oauth_tokens,
             commands::update_commands::check_app_update,
             commands::update_commands::install_app_update,
             commands::update_commands::get_current_version,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动应用失败");
+        .build(tauri::generate_context!())
+        .expect("启动应用失败")
+        .run(|app_handle, event| {
+            // 修复 L12：统计写入做了 30s 节流，退出前把内存中未落盘的修改兜底写盘，
+            // 避免正常退出丢失最近一次刷新产生的样本。
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let store = app_handle.state::<UsageStatsStore>();
+                if let Err(error) = tauri::async_runtime::block_on(store.flush_if_dirty()) {
+                    eprintln!("退出前落盘统计历史失败: {}", error);
+                }
+            }
+        });
 }

@@ -15,6 +15,10 @@ pub mod window_labels {
     pub const SEVEN_DAY_OPUS: &str = "seven_day_opus";
     pub const WEEKLY_LIMIT: &str = "weekly_limit";
     pub const MONTHLY: &str = "monthly";
+    /// OpenAI 主窗口（wham primary_window）在无法按时长归类时的兜底标签
+    pub const PRIMARY: &str = "primary";
+    /// OpenAI 次窗口（wham secondary_window）在无法按时长归类时的兜底标签
+    pub const SECONDARY: &str = "secondary";
 }
 
 /// 供应商能力
@@ -56,7 +60,9 @@ pub struct ApiKeyUsageSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionWindow {
-    /// 窗口名称（如 "5小时"、"7天"、"主窗口"、"次窗口"）
+    /// 窗口标签：优先使用 window_labels 模块的机器常量（如 five_hour / seven_day /
+    /// primary），前端经 windowLabels 映射成各语言文案；
+    /// 无法归类的来源（如 Gemini 未知 modelId）可能直接是原始标识字符串
     pub label: String,
     /// 利用率百分比 (0-100)
     pub utilization: f64,
@@ -246,8 +252,18 @@ pub struct ProviderConfigItem {
 // ====================================================================
 
 /// 查询类型：决定如何获取供应商用量
+///
+/// serde 说明：variant 名保持 snake_case（"balance" / "coding_plan" / ...），
+/// variant 内容字段用 camelCase（fieldMap / defaultTemplate），与
+/// src/types/provider.ts 的 QueryType 联合类型对齐（修复 L11 的类型不一致）。
+/// 该类型只在内存与 IPC 传输中使用（模板由 builtin_templates 代码构造，
+/// 不落盘），改 serde 名不影响存量配置数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum QueryType {
     /// 余额查询（货币型，如 DeepSeek、OpenRouter）
     Balance {
@@ -381,12 +397,15 @@ pub struct CustomProviderConfig {
     /// 是否允许 HTTP（默认 false，强制 HTTPS）
     #[serde(default)]
     pub allow_http: bool,
-    /// NewAPI 等 Script 模板需要的访问令牌（阶段 1 临时方案：随 customConfig 明文存储，
-    /// 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{accessToken}} 占位符引用。
+    /// NewAPI 等 Script 模板需要的访问令牌。脚本模板通过 {{accessToken}} 占位符引用。
+    ///
+    /// 阶段 2 起不再明文落盘：保存时由后端写入 KeyStore、本字段持久化为 None；
+    /// 读取配置时后端回填掩码值供前端回显（查询时从 KeyStore 取真实值）。
+    /// 旧配置里残留的明文会在下次读取配置时自动迁移到 KeyStore。
     #[serde(default)]
     pub access_token: Option<String>,
-    /// NewAPI 等 Script 模板需要的用户 ID（阶段 1 临时方案：随 customConfig 明文存储，
-    /// 阶段 2 迁移到 KeyStore 加密存储）。脚本模板通过 {{userId}} 占位符引用。
+    /// NewAPI 等 Script 模板需要的用户 ID。脚本模板通过 {{userId}} 占位符引用。
+    /// 存储/迁移语义与 access_token 相同（阶段 2 起存 KeyStore）。
     #[serde(default)]
     pub user_id: Option<String>,
 }
@@ -430,4 +449,44 @@ fn default_script_language() -> String {
 
 fn default_script_timeout_ms() -> u64 {
     15000
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 修复 L11：QueryType 的 serde 名必须与 src/types/provider.ts 的
+    /// QueryType 联合类型对齐——variant 名 snake_case、内容字段 camelCase。
+    #[test]
+    fn test_query_type_serde_names_align_with_ts() {
+        let balance = QueryType::Balance {
+            url: "https://example.com".to_string(),
+            auth: AuthScheme::Bearer,
+            field_map: BalanceFieldMap {
+                total: "$.total".to_string(),
+                used: None,
+                remaining: None,
+                currency: "USD".to_string(),
+                scale: None,
+            },
+        };
+        let json = serde_json::to_value(&balance).unwrap();
+        assert_eq!(json["kind"], "balance");
+        assert!(json.get("fieldMap").is_some());
+        assert!(json.get("field_map").is_none());
+
+        let coding_plan = QueryType::CodingPlan {
+            provider: "kimi".to_string(),
+        };
+        let json = serde_json::to_value(&coding_plan).unwrap();
+        assert_eq!(json["kind"], "coding_plan");
+
+        let script = QueryType::Script {
+            default_template: Some("code".to_string()),
+        };
+        let json = serde_json::to_value(&script).unwrap();
+        assert_eq!(json["kind"], "script");
+        assert_eq!(json["defaultTemplate"], "code");
+        assert!(json.get("default_template").is_none());
+    }
 }

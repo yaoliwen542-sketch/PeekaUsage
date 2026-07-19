@@ -323,9 +323,12 @@ async fn retrieve_user_quota(
         .ok_or_else(|| "响应中无 buckets".to_string())?;
 
     // 按 modelId 分组，每类取最低 remainingFraction（最高利用率）
-    use std::collections::HashMap;
-    let mut model_min: HashMap<String, f64> = HashMap::new();
-    let mut model_reset: HashMap<String, String> = HashMap::new();
+    //
+    // 修复 L16：用 BTreeMap 代替 HashMap，窗口输出顺序稳定（按 modelId 字典序），
+    // 不再每次刷新随机跳动；最后按 label 再稳定排序一次，同类窗口聚集。
+    use std::collections::BTreeMap;
+    let mut model_min: BTreeMap<String, f64> = BTreeMap::new();
+    let mut model_reset: BTreeMap<String, String> = BTreeMap::new();
 
     for bucket in buckets {
         let model_id = bucket
@@ -351,11 +354,7 @@ async fn retrieve_user_quota(
     let mut windows = Vec::new();
     for (model, min_remaining) in &model_min {
         let utilization = ((1.0 - min_remaining) * 100.0).clamp(0.0, 100.0);
-        let label = match model.as_str() {
-            "gemini-pro" => window_labels::SEVEN_DAY.to_string(),
-            "gemini-flash" => window_labels::FIVE_HOUR.to_string(),
-            other => other.to_string(),
-        };
+        let label = gemini_window_label(model);
         let resets_at = model_reset.get(model).filter(|s| !s.is_empty()).cloned();
         windows.push(SubscriptionWindow {
             label,
@@ -364,6 +363,9 @@ async fn retrieve_user_quota(
         });
     }
 
+    // 按 label 字典序稳定排序（同 label 内保持 modelId 字典序），输出顺序固定
+    windows.sort_by(|left, right| left.label.cmp(&right.label));
+
     Ok(SubscriptionUsage {
         plan_name: Some("Gemini".into()),
         windows,
@@ -371,6 +373,23 @@ async fn retrieve_user_quota(
         status: ProviderStatus::Success,
         error_message: None,
     })
+}
+
+/// Gemini 配额窗口的机器常量标签（修复 L16）
+///
+/// 真实 modelId 带版本号（如 "gemini-2.5-pro" / "gemini-2.0-flash" /
+/// "gemini-2.5-pro-preview-06-05"），精确匹配 "gemini-pro" / "gemini-flash"
+/// 永远命中不了。改为大小写不敏感的包含匹配：
+/// 含 "pro" -> seven_day，含 "flash" -> five_hour，其它保留原始 modelId。
+fn gemini_window_label(model_id: &str) -> String {
+    let lower = model_id.to_lowercase();
+    if lower.contains("pro") {
+        window_labels::SEVEN_DAY.to_string()
+    } else if lower.contains("flash") {
+        window_labels::FIVE_HOUR.to_string()
+    } else {
+        model_id.to_string()
+    }
 }
 
 /// 构造一个错误状态的 SubscriptionUsage
@@ -486,6 +505,24 @@ mod tests {
         // 30 秒后过期（小于 60 秒安全余量）-> 视为已过期
         let soon = (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339();
         assert!(token_expired(Some(&soon)));
+    }
+
+    #[test]
+    fn test_gemini_window_label_versioned_model_ids() {
+        // 真实 modelId 带版本号：包含匹配命中机器常量
+        assert_eq!(gemini_window_label("gemini-2.5-pro"), "seven_day");
+        assert_eq!(
+            gemini_window_label("gemini-2.5-pro-preview-06-05"),
+            "seven_day"
+        );
+        assert_eq!(gemini_window_label("gemini-2.0-flash"), "five_hour");
+        assert_eq!(gemini_window_label("Gemini-2.0-Flash-Lite"), "five_hour");
+        // 无法归类的保留原始 modelId
+        assert_eq!(
+            gemini_window_label("gemini-embedding-001"),
+            "gemini-embedding-001"
+        );
+        assert_eq!(gemini_window_label("unknown"), "unknown");
     }
 
     #[test]

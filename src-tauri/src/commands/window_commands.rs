@@ -2,15 +2,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 #[cfg(windows)]
 use std::process::Command;
-use tauri::{AppHandle, Manager};
-
-/// 设置窗口透明度
-#[tauri::command]
-pub async fn set_window_opacity(opacity: f64, app: AppHandle) -> Result<(), String> {
-    let _clamped = opacity.max(0.1).min(1.0);
-    let _window = app.get_webview_window("main").ok_or("找不到主窗口")?;
-    Ok(())
-}
 
 /// 自动检测本地 OAuth Token
 #[tauri::command]

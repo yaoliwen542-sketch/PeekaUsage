@@ -90,6 +90,111 @@ pub async fn execute_balance_query(
     })
 }
 
+/// DeepSeek 余额查询（/user/balance 的特化处理，修复 L15）
+///
+/// DeepSeek 响应的 `balance_infos` 是按币种分条的数组，每个条目自带 `currency`
+/// 字段（国内账号为 CNY，海外账号为 USD，理论上可同时存在多条）：
+///
+/// ```json
+/// { "is_available": true,
+///   "balance_infos": [
+///     { "currency": "CNY", "total_balance": "10.00", ... },
+///     { "currency": "USD", "total_balance": "5.00", ... }
+///   ] }
+/// ```
+///
+/// 通用 BalanceFieldMap 模板只能写死 `$.balance_infos[0]` + 固定币种，
+/// 对 CNY 账号会把人民币余额标成美元。这里改为：
+/// 1. 优先取 `currency == "CNY"` 的条目（存在时），否则取数组第一项
+/// 2. 币种使用该条目里的实际 `currency` 值
+///
+/// URL 仍来自 registry 模板（调用方透传），认证固定 Bearer（与模板一致）。
+pub async fn execute_deepseek_balance_query(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+) -> Result<UsageData, ProviderError> {
+    let resp = client
+        .get(url)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|e| {
+            if let Some(status) = e.status() {
+                let code = status.as_u16();
+                if code == 401 || code == 403 {
+                    return ProviderError::AuthError(format!("认证失败 (HTTP {})", code));
+                }
+                if code == 429 {
+                    return ProviderError::RateLimited("请求过于频繁".to_string());
+                }
+            }
+            ProviderError::RequestError(e.to_string())
+        })?;
+
+    let status = resp.status();
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        return Err(ProviderError::AuthError(format!(
+            "认证失败 (HTTP {})",
+            status.as_u16()
+        )));
+    }
+    if status.as_u16() == 429 {
+        return Err(ProviderError::RateLimited("请求过于频繁".to_string()));
+    }
+    if !status.is_success() {
+        return Err(ProviderError::RequestError(format!("HTTP {}", status)));
+    }
+
+    // bytes-then-parse 模式（与 execute_balance_query 一致，区分读体错和解析错）
+    let body_bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ProviderError::RequestError(format!("读取响应体失败: {}", e)))?;
+
+    let json: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProviderError::ParseError(format!("解析 JSON 失败: {}", e)))?;
+
+    let entries = json
+        .get("balance_infos")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ProviderError::ParseError("响应中无 balance_infos".to_string()))?;
+
+    // 优先 CNY 条目，否则取第一项；空数组报解析错
+    let entry = entries
+        .iter()
+        .find(|item| item.get("currency").and_then(|c| c.as_str()) == Some("CNY"))
+        .or_else(|| entries.first())
+        .ok_or_else(|| ProviderError::ParseError("balance_infos 为空".to_string()))?;
+
+    // total_balance 在响应里是字符串形式的数字
+    let balance = entry
+        .get("total_balance")
+        .and_then(|v| match v {
+            Value::Number(n) => n.as_f64(),
+            Value::String(s) => s.trim().parse::<f64>().ok(),
+            _ => None,
+        })
+        .ok_or_else(|| ProviderError::ParseError("条目中无 total_balance".to_string()))?;
+
+    // 币种取条目实际值，缺失时回退 USD（DeepSeek 老账号默认美元计费）
+    let currency = entry
+        .get("currency")
+        .and_then(|c| c.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("USD")
+        .to_string();
+
+    Ok(UsageData {
+        total_used: 0.0,
+        total_budget: Some(balance),
+        remaining: Some(balance),
+        currency,
+        period_start: None,
+        period_end: None,
+    })
+}
+
 /// 把 URL 中的动态时间占位符替换为当前时间值
 ///
 /// 支持的占位符：

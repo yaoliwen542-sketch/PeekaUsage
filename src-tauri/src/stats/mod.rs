@@ -16,6 +16,9 @@ const FORECAST_LOOKBACK_HOURS: i64 = 6;
 const FORECAST_MIN_SAMPLES: usize = 3;
 const STALE_SAMPLE_HOURS: i64 = 2;
 const FLOAT_EPSILON: f64 = 0.000_001;
+/// 修复 L12：统计落盘节流间隔。此前每次刷新都全量重写 usage_stats.json，
+/// 高频轮询下写放大明显；样本已做 5 分钟去重，30s 节流不会丢失有效数据。
+const STATS_SAVE_THROTTLE: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -207,6 +210,16 @@ impl Default for UsageStatsFile {
 pub struct UsageStatsStore {
     stats: Arc<RwLock<UsageStatsFile>>,
     stats_path: PathBuf,
+    /// 修复 L12：落盘节流状态（dirty 标记 + 上次落盘时间）
+    write_state: Arc<RwLock<StatsWriteState>>,
+}
+
+/// 修复 L12：统计落盘节流状态
+struct StatsWriteState {
+    /// 内存中有尚未落盘的修改
+    dirty: bool,
+    /// 上次落盘（或尝试落盘）的时间；None 表示启动后从未写入
+    last_save_at: Option<std::time::Instant>,
 }
 
 impl UsageStatsStore {
@@ -235,6 +248,10 @@ impl UsageStatsStore {
         Self {
             stats: Arc::new(RwLock::new(stats)),
             stats_path,
+            write_state: Arc::new(RwLock::new(StatsWriteState {
+                dirty: false,
+                last_save_at: None,
+            })),
         }
     }
 
@@ -264,7 +281,47 @@ impl UsageStatsStore {
             }
             prune_stats_file(&mut stats, now);
         }
-        self.save().await
+
+        // 修复 L12：写放大控制。内存样本先标记 dirty，距上次落盘不足
+        // STATS_SAVE_THROTTLE 时跳过写盘（数据仍在内存，到点或退出时由
+        // flush_if_dirty 兜底落盘）；remove_provider 等结构性修改走 force_save。
+        {
+            let mut state = self.write_state.write().await;
+            state.dirty = true;
+            if let Some(last_save_at) = state.last_save_at {
+                if last_save_at.elapsed() < STATS_SAVE_THROTTLE {
+                    return Ok(());
+                }
+            }
+            state.last_save_at = Some(std::time::Instant::now());
+            state.dirty = false;
+        }
+
+        match self.save().await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // 落盘失败：重新标记 dirty，避免丢失"有未落盘修改"的事实
+                self.write_state.write().await.dirty = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// 强制落盘（绕过节流），用于 remove_provider 等结构性修改
+    async fn force_save(&self) -> Result<(), String> {
+        let result = self.save().await;
+        let mut state = self.write_state.write().await;
+        state.last_save_at = Some(std::time::Instant::now());
+        state.dirty = result.is_err();
+        result
+    }
+
+    /// 退出前兜底落盘：仅在有未落盘修改时写入（修复 L12，由 lib.rs 退出事件调用）
+    pub async fn flush_if_dirty(&self) -> Result<(), String> {
+        if !self.write_state.read().await.dirty {
+            return Ok(());
+        }
+        self.force_save().await
     }
 
     pub async fn remove_provider(&self, provider_id: &str) -> Result<(), String> {
@@ -272,7 +329,7 @@ impl UsageStatsStore {
             let mut stats = self.stats.write().await;
             stats.providers.remove(provider_id);
         }
-        self.save().await
+        self.force_save().await
     }
 
     pub async fn get_snapshot(

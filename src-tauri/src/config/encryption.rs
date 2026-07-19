@@ -104,23 +104,38 @@ impl KeyStore {
         }
         self.save().await
     }
+}
 
-    /// 获取掩码后的 Key（用于前端展示）
-    pub async fn get_masked_key(&self, storage_key: &str, env_var_name: Option<&str>) -> String {
-        let value = if let Some(env_var_name) = env_var_name {
-            self.get_key(storage_key, env_var_name).await
-        } else {
-            self.get_stored_key(storage_key).await
-        };
+/// 生成密钥掩码串（前 4 字符 + "..." + 后 4 字符），用于前端回显。
+///
+/// 修复 L6：按 char 边界切片而非字节切片——多字节 UTF-8 字符落在
+/// 第 4 字节边界时，`&value[..4]` 会直接 panic。长度判定同样按字符数。
+///
+/// 前端回显和「掩码占位符」判定（is_masked_placeholder）共用这一份实现，
+/// 保证下发的掩码与回传比对时逐字符一致。
+pub fn mask_secret(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
 
-        match value {
-            Some(key) if key.len() > 8 => {
-                let prefix = &key[..4];
-                let suffix = &key[key.len() - 4..];
-                format!("{}...{}", prefix, suffix)
-            }
-            Some(_) => "****".to_string(),
-            None => String::new(),
-        }
+    let char_count = value.chars().count();
+    if char_count <= 8 {
+        return "****".to_string();
+    }
+
+    let prefix: String = value.chars().take(4).collect();
+    let suffix: String = value.chars().skip(char_count.saturating_sub(4)).collect();
+    format!("{}...{}", prefix, suffix)
+}
+
+/// 判断前端回传的值是否为「未修改的掩码占位符」（即我们之前下发的掩码串）。
+///
+/// 修复 L6：不再用 `contains("...")` 判定——真实包含 "..." 的 key 会被误判为
+/// 占位符而永远无法保存。改为与「上次保存值的掩码串」精确比较，只有前端
+/// 原样回传了我们下发的掩码时才跳过写入。
+pub fn is_masked_placeholder(value: &str, stored: Option<&str>) -> bool {
+    match stored {
+        Some(stored) if !stored.is_empty() => value == mask_secret(stored),
+        _ => false,
     }
 }

@@ -61,7 +61,7 @@ pub async fn run(
         .replace("{{apiKey}}", api_key)
         .replace("{{baseUrl}}", base_url.unwrap_or(""))
         // NewAPI 等 Script 模板用 accessToken / userId（修复 C-3）
-        // 阶段 1 临时方案：直接从 custom_config 读取明文 accessToken/userId
+        // 阶段 2 起凭据由调用方从 KeyStore 解析后传入，不再明文落盘 config.json
         .replace("{{accessToken}}", access_token.unwrap_or(""))
         .replace("{{userId}}", user_id.unwrap_or(""));
 
@@ -142,7 +142,7 @@ fn run_script_for_request(code: &str, timeout_ms: u64) -> Result<RequestSpec, Pr
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 运行时: {}", e)))?;
 
     // 注册中断 handler：超时后置位 flag，handler 返回 true 触发 QuickJS 中断
-    let timeout_flag = install_interrupt_handler(&runtime, timeout_ms)?;
+    let (timeout_flag, done_flag) = install_interrupt_handler(&runtime, timeout_ms)?;
 
     let ctx = Context::full(&runtime)
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 上下文: {}", e)))?;
@@ -208,7 +208,8 @@ fn run_script_for_request(code: &str, timeout_ms: u64) -> Result<RequestSpec, Pr
         })
     });
 
-    // 检查是否因超时被中断
+    // 检查是否因超时被中断；同时通知计时线程退出（修复 L14：脚本秒回不再空转到超时）
+    done_flag.store(true, Ordering::SeqCst);
     if timeout_flag.load(Ordering::SeqCst) {
         return Err(ProviderError::RequestError(format!(
             "脚本执行超时（{}ms）",
@@ -219,29 +220,38 @@ fn run_script_for_request(code: &str, timeout_ms: u64) -> Result<RequestSpec, Pr
     result
 }
 
-/// 安装超时中断 handler：返回一个 AtomicBool 标志，超时后会被置位
+/// 安装超时中断 handler：返回 (超时标志, 完成标志)
 ///
 /// 实现方式：
-/// - 创建 `Arc<AtomicBool>` 共享给 handler 闭包与定时器线程
+/// - 创建 `Arc<AtomicBool>` 超时标志，共享给 handler 闭包与定时器线程
 /// - spawn 一个轻量线程在 `timeout_ms` 后置位（不依赖 tokio，因为我们在 blocking 池里）
-/// - handler 闭包返回 AtomicBool 的值，QuickJS 周期性调用它，true 时抛出中断异常
+/// - handler 闭包返回超时标志的当前值，true 时 QuickJS 抛出中断异常
+///
+/// 修复 L14：新增完成标志。原实现里计时线程固定存活整个 timeout_ms，
+/// 脚本秒回也要空转到超时，高频轮询下线程堆积；现在脚本执行完毕
+/// （正常返回或被中断）后调用方置位 done，计时线程 50ms 内自行退出。
 fn install_interrupt_handler(
     runtime: &rquickjs::Runtime,
     timeout_ms: u64,
-) -> Result<Arc<AtomicBool>, ProviderError> {
+) -> Result<(Arc<AtomicBool>, Arc<AtomicBool>), ProviderError> {
     let flag = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
 
     // 启动一个后台线程在 timeout_ms 后置位 flag
     // （blocking 池里没有 tokio runtime，用 std::thread）
     let timer_flag = flag.clone();
+    let timer_done = done.clone();
     std::thread::Builder::new()
         .name("js-script-timeout".to_string())
         .spawn(move || {
             let start = Instant::now();
             let timeout = Duration::from_millis(timeout_ms);
-            // 轮询：每 50ms 检查一次是否到达 timeout
-            // （避免 sleep 过久导致线程无法及时退出，但实际精度不影响超时判定）
+            // 轮询：每 50ms 检查一次是否到达 timeout 或脚本已结束
+            // （50ms 粒度不影响超时判定精度，同时保证脚本结束后线程快速退出）
             while start.elapsed() < timeout {
+                if timer_done.load(Ordering::SeqCst) {
+                    return;
+                }
                 std::thread::sleep(Duration::from_millis(50));
             }
             timer_flag.store(true, Ordering::SeqCst);
@@ -252,7 +262,7 @@ fn install_interrupt_handler(
     let handler_flag = flag.clone();
     runtime.set_interrupt_handler(Some(Box::new(move || handler_flag.load(Ordering::SeqCst))));
 
-    Ok(flag)
+    Ok((flag, done))
 }
 
 /// 校验请求 URL：HTTPS 强制 + 同源校验
@@ -378,7 +388,7 @@ fn run_extractor(
     let runtime = Runtime::new()
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 运行时: {}", e)))?;
 
-    let timeout_flag = install_interrupt_handler(&runtime, timeout_ms)?;
+    let (timeout_flag, done_flag) = install_interrupt_handler(&runtime, timeout_ms)?;
 
     let ctx = Context::full(&runtime)
         .map_err(|e| ProviderError::ParseError(format!("无法创建 JS 上下文: {}", e)))?;
@@ -421,7 +431,8 @@ fn run_extractor(
             .map_err(|e| ProviderError::ParseError(format!("解析 extractor 结果失败: {}", e)))
     });
 
-    // 检查是否因超时被中断
+    // 检查是否因超时被中断；同时通知计时线程退出（修复 L14）
+    done_flag.store(true, Ordering::SeqCst);
     if timeout_flag.load(Ordering::SeqCst) {
         return Err(ProviderError::RequestError(format!(
             "extractor 执行超时（{}ms）",

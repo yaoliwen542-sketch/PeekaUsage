@@ -169,6 +169,10 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             oauth_detect: None,
         },
         // === DeepSeek（Balance × 1，新增）===
+        // 修复 L15：实际查询不走这里的 field_map（balance_infos 是多币种数组，
+        // 模板无法表达"优先 CNY 条目 + 币种取条目实际值"），
+        // 由 ProviderManager 路由到 balance::execute_deepseek_balance_query 特化处理。
+        // 此模板保留 URL / 认证 / 能力声明，作为该供应商的注册入口。
         ProviderTemplate {
             id: "deepseek".to_string(),
             display_name: "DeepSeek".to_string(),
