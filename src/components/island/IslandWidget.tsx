@@ -93,17 +93,41 @@ function getProviderUtil(s: UsageSummary): number {
   return util;
 }
 
-/** 获取供应商剩余额度文本 */
-function getRemainingText(s: UsageSummary): string {
-  if (s.usage) {
-    const remaining = s.usage.remaining;
-    const currency = s.usage.currency;
-    if (remaining !== null && remaining !== undefined) {
-      return `${remaining.toFixed(2)} ${currency}`;
+/** 币种符号映射：岛条空间紧凑，常见币种用符号，其余回退为代码 */
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  CNY: "¥",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+};
+
+/** 紧凑格式化余额数字：大数取整、小数留位，避免撑爆岛条宽度 */
+function formatCompactAmount(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1000) return value.toFixed(0);
+  if (abs >= 100) return value.toFixed(1);
+  if (abs >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
+/**
+ * 岛条/列表行的摘要信息：余额型供应商优先显示余额，
+ * 没有预算概念时 percent 为 null（调用方不渲染进度条，避免恒 0% 误导）。
+ */
+function getDisplayInfo(s: UsageSummary): { text: string; percent: number | null } {
+  const usage = s.usage;
+  if (usage && usage.remaining !== null && usage.remaining !== undefined) {
+    const symbol = CURRENCY_SYMBOLS[usage.currency] ?? `${usage.currency} `;
+    const text = `${symbol}${formatCompactAmount(usage.remaining)}`;
+    // 有预算时给出已用占比条；无预算（纯余额查询）不给条
+    if (usage.totalBudget && usage.totalBudget > 0) {
+      return { text, percent: clamp((usage.totalUsed / usage.totalBudget) * 100, 0, 100) };
     }
+    return { text, percent: null };
   }
-  const util = getProviderUtil(s);
-  return `${Math.round(util)}%`;
+  const util = clamp(getProviderUtil(s), 0, 100);
+  return { text: `${Math.round(util)}%`, percent: util };
 }
 
 /** 数字状态色：阈值与主界面 usageFillClass 一致（<60 正常 / 60-85 警告 / ≥85 危险） */
@@ -412,7 +436,7 @@ export default function IslandWidget() {
             </div>
           )}
           {enabledSummaries.map((s) => {
-            const util = clamp(getProviderUtil(s), 0, 100);
+            const info = getDisplayInfo(s);
             const isExpanded = expandedProvider === s.providerId;
             return (
               <div key={s.providerId}>
@@ -430,16 +454,24 @@ export default function IslandWidget() {
                     <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground" title={s.displayName}>
                       {s.displayName}
                     </span>
-                    <span className={cn("shrink-0 text-[13px] font-semibold tabular-nums", usageTextClass(util))}>
-                      {getRemainingText(s)}
+                    <span
+                      className={cn(
+                        "shrink-0 text-[13px] font-semibold tabular-nums",
+                        // 纯余额型没有利用率概念，用中性色；有占比时按状态色
+                        info.percent === null ? "text-foreground" : usageTextClass(info.percent),
+                      )}
+                    >
+                      {info.text}
                     </span>
                   </div>
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-progress-track">
-                    <div
-                      className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(util))}
-                      style={{ width: `${util}%` }}
-                    />
-                  </div>
+                  {info.percent !== null && (
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-progress-track">
+                      <div
+                        className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(info.percent))}
+                        style={{ width: `${info.percent}%` }}
+                      />
+                    </div>
+                  )}
                 </button>
                 {/* 供应商详情展开 */}
                 {isExpanded && (
@@ -543,22 +575,29 @@ export default function IslandWidget() {
   );
 }
 
-/** 收起态单个供应商摘要：14px 图标 + 状态色利用率 + 4px 迷你进度条 */
+/** 收起态单个供应商摘要：14px 图标 + 余额/利用率 + 可选迷你进度条（纯余额型不画条） */
 function CollapsedProviderItem({ summary, ariaHidden }: { summary: UsageSummary; ariaHidden?: boolean }) {
-  const util = clamp(getProviderUtil(summary), 0, 100);
+  const info = getDisplayInfo(summary);
   return (
     // pr-4 放在条目上而不是容器 gap 上，保证轮播两份拷贝宽度严格一致、循环无跳动
     <div className="flex shrink-0 items-center gap-1.5 pr-4" aria-hidden={ariaHidden || undefined}>
       <ProviderIcon providerId={summary.providerId} size={14} />
-      <span className={cn("text-[12px] font-semibold leading-none tabular-nums", usageTextClass(util))}>
-        {Math.round(util)}%
+      <span
+        className={cn(
+          "text-[12px] font-semibold leading-none tabular-nums",
+          info.percent === null ? "text-foreground" : usageTextClass(info.percent),
+        )}
+      >
+        {info.text}
       </span>
-      <div className="h-1 w-8 overflow-hidden rounded-full bg-progress-track">
-        <div
-          className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(util))}
-          style={{ width: `${util}%` }}
-        />
-      </div>
+      {info.percent !== null && (
+        <div className="h-1 w-8 overflow-hidden rounded-full bg-progress-track">
+          <div
+            className={cn("h-full rounded-full transition-[width] duration-300", usageFillClass(info.percent))}
+            style={{ width: `${info.percent}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
