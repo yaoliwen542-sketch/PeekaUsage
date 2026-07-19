@@ -1,0 +1,94 @@
+/*
+ * 灵动岛窗口基础样式。
+ * 独立于主窗口 main.css（连带 settings/widget 近千行规则），
+ * 只保留灵动岛自身需要的最小规则；Tailwind 工具类与设计 token 由 index.css 提供。
+ */
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  color: var(--color-text);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+/* 岛窗口透明，内容（胶囊 / 展开面板）整体居中 */
+#app {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 供应商图标：与 common.css 中的 .provider-icon 规则保持一致 */
+.provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.provider-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.provider-icon.is-openai,
+.provider-icon.is-openrouter {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.provider-icon.is-anthropic {
+  background: rgba(237, 228, 210, 0.95);
+}
+
+/* 展开面板入场过渡（窗口 setSize 是即时的，过渡只做在内容上，避免闪烁） */
+.island-panel {
+  animation: island-panel-in 150ms ease-out;
+  transform-origin: top center;
+}
+
+@keyframes island-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 展开面板内供应商列表的细滚动条 */
+.island-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
+
+.island-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.island-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar-thumb);
+  border-radius: 3px;
+}

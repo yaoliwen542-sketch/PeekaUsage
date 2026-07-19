@@ -3,7 +3,7 @@ import type { ProviderId } from "./provider";
 export type UpdateState =
   | "idle"
   | "checking"
-  | "up-to-date"
+  | "upToDate"
   | "available"
   | "downloading"
   | "installing"
@@ -45,6 +45,7 @@ export interface AppSettings extends PollingSettings {
   refreshOnSettingsClose: boolean;
   autoExpandWindowToFitContent: boolean;
   edgeDockCollapseEnabled: boolean;
+  islandVisible: boolean;
   hideTaskbarIcon: boolean;
   hideTaskbarIconHintShown: boolean;
   language: AppLanguage;
@@ -72,6 +73,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   refreshOnSettingsClose: false,
   autoExpandWindowToFitContent: false,
   edgeDockCollapseEnabled: true,
+  islandVisible: true,
   hideTaskbarIcon: false,
   hideTaskbarIconHintShown: false,
   language: "zh-Hans",
@@ -120,12 +122,21 @@ export function normalizeProviderPollingOverrides(
 ): Partial<Record<ProviderId, PollingSettings>> {
   const next: Partial<Record<ProviderId, PollingSettings>> = {};
 
-  for (const providerId of ["openai", "anthropic", "openrouter"] as const) {
-    const item = overrides?.[providerId];
-    if (!item) {
+  if (!overrides) {
+    return next;
+  }
+
+  // 后端支持任意 provider id（deepseek / gemini / kimi / custom_* 等），
+  // 这里不再限制内置白名单，只做结构校验与数值规整
+  for (const [providerId, item] of Object.entries(overrides)) {
+    if (!providerId || typeof item !== "object" || item === null) {
       continue;
     }
-    next[providerId] = normalizePollingSettings(item);
+    next[providerId] = {
+      pollingInterval: normalizePollingInterval(Number(item.pollingInterval)),
+      pollingMode: item.pollingMode === "manual" ? "manual" : "auto",
+      pollingUnit: item.pollingUnit === "seconds" ? "seconds" : "minutes",
+    };
   }
 
   return next;
@@ -141,6 +152,7 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
     refreshOnSettingsClose: !!settings.refreshOnSettingsClose,
     autoExpandWindowToFitContent: !!settings.autoExpandWindowToFitContent,
     edgeDockCollapseEnabled: settings.edgeDockCollapseEnabled !== false,
+    islandVisible: settings.islandVisible !== false,
     hideTaskbarIcon: !!settings.hideTaskbarIcon,
     hideTaskbarIconHintShown: !!settings.hideTaskbarIconHintShown,
     language: normalizeAppLanguage(settings.language),

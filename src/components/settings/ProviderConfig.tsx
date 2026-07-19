@@ -116,9 +116,36 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const hasChanges = JSON.stringify({ apiKeys: sanitizedApiKeys(apiKeys), subscriptions: sanitizedSubscriptions(subscriptions) }) !== JSON.stringify({ apiKeys: sanitizedApiKeys(config.apiKeys), subscriptions: sanitizedSubscriptions(config.subscriptions) });
   const saveButtonLabel = saving ? (isCreateMode ? t("settings.providerConfig.adding") : t("common.saving")) : (!isCreateMode && saveResult?.type === "success" && !hasChanges ? t("common.saved") : (isCreateMode ? t("settings.providerConfig.addConfirm") : t("common.save")));
 
-  useEffect(() => { if (!canDetectOAuth && activeView === "subscriptions") setActiveView("apiKeys"); }, [activeView, canDetectOAuth]);
-  useEffect(() => { syncingFromPropsRef.current = true; setApiKeys(cloneApiKeys(config.apiKeys)); setSubscriptions(cloneSubscriptions(config.subscriptions)); syncingFromPropsRef.current = false; clearTransientState(); if (keepSaveResultOnNextSyncRef.current) { keepSaveResultOnNextSyncRef.current = false; return; } setSaveResult(null); }, [config, canDetectOAuth]);
-  useEffect(() => { if (syncingFromPropsRef.current) return; clearTransientState(); setSaveResult(null); }, [apiKeys, subscriptions]);
+  // 订阅能力缺失时强制回到 API Key 视图
+  useEffect(() => {
+    if (!canDetectOAuth && activeView === "subscriptions") {
+      setActiveView("apiKeys");
+    }
+  }, [activeView, canDetectOAuth]);
+
+  // 外部 config 变化时同步表单初值（草稿对象已由父组件 memo 化，不会因无关重渲染误触发）
+  useEffect(() => {
+    syncingFromPropsRef.current = true;
+    setApiKeys(cloneApiKeys(config.apiKeys));
+    setSubscriptions(cloneSubscriptions(config.subscriptions));
+    syncingFromPropsRef.current = false;
+    clearTransientState();
+
+    if (keepSaveResultOnNextSyncRef.current) {
+      keepSaveResultOnNextSyncRef.current = false;
+      return;
+    }
+    setSaveResult(null);
+  }, [config, canDetectOAuth]);
+
+  // 用户编辑后清理检测/校验等瞬态与保存结果
+  useEffect(() => {
+    if (syncingFromPropsRef.current) {
+      return;
+    }
+    clearTransientState();
+    setSaveResult(null);
+  }, [apiKeys, subscriptions]);
 
   function renderColorPicker(target: ColorPickerTarget, color: string, onSelect: (nextColor: string) => void) {
     const isOpen = colorPickerTarget === target;

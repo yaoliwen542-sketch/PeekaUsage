@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { useI18n } from "../../i18n";
 import { THEME_OPTION_ORDER } from "../../i18n/messages";
 import { useProviders } from "../../composables/useProviders";
-import { useProviderStore } from "../../stores/providerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import type { ProviderId, UsageSummary } from "../../types/provider";
@@ -69,7 +68,7 @@ export default function WidgetContainer({
   const settings = useSettingsStore((state) => state.settings);
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const saveSettings = useSettingsStore((state) => state.saveSettings);
-  const { providers, isRefreshing, manualRefresh, manualRefreshProvider } = useProviders();
+  const { providers, isRefreshing, refreshingProviders, manualRefresh, manualRefreshProvider } = useProviders();
   const [orderedProviders, setOrderedProviders] = useState<UsageSummary[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layoutSaveState, setLayoutSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -577,7 +576,7 @@ export default function WidgetContainer({
                   provider={provider}
                   displayMode={settings.widgetDisplayMode}
                   useCompactColorMarkers={settings.compactColorMarkersEnabled}
-                  isRefreshing={useProviderStore.getState().isProviderRefreshing(provider.providerId)}
+                  isRefreshing={isRefreshing || !!refreshingProviders[provider.providerId]}
                   onRefresh={() => void manualRefreshProvider(provider.providerId)}
                 />
               </div>

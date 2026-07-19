@@ -97,6 +97,10 @@ fn read_codex_token_from_home(home: &std::path::Path, environment: &str) -> Opti
     let auth_path = home.join(".codex").join("auth.json");
     let content = std::fs::read_to_string(&auth_path).ok()?;
     let auth = serde_json::from_str::<CodexAuth>(&content).ok()?;
+    // 与 oauth_detect::detect_openai 对齐：非 chatgpt 模式不视作可用 OAuth 凭据
+    if auth.auth_mode.as_deref() != Some("chatgpt") {
+        return None;
+    }
     let tokens = auth.tokens?;
     let token = tokens
         .access_token
@@ -138,6 +142,10 @@ fn read_wsl_claude_token() -> Option<DetectedToken> {
 fn read_wsl_codex_token() -> Option<DetectedToken> {
     let content = run_wsl_file_read("~/.codex/auth.json")?;
     let auth = serde_json::from_str::<CodexAuth>(&content).ok()?;
+    // 与 oauth_detect::detect_openai 对齐：非 chatgpt 模式不视作可用 OAuth 凭据
+    if auth.auth_mode.as_deref() != Some("chatgpt") {
+        return None;
+    }
     let tokens = auth.tokens?;
     let token = tokens
         .access_token
@@ -255,6 +263,10 @@ struct ClaudeOAuth {
 
 #[derive(Debug, serde::Deserialize)]
 struct CodexAuth {
+    /// Codex CLI 认证模式；仅 "chatgpt" 模式才有可用的 ChatGPT OAuth token
+    /// （与 providers::oauth_detect::detect_openai 的校验保持一致）
+    #[serde(default)]
+    auth_mode: Option<String>,
     tokens: Option<CodexTokens>,
 }
 

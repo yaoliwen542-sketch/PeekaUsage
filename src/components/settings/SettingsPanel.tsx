@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import type { CustomProviderConfig, ProviderConfigItem, ProviderId, ProviderTemplate } from "../../types/provider";
 import {
@@ -60,7 +60,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const settings = useSettingsStore((state) => state.settings);
   const saveSettings = useSettingsStore((state) => state.saveSettings);
   const { updateOpacity } = useWindowControls();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const [providerConfigs, setProviderConfigs] = useState<ProviderConfigItem[]>([]);
   const [providerTemplates, setProviderTemplates] = useState<ProviderTemplate[]>([]);
@@ -104,9 +104,17 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const activeSectionLabel = sectionItems.find((item) => item.id === activeSection)?.label
     ?? t("settings.sections.general");
 
-  const configuredProviderIds = new Set(providerConfigs.map((item) => item.providerId));
+  // 已配置供应商集合与可选模板：memo 化保证引用稳定，
+  // 否则每次渲染都生成新数组，会连带击穿下游 draft 的 useMemo
+  const configuredProviderIds = useMemo(
+    () => new Set(providerConfigs.map((item) => item.providerId)),
+    [providerConfigs],
+  );
   // 可选模板：排除已配置的内置供应商
-  const availableTemplates = providerTemplates.filter((item) => !configuredProviderIds.has(item.id));
+  const availableTemplates = useMemo(
+    () => providerTemplates.filter((item) => !configuredProviderIds.has(item.id)),
+    [providerTemplates, configuredProviderIds],
+  );
   const isManualPolling = settings.pollingMode === "manual";
   const configuredPollingProviders = providerConfigs.filter((item) => item.enabled);
 
@@ -145,9 +153,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   }
 
   // 从自定义配置构造草稿 ProviderConfigItem
-  function buildDraftFromCustomConfig(customConfig: CustomProviderConfig): ProviderConfigItem {
-    // 自定义供应商 ID 用固定前缀，后端会根据 customConfig 落盘
-    const providerId = `custom_${Date.now().toString(36)}`;
+  // providerId 由调用方生成并传入，保证同一份 customConfig 在重渲染间 id 稳定
+  function buildDraftFromCustomConfig(customConfig: CustomProviderConfig, providerId: ProviderId): ProviderConfigItem {
     return {
       providerId,
       displayName: customConfig.displayName,
@@ -175,11 +182,25 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     };
   }
 
-  // 当前选中的草稿配置（优先自定义，其次内置模板）
-  const draftProviderConfig: ProviderConfigItem | null = (() => {
+  // 自定义供应商草稿 id：只在 customConfig 变化时生成一次，
+  // 避免父组件重渲染（如后台更新检查返回）导致 id 重新生成、表单被重置
+  const customDraftIdRef = useRef<{ config: CustomProviderConfig; providerId: ProviderId } | null>(null);
+
+  // 当前选中的草稿配置（优先自定义，其次内置模板）。
+  // memo 化保证草稿对象引用稳定：ProviderConfig 的同步 effect 依赖 config，
+  // 引用不稳会把用户正在输入的表单重置回初始值
+  const draftProviderConfig: ProviderConfigItem | null = useMemo(() => {
     if (pendingCustomConfig) {
-      return buildDraftFromCustomConfig(pendingCustomConfig);
+      if (customDraftIdRef.current?.config !== pendingCustomConfig) {
+        // 自定义供应商 ID 用固定前缀，后端会根据 customConfig 落盘
+        customDraftIdRef.current = {
+          config: pendingCustomConfig,
+          providerId: `custom_${Date.now().toString(36)}`,
+        };
+      }
+      return buildDraftFromCustomConfig(pendingCustomConfig, customDraftIdRef.current.providerId);
     }
+    customDraftIdRef.current = null;
     if (creatingProviderId) {
       const template = availableTemplates.find((item) => item.id === creatingProviderId);
       if (template) {
@@ -187,7 +208,8 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
       }
     }
     return null;
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCustomConfig, creatingProviderId, availableTemplates, language]);
 
   // 构造"新增供应商"分组下拉
   const providerSelectGroups: Array<AppSelectGroup<string>> = useMemo(() => {
@@ -541,7 +563,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
           <div className="flex items-center gap-2">
             <input
               id="window-opacity-range"
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border"
+              className="opacity-slider h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-border"
               type="range"
               min="10"
               max="100"
@@ -659,6 +681,22 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
               type="checkbox"
               checked={settings.compactColorMarkersEnabled}
               onChange={(event) => void saveSettings({ compactColorMarkersEnabled: event.target.checked })}
+            />
+            <span className="switch-track" />
+          </span>
+        </label>
+
+        <label className="setting-row setting-row-toggle">
+          <span className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium text-text">{t("settings.islandVisible.label")}</span>
+            <span className="text-[11px] text-text-tertiary">{t("settings.islandVisible.hint")}</span>
+          </span>
+          <span className="switch">
+            <input
+              className="switch-input"
+              type="checkbox"
+              checked={settings.islandVisible}
+              onChange={(event) => void saveSettings({ islandVisible: event.target.checked })}
             />
             <span className="switch-track" />
           </span>

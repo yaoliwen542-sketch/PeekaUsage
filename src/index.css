@@ -11,6 +11,8 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
+  /* text-error / bg-error 别名：与 danger 保持同值，暗色块同步覆盖 */
+  --color-error: #ef4444;
   --color-info: #3b82f6;
 
   --radius-sm: 4px;
@@ -33,6 +35,8 @@
   --color-text: #0f172a;
   --color-text-secondary: #475569;
   --color-text-muted: #64748b;
+  /* text-text-tertiary 别名：与 muted 保持同值，暗色块同步覆盖 */
+  --color-text-tertiary: #64748b;
   --color-border: rgba(15, 23, 42, 0.12);
   --color-border-hover: rgba(59, 130, 246, 0.22);
   --color-titlebar-bg: rgba(255, 255, 255, 0.72);
@@ -86,107 +90,165 @@
   --shadow-settings-surface: var(--shadow-surface);
 }
 
-/* 暗色主题覆盖 */
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --color-bg: rgba(15, 15, 15, 0.85);
-  --color-surface: rgba(30, 30, 30, 0.9);
-  --color-surface-hover: rgba(45, 45, 45, 0.95);
-  --color-surface-elevated: rgba(35, 35, 35, 0.95);
-  --color-control-bg: rgba(20, 20, 20, 0.42);
-  --color-text: #f0f0f0;
-  --color-text-secondary: #a0a0a0;
-  --color-text-muted: #666666;
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-hover: rgba(255, 255, 255, 0.15);
-  --color-titlebar-bg: rgba(20, 20, 20, 0.6);
-  --color-input-bg: rgba(0, 0, 0, 0.3);
-  --color-muted-surface: rgba(255, 255, 255, 0.02);
-  --color-muted-surface-border: rgba(255, 255, 255, 0.06);
-  --color-ghost-bg: rgba(255, 255, 255, 0.04);
-  --color-ghost-bg-hover: rgba(255, 255, 255, 0.08);
-  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
-  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
-  --color-progress-track: rgba(255, 255, 255, 0.08);
-  --color-usage-item-bg: rgba(255, 255, 255, 0.03);
-  --color-usage-item-error-bg: rgba(239, 68, 68, 0.08);
-  --color-primary-soft-bg: rgba(59, 130, 246, 0.16);
-  --color-primary-soft-border: rgba(59, 130, 246, 0.28);
-  --color-primary-soft-text: #bfdbfe;
-  --color-dock-shell-start: rgba(148, 163, 184, 0.18);
-  --color-dock-shell-end: rgba(15, 23, 42, 0.12);
-  --color-dock-shell-border: rgba(148, 163, 184, 0.28);
-  --color-dock-core-start: rgba(236, 254, 255, 1);
-  --color-dock-core-end: rgba(34, 211, 238, 0.98);
-  --color-dock-core-glow: rgba(34, 211, 238, 0.56);
-  --color-dock-core-shadow: rgba(8, 47, 73, 0.4);
-  --shadow-dock-handle: 0 16px 30px rgba(2, 6, 23, 0.34);
-  --color-dock-peek: rgba(103, 232, 249, 0.96);
-  --color-dock-peek-ring: rgba(34, 211, 238, 0.42);
-  --shadow-dock-peek: 0 0 0 1px rgba(186, 230, 253, 0.42), 0 0 14px rgba(34, 211, 238, 0.34);
-  --color-success-soft-bg: rgba(16, 185, 129, 0.12);
-  --color-success-soft-border: rgba(16, 185, 129, 0.25);
-  --color-success-soft-text: #7cf2c0;
-  --color-danger-soft-bg: rgba(239, 68, 68, 0.12);
-  --color-danger-soft-border: rgba(239, 68, 68, 0.25);
-  --color-danger-soft-text: #ffb4b4;
-  --shadow-surface: 0 14px 32px rgba(2, 6, 23, 0.24);
-  --shadow-overlay: 0 18px 40px rgba(2, 6, 23, 0.34);
-  --shadow-drag: 0 18px 42px rgba(15, 23, 42, 0.42);
-  --color-settings-panel-bg: rgba(18, 18, 18, 0.92);
-  --color-settings-selected-solid: rgba(30, 64, 175, 0.42);
+/* ===== 暗色 token 源值（唯一维护点） =====
+   [data-theme="dark"] 与 prefers-color-scheme 回退块只引用这里的变量，
+   调整暗色取值只需修改本块；新增暗色 token 也要先在这里登记。 */
+:root {
+  --color-dark-bg: rgba(15, 15, 15, 0.85);
+  --color-dark-surface: rgba(30, 30, 30, 0.9);
+  --color-dark-surface-hover: rgba(45, 45, 45, 0.95);
+  --color-dark-surface-elevated: rgba(35, 35, 35, 0.95);
+  --color-dark-control-bg: rgba(20, 20, 20, 0.42);
+  --color-dark-text: #f0f0f0;
+  --color-dark-text-secondary: #a0a0a0;
+  --color-dark-text-muted: #666666;
+  --color-dark-text-tertiary: #666666;
+  --color-dark-error: #ef4444;
+  --color-dark-border: rgba(255, 255, 255, 0.08);
+  --color-dark-border-hover: rgba(255, 255, 255, 0.15);
+  --color-dark-titlebar-bg: rgba(20, 20, 20, 0.6);
+  --color-dark-input-bg: rgba(0, 0, 0, 0.3);
+  --color-dark-muted-surface: rgba(255, 255, 255, 0.02);
+  --color-dark-muted-surface-border: rgba(255, 255, 255, 0.06);
+  --color-dark-ghost-bg: rgba(255, 255, 255, 0.04);
+  --color-dark-ghost-bg-hover: rgba(255, 255, 255, 0.08);
+  --color-dark-scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --color-dark-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+  --color-dark-progress-track: rgba(255, 255, 255, 0.08);
+  --color-dark-usage-item-bg: rgba(255, 255, 255, 0.03);
+  --color-dark-usage-item-error-bg: rgba(239, 68, 68, 0.08);
+  --color-dark-primary-soft-bg: rgba(59, 130, 246, 0.16);
+  --color-dark-primary-soft-border: rgba(59, 130, 246, 0.28);
+  --color-dark-primary-soft-text: #bfdbfe;
+  --color-dark-dock-shell-start: rgba(148, 163, 184, 0.18);
+  --color-dark-dock-shell-end: rgba(15, 23, 42, 0.12);
+  --color-dark-dock-shell-border: rgba(148, 163, 184, 0.28);
+  --color-dark-dock-core-start: rgba(236, 254, 255, 1);
+  --color-dark-dock-core-end: rgba(34, 211, 238, 0.98);
+  --color-dark-dock-core-glow: rgba(34, 211, 238, 0.56);
+  --color-dark-dock-core-shadow: rgba(8, 47, 73, 0.4);
+  --shadow-dark-dock-handle: 0 16px 30px rgba(2, 6, 23, 0.34);
+  --color-dark-dock-peek: rgba(103, 232, 249, 0.96);
+  --color-dark-dock-peek-ring: rgba(34, 211, 238, 0.42);
+  --shadow-dark-dock-peek: 0 0 0 1px rgba(186, 230, 253, 0.42), 0 0 14px rgba(34, 211, 238, 0.34);
+  --color-dark-success-soft-bg: rgba(16, 185, 129, 0.12);
+  --color-dark-success-soft-border: rgba(16, 185, 129, 0.25);
+  --color-dark-success-soft-text: #7cf2c0;
+  --color-dark-danger-soft-bg: rgba(239, 68, 68, 0.12);
+  --color-dark-danger-soft-border: rgba(239, 68, 68, 0.25);
+  --color-dark-danger-soft-text: #ffb4b4;
+  --shadow-dark-surface: 0 14px 32px rgba(2, 6, 23, 0.24);
+  --shadow-dark-overlay: 0 18px 40px rgba(2, 6, 23, 0.34);
+  --shadow-dark-drag: 0 18px 42px rgba(15, 23, 42, 0.42);
+  --color-dark-settings-panel-bg: rgba(18, 18, 18, 0.92);
+  --color-dark-settings-selected-solid: rgba(30, 64, 175, 0.42);
 }
 
-/* 未显式设置 data-theme 时跟随系统暗色 */
+/* 暗色主题覆盖：显式设置 data-theme="dark" 时生效，取值统一引用上方源值 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: var(--color-dark-bg);
+  --color-surface: var(--color-dark-surface);
+  --color-surface-hover: var(--color-dark-surface-hover);
+  --color-surface-elevated: var(--color-dark-surface-elevated);
+  --color-control-bg: var(--color-dark-control-bg);
+  --color-text: var(--color-dark-text);
+  --color-text-secondary: var(--color-dark-text-secondary);
+  --color-text-muted: var(--color-dark-text-muted);
+  --color-text-tertiary: var(--color-dark-text-tertiary);
+  --color-error: var(--color-dark-error);
+  --color-border: var(--color-dark-border);
+  --color-border-hover: var(--color-dark-border-hover);
+  --color-titlebar-bg: var(--color-dark-titlebar-bg);
+  --color-input-bg: var(--color-dark-input-bg);
+  --color-muted-surface: var(--color-dark-muted-surface);
+  --color-muted-surface-border: var(--color-dark-muted-surface-border);
+  --color-ghost-bg: var(--color-dark-ghost-bg);
+  --color-ghost-bg-hover: var(--color-dark-ghost-bg-hover);
+  --color-scrollbar-thumb: var(--color-dark-scrollbar-thumb);
+  --color-scrollbar-thumb-hover: var(--color-dark-scrollbar-thumb-hover);
+  --color-progress-track: var(--color-dark-progress-track);
+  --color-usage-item-bg: var(--color-dark-usage-item-bg);
+  --color-usage-item-error-bg: var(--color-dark-usage-item-error-bg);
+  --color-primary-soft-bg: var(--color-dark-primary-soft-bg);
+  --color-primary-soft-border: var(--color-dark-primary-soft-border);
+  --color-primary-soft-text: var(--color-dark-primary-soft-text);
+  --color-dock-shell-start: var(--color-dark-dock-shell-start);
+  --color-dock-shell-end: var(--color-dark-dock-shell-end);
+  --color-dock-shell-border: var(--color-dark-dock-shell-border);
+  --color-dock-core-start: var(--color-dark-dock-core-start);
+  --color-dock-core-end: var(--color-dark-dock-core-end);
+  --color-dock-core-glow: var(--color-dark-dock-core-glow);
+  --color-dock-core-shadow: var(--color-dark-dock-core-shadow);
+  --shadow-dock-handle: var(--shadow-dark-dock-handle);
+  --color-dock-peek: var(--color-dark-dock-peek);
+  --color-dock-peek-ring: var(--color-dark-dock-peek-ring);
+  --shadow-dock-peek: var(--shadow-dark-dock-peek);
+  --color-success-soft-bg: var(--color-dark-success-soft-bg);
+  --color-success-soft-border: var(--color-dark-success-soft-border);
+  --color-success-soft-text: var(--color-dark-success-soft-text);
+  --color-danger-soft-bg: var(--color-dark-danger-soft-bg);
+  --color-danger-soft-border: var(--color-dark-danger-soft-border);
+  --color-danger-soft-text: var(--color-dark-danger-soft-text);
+  --shadow-surface: var(--shadow-dark-surface);
+  --shadow-overlay: var(--shadow-dark-overlay);
+  --shadow-drag: var(--shadow-dark-drag);
+  --color-settings-panel-bg: var(--color-dark-settings-panel-bg);
+  --color-settings-selected-solid: var(--color-dark-settings-selected-solid);
+}
+
+/* 未显式设置 data-theme 时跟随系统暗色（与上方共用同一份源值，保持同步） */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --color-bg: rgba(15, 15, 15, 0.85);
-    --color-surface: rgba(30, 30, 30, 0.9);
-    --color-surface-hover: rgba(45, 45, 45, 0.95);
-    --color-surface-elevated: rgba(35, 35, 35, 0.95);
-    --color-control-bg: rgba(20, 20, 20, 0.42);
-    --color-text: #f0f0f0;
-    --color-text-secondary: #a0a0a0;
-    --color-text-muted: #666666;
-    --color-border: rgba(255, 255, 255, 0.08);
-    --color-border-hover: rgba(255, 255, 255, 0.15);
-    --color-titlebar-bg: rgba(20, 20, 20, 0.6);
-    --color-input-bg: rgba(0, 0, 0, 0.3);
-    --color-muted-surface: rgba(255, 255, 255, 0.02);
-    --color-muted-surface-border: rgba(255, 255, 255, 0.06);
-    --color-ghost-bg: rgba(255, 255, 255, 0.04);
-    --color-ghost-bg-hover: rgba(255, 255, 255, 0.08);
-    --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
-    --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
-    --color-progress-track: rgba(255, 255, 255, 0.08);
-    --color-usage-item-bg: rgba(255, 255, 255, 0.03);
-    --color-usage-item-error-bg: rgba(239, 68, 68, 0.08);
-    --color-primary-soft-bg: rgba(59, 130, 246, 0.16);
-    --color-primary-soft-border: rgba(59, 130, 246, 0.28);
-    --color-primary-soft-text: #bfdbfe;
-    --color-dock-shell-start: rgba(148, 163, 184, 0.18);
-    --color-dock-shell-end: rgba(15, 23, 42, 0.12);
-    --color-dock-shell-border: rgba(148, 163, 184, 0.28);
-    --color-dock-core-start: rgba(236, 254, 255, 1);
-    --color-dock-core-end: rgba(34, 211, 238, 0.98);
-    --color-dock-core-glow: rgba(34, 211, 238, 0.56);
-    --color-dock-core-shadow: rgba(8, 47, 73, 0.4);
-    --shadow-dock-handle: 0 16px 30px rgba(2, 6, 23, 0.34);
-    --color-dock-peek: rgba(103, 232, 249, 0.96);
-    --color-dock-peek-ring: rgba(34, 211, 238, 0.42);
-    --shadow-dock-peek: 0 0 0 1px rgba(186, 230, 253, 0.42), 0 0 14px rgba(34, 211, 238, 0.34);
-    --color-success-soft-bg: rgba(16, 185, 129, 0.12);
-    --color-success-soft-border: rgba(16, 185, 129, 0.25);
-    --color-success-soft-text: #7cf2c0;
-    --color-danger-soft-bg: rgba(239, 68, 68, 0.12);
-    --color-danger-soft-border: rgba(239, 68, 68, 0.25);
-    --color-danger-soft-text: #ffb4b4;
-    --shadow-surface: 0 14px 32px rgba(2, 6, 23, 0.24);
-    --shadow-overlay: 0 18px 40px rgba(2, 6, 23, 0.34);
-    --shadow-drag: 0 18px 42px rgba(15, 23, 42, 0.42);
-    --color-settings-panel-bg: rgba(18, 18, 18, 0.92);
-    --color-settings-selected-solid: rgba(30, 64, 175, 0.42);
+    --color-bg: var(--color-dark-bg);
+    --color-surface: var(--color-dark-surface);
+    --color-surface-hover: var(--color-dark-surface-hover);
+    --color-surface-elevated: var(--color-dark-surface-elevated);
+    --color-control-bg: var(--color-dark-control-bg);
+    --color-text: var(--color-dark-text);
+    --color-text-secondary: var(--color-dark-text-secondary);
+    --color-text-muted: var(--color-dark-text-muted);
+    --color-text-tertiary: var(--color-dark-text-tertiary);
+    --color-error: var(--color-dark-error);
+    --color-border: var(--color-dark-border);
+    --color-border-hover: var(--color-dark-border-hover);
+    --color-titlebar-bg: var(--color-dark-titlebar-bg);
+    --color-input-bg: var(--color-dark-input-bg);
+    --color-muted-surface: var(--color-dark-muted-surface);
+    --color-muted-surface-border: var(--color-dark-muted-surface-border);
+    --color-ghost-bg: var(--color-dark-ghost-bg);
+    --color-ghost-bg-hover: var(--color-dark-ghost-bg-hover);
+    --color-scrollbar-thumb: var(--color-dark-scrollbar-thumb);
+    --color-scrollbar-thumb-hover: var(--color-dark-scrollbar-thumb-hover);
+    --color-progress-track: var(--color-dark-progress-track);
+    --color-usage-item-bg: var(--color-dark-usage-item-bg);
+    --color-usage-item-error-bg: var(--color-dark-usage-item-error-bg);
+    --color-primary-soft-bg: var(--color-dark-primary-soft-bg);
+    --color-primary-soft-border: var(--color-dark-primary-soft-border);
+    --color-primary-soft-text: var(--color-dark-primary-soft-text);
+    --color-dock-shell-start: var(--color-dark-dock-shell-start);
+    --color-dock-shell-end: var(--color-dark-dock-shell-end);
+    --color-dock-shell-border: var(--color-dark-dock-shell-border);
+    --color-dock-core-start: var(--color-dark-dock-core-start);
+    --color-dock-core-end: var(--color-dark-dock-core-end);
+    --color-dock-core-glow: var(--color-dark-dock-core-glow);
+    --color-dock-core-shadow: var(--color-dark-dock-core-shadow);
+    --shadow-dock-handle: var(--shadow-dark-dock-handle);
+    --color-dock-peek: var(--color-dark-dock-peek);
+    --color-dock-peek-ring: var(--color-dark-dock-peek-ring);
+    --shadow-dock-peek: var(--shadow-dark-dock-peek);
+    --color-success-soft-bg: var(--color-dark-success-soft-bg);
+    --color-success-soft-border: var(--color-dark-success-soft-border);
+    --color-success-soft-text: var(--color-dark-success-soft-text);
+    --color-danger-soft-bg: var(--color-dark-danger-soft-bg);
+    --color-danger-soft-border: var(--color-dark-danger-soft-border);
+    --color-danger-soft-text: var(--color-dark-danger-soft-text);
+    --shadow-surface: var(--shadow-dark-surface);
+    --shadow-overlay: var(--shadow-dark-overlay);
+    --shadow-drag: var(--shadow-dark-drag);
+    --color-settings-panel-bg: var(--color-dark-settings-panel-bg);
+    --color-settings-selected-solid: var(--color-dark-settings-selected-solid);
   }
 }
 
@@ -255,3 +317,58 @@
 
 /* shadcn/ui 暗色变体：跟随项目 data-theme 属性而非 .dark 类 */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+
+/* 透明度滑杆（通用类，设置页与灵动岛共用）。
+   appearance-none 后 WebView2 不绘制原生滑块，必须显式补齐 thumb 样式；
+   视觉对齐旧 settings.css 的 .opacity-range。 */
+.opacity-slider {
+  appearance: none;
+  outline: none;
+}
+
+.opacity-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-primary-soft-bg), var(--color-primary));
+}
+
+.opacity-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  /* (轨道高 6px - 滑块 14px) / 2，垂直居中 */
+  margin-top: -4px;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary-soft-border);
+  background: var(--color-surface-hover);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.opacity-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.opacity-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 0;
+  background: linear-gradient(90deg, var(--color-primary-soft-bg), var(--color-primary));
+}
+
+.opacity-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary-soft-border);
+  background: var(--color-surface-hover);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.opacity-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}

@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { useI18n } from "../../i18n";
-import { windowLabels } from "../../i18n/messages";
+import { getWindowLabel } from "../../i18n/windowLabels";
 import type { ApiKeyUsageSummary, UsageSummary } from "../../types/provider";
 import type { WidgetDisplayMode } from "../../types/settings";
 import { calcUsagePercent, formatCurrency } from "../../utils/formatters";
@@ -47,15 +47,6 @@ export default function ProviderCard({
   const useSubscriptionColorMarkers = useCompactColorMarkers && compactVisibleSubscriptions.length > 1;
   const useApiColorMarkers = useCompactColorMarkers && compactApiItems.length > 1;
   const isCompact = displayMode === "compact";
-
-  /** 订阅窗口标签 i18n：先查映射表，找不到时原样返回 */
-  function getWindowLabel(label: string): string {
-    const messages = windowLabels[label];
-    if (messages && messages[language]) {
-      return messages[language] as string;
-    }
-    return label;
-  }
 
   function usagePercent(item: ApiKeyUsageSummary) {
     if (!item.usage) {
@@ -158,8 +149,8 @@ export default function ProviderCard({
                     )}
                     {subscription.usage.windows.map((window, index) => (
                       <div key={`${subscription.subscriptionId}-${window.label}-${index}`} className={COMPACT_METRIC_ROW_CLASS}>
-                        <span className="max-w-[72px] truncate text-[10px] font-semibold text-foreground-secondary" title={getWindowLabel(window.label)}>
-                          {formatCompactSubscriptionWindowLabel(getWindowLabel(window.label), t("widget.providerCard.subscriptionShort"))}
+                        <span className="max-w-[72px] truncate text-[10px] font-semibold text-foreground-secondary" title={getWindowLabel(window.label, language)}>
+                          {formatCompactSubscriptionWindowLabel(getWindowLabel(window.label, language), t("widget.providerCard.subscriptionShort"))}
                         </span>
                         <div className="min-w-0 [&_.progress-container]:gap-1.5 [&_.progress-label]:min-w-7 [&_.progress-label]:text-[10px]">
                           <UsageProgressBar percent={window.utilization} />

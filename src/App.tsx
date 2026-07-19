@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import EdgeDockHandle from "./components/common/EdgeDockHandle";
 import TitleBar from "./components/common/TitleBar";
 import WidgetContainer from "./components/widget/WidgetContainer";
 import SettingsPanel from "./components/settings/SettingsPanel";
 import { useWindowControls } from "./composables/useWindowControls";
 import { useProviderStore } from "./stores/providerStore";
-import { useSettingsStore } from "./stores/settingsStore";
+import {
+  SETTINGS_CHANGED_EVENT,
+  useSettingsStore,
+  type SettingsChangedPayload,
+} from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { applyTheme, observeSystemTheme } from "./utils/theme";
 import {
@@ -652,6 +657,32 @@ export default function App() {
     };
   }, [applyOpacity, loadSettings]);
 
+  // 跨窗口设置同步：收到其他窗口（如灵动岛）保存的设置后更新本地 store，
+  // 忽略自己发出的事件避免回环；theme/opacity/alwaysOnTop 由下方既有 effect 响应
+  useEffect(() => {
+    let active = true;
+    let unlistenSettingsChanged: UnlistenFn | null = null;
+    const windowLabel = getCurrentWindow().label;
+
+    void listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
+      if (event.payload.source === windowLabel) {
+        return;
+      }
+      useSettingsStore.getState().applySyncedSettings(event.payload.settings);
+    }).then((fn) => {
+      if (active) {
+        unlistenSettingsChanged = fn;
+      } else {
+        fn();
+      }
+    });
+
+    return () => {
+      active = false;
+      unlistenSettingsChanged?.();
+    };
+  }, []);
+
   useEffect(() => {
     applyTheme(settings.theme);
   }, [settings.theme]);
@@ -666,8 +697,41 @@ export default function App() {
     void applyOpacity(settings.windowOpacity);
   }, [applyOpacity, settings.windowOpacity]);
 
-  // 应用内更新检查
+  // 应用内更新检查：必须等设置加载完成后再评估，
+  // 否则读到的是默认值（updateCheckOnLaunch=true），用户关掉启动检查也会被触发
+  const settingsLoaded = useSettingsStore((state) => state.loaded);
+
+  // 灵动岛显隐：跟随 islandVisible 设置（启动恢复 + 设置页/托盘切换同步）。
+  // 岛窗口由 tauri.conf.json 常驻创建；getByLabel 在窗口未就绪时可能失败，静默忽略即可，
+  // 后端 lib.rs 启动恢复与托盘切换路径也会直接操作岛窗口显隐作为兜底。
   useEffect(() => {
+    if (!settingsLoaded) {
+      return;
+    }
+
+    const visible = settings.islandVisible;
+    void (async () => {
+      try {
+        const island = await WebviewWindow.getByLabel("island");
+        if (!island) {
+          return;
+        }
+        if (visible) {
+          await island.show();
+        } else {
+          await island.hide();
+        }
+      } catch {
+        // 灵动岛窗口尚未创建或已销毁时忽略，不阻塞主界面
+      }
+    })();
+  }, [settingsLoaded, settings.islandVisible]);
+
+  useEffect(() => {
+    if (!settingsLoaded) {
+      return;
+    }
+
     const { loadCurrentVersion, checkUpdate, lastCheckAt } = useUpdateStore.getState();
     void loadCurrentVersion();
 
@@ -678,7 +742,7 @@ export default function App() {
         void checkUpdate();
       }
     }
-  }, []);
+  }, [settingsLoaded]);
 
   useEffect(() => {
     if (!settings.updateAutoCheckEnabled) return;

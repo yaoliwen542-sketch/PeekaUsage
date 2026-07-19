@@ -42,9 +42,16 @@ pub fn run() {
             app.manage(provider_manager);
             app.manage(usage_stats_store);
 
-            // 初始化系统托盘
+            // 初始化系统托盘（菜单文案与灵动岛勾选态按初始设置生成）
             let handle = app.handle().clone();
-            tray::setup_tray(&handle)?;
+            tray::setup_tray(&handle, &initial_settings)?;
+
+            // 启动时按配置恢复灵动岛显隐（默认显示；用户关闭后重启保持隐藏，避免先闪一下再隐藏）
+            if !initial_settings.island_visible {
+                if let Some(island) = app.get_webview_window("island") {
+                    let _ = island.hide();
+                }
+            }
 
             // 窗口关闭事件：隐藏到托盘而非退出
             let window = app.get_webview_window("main").unwrap();

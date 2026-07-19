@@ -133,6 +133,10 @@ export const messages = {
         label: "精简模式用颜色条区分多项",
         hint: "开启后，精简模式中的多订阅和多 API Key 会改用颜色条区分，不再依赖名称文字。",
       },
+      islandVisible: {
+        label: "显示灵动岛",
+        hint: "关闭后隐藏屏幕上的灵动岛浮窗，可随时重新开启；也可以通过托盘菜单快速切换。",
+      },
       providersSection: {
         empty: "还没有添加供应商，点击右上角的 + 开始配置。",
       },
@@ -387,6 +391,25 @@ export const messages = {
     providerIcon: {
       alt: "{providerName} 图标",
     },
+    island: {
+      title: "用量监控",
+      refresh: "刷新",
+      quickSettings: "快捷设置",
+      collapse: "收起",
+      loading: "加载中...",
+      opacity: "透明度",
+      refreshInterval: "刷新",
+      manualOnly: "仅手动",
+      unitMinutes: "分",
+      unitSeconds: "秒",
+      theme: "主题",
+      themeLight: "浅色",
+      themeDark: "深色",
+      themeSystem: "系统",
+      usageUsed: "已用 {used} {currency}",
+      usageTotal: "总额 {total} {currency}",
+      noData: "无数据",
+    },
   },
   "zh-Hant": {
     common: {
@@ -486,6 +509,10 @@ export const messages = {
       compactColorMarkers: {
         label: "精簡模式用顏色條區分多項",
         hint: "開啟後，精簡模式中的多訂閱和多 API Key 會改用顏色條區分，不再依賴名稱文字。",
+      },
+      islandVisible: {
+        label: "顯示靈動島",
+        hint: "關閉後隱藏螢幕上的靈動島浮窗，可隨時重新開啟；也可以透過系統匣選單快速切換。",
       },
       providersSection: {
         empty: "還沒有新增供應商，點擊右上角的 + 開始配置。",
@@ -741,6 +768,25 @@ export const messages = {
     providerIcon: {
       alt: "{providerName} 圖示",
     },
+    island: {
+      title: "用量監控",
+      refresh: "刷新",
+      quickSettings: "快捷設置",
+      collapse: "收起",
+      loading: "載入中...",
+      opacity: "透明度",
+      refreshInterval: "刷新",
+      manualOnly: "僅手動",
+      unitMinutes: "分",
+      unitSeconds: "秒",
+      theme: "主題",
+      themeLight: "淺色",
+      themeDark: "深色",
+      themeSystem: "系統",
+      usageUsed: "已用 {used} {currency}",
+      usageTotal: "總額 {total} {currency}",
+      noData: "無資料",
+    },
   },
   en: {
     common: {
@@ -840,6 +886,10 @@ export const messages = {
       compactColorMarkers: {
         label: "Use color markers in compact mode",
         hint: "When enabled, multiple subscriptions and API keys in compact mode use color bars instead of name labels.",
+      },
+      islandVisible: {
+        label: "Show Island",
+        hint: "Turn off to hide the Island floating widget on your screen. You can turn it back on anytime, including from the tray menu.",
       },
       providersSection: {
         empty: "No provider added yet. Click + in the top-right corner to start.",
@@ -1094,6 +1144,25 @@ export const messages = {
     },
     providerIcon: {
       alt: "{providerName} icon",
+    },
+    island: {
+      title: "Usage",
+      refresh: "Refresh",
+      quickSettings: "Quick settings",
+      collapse: "Collapse",
+      loading: "Loading...",
+      opacity: "Opacity",
+      refreshInterval: "Refresh",
+      manualOnly: "Manual only",
+      unitMinutes: "min",
+      unitSeconds: "sec",
+      theme: "Theme",
+      themeLight: "Light",
+      themeDark: "Dark",
+      themeSystem: "System",
+      usageUsed: "Used {used} {currency}",
+      usageTotal: "Total {total} {currency}",
+      noData: "No data",
     },
   },
 } as const;
