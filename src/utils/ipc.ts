@@ -113,12 +113,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke("save_settings", { settings });
 }
 
-/** 设置窗口透明度 */
-export async function setWindowOpacity(opacity: number): Promise<void> {
-  return invoke("set_window_opacity", { opacity });
-}
-
-/** 璁剧疆鏄惁闅愯棌 Windows 浠诲姟鏍忓浘鏍? */
+/** 设置是否隐藏 Windows 任务栏图标 */
 export async function setWindowSkipTaskbar(skip: boolean): Promise<void> {
   return invoke("set_window_skip_taskbar", { skip });
 }

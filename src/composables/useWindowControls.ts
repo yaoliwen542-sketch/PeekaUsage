@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { setWindowOpacity } from "../utils/ipc";
 import { useSettingsStore } from "../stores/settingsStore";
 
 type WindowControlsState = {
@@ -25,12 +24,13 @@ async function applyOpacity(value: number) {
   const clamped = clampOpacity(value);
   useWindowControlsStore.getState().setOpacityState(clamped);
 
+  // 透明度纯前端实现：直接改 #app 的 CSS opacity，
+  // 不再调用后端 set_window_opacity（该命令是空实现，拖滑杆时每帧白发 IPC）
   const appEl = document.getElementById("app");
   if (appEl) {
     appEl.style.opacity = `${clamped / 100}`;
   }
 
-  await setWindowOpacity(clamped / 100);
   return clamped;
 }
 
@@ -64,6 +64,7 @@ export function useWindowControls() {
     useWindowControlsStore.getState().setDraggingOpacity(true);
     const startOpacity = useWindowControlsStore.getState().opacity;
     let lastOpacity = startOpacity;
+    let finished = false;
 
     function onMouseMove(event: MouseEvent) {
       const deltaY = startY - event.clientY;
@@ -72,15 +73,31 @@ export function useWindowControls() {
       void updateOpacity(lastOpacity, false);
     }
 
-    function onMouseUp() {
+    // 拖拽有多个结束路径：窗口内松手（document mouseup）、指针松手/被取消
+    // （pointerup / pointercancel）、光标移出窗口后松手导致窗口失焦（blur）。
+    // 只监听 document mouseup 时，移出窗口松开会漏掉结束事件，
+    // 导致 isDraggingOpacity 卡死且最终值不持久化；这里统一收口，
+    // 任何结束路径都复位拖拽态并持久化最终值。
+    function finishDrag() {
+      if (finished) {
+        return;
+      }
+      finished = true;
+
       useWindowControlsStore.getState().setDraggingOpacity(false);
       document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("mouseup", finishDrag);
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
+      window.removeEventListener("blur", finishDrag);
       void updateOpacity(lastOpacity, true);
     }
 
     document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("mouseup", finishDrag);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", finishDrag);
+    window.addEventListener("blur", finishDrag);
   }
 
   return {

@@ -31,14 +31,24 @@ export function formatNumber(n: number): string {
   return n.toString();
 }
 
-/** 格式化时间（相对时间） */
-export function formatRelativeTime(isoString: string): string {
+/** i18n 翻译函数签名（与 i18n/index.tsx 的 t 一致），用于文案跟随语言切换 */
+type TranslateFn = (
+  key: string,
+  params?: Record<string, string | number | null | undefined>,
+) => string;
+
+/**
+ * 格式化时间（相对时间）。
+ * 文案走 i18n 的 common.time.* keys，调用方传入 useI18n() 的 t，
+ * 不再硬编码中文。
+ */
+export function formatRelativeTime(isoString: string, t: TranslateFn): string {
   const diff = Date.now() - new Date(isoString).getTime();
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "刚刚";
+  if (seconds < 60) return t("common.time.justNow");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}分钟前`;
+  if (minutes < 60) return t("common.time.minutesAgo", { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}小时前`;
-  return `${Math.floor(hours / 24)}天前`;
+  if (hours < 24) return t("common.time.hoursAgo", { count: hours });
+  return t("common.time.daysAgo", { count: Math.floor(hours / 24) });
 }

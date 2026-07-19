@@ -22,6 +22,11 @@ type ProviderStoreState = {
   isProviderRefreshing: (providerId: ProviderId) => boolean;
 };
 
+// 全局刷新序号：每次发起 refreshAll 递增。
+// 单卡刷新发起时记录当时序号，返回时若序号已推进，说明期间发生过全局刷新，
+// 单卡结果属于过期数据，直接丢弃，避免慢请求用旧数据覆盖新数据。
+let globalFetchSeq = 0;
+
 export const useProviderStore = create<ProviderStoreState>((set, get) => ({
   providers: [],
   isRefreshing: false,
@@ -33,6 +38,7 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
       return;
     }
 
+    globalFetchSeq += 1;
     set({
       isRefreshing: true,
       lastError: null,
@@ -59,6 +65,9 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
       return;
     }
 
+    // 记录发起时的全局刷新序号，返回时用于判定结果是否已过期
+    const seqAtStart = globalFetchSeq;
+
     set({
       refreshingProviders: {
         ...state.refreshingProviders,
@@ -68,14 +77,22 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
 
     try {
       const updated = await fetchProviderUsage(providerId);
+
+      if (seqAtStart !== globalFetchSeq) {
+        // 请求在途期间发生过全局刷新，单卡结果已过期，丢弃
+        return;
+      }
+
       const nextProviders = [...get().providers];
       const index = nextProviders.findIndex((provider) => provider.providerId === providerId);
 
-      if (index >= 0) {
-        nextProviders[index] = updated;
-      } else {
-        nextProviders.push(updated);
+      if (index < 0) {
+        // 请求在途期间该供应商已被禁用/移除，丢弃结果，
+        // 不能再 push 回列表形成幽灵卡片
+        return;
       }
+
+      nextProviders[index] = updated;
 
       set({
         providers: nextProviders,

@@ -14,6 +14,8 @@ export const windowLabels: Record<string, Partial<Record<AppLanguage, string>>> 
   seven_day: { "zh-Hans": "7 天", "zh-Hant": "7 天", en: "7d" },
   seven_day_sonnet: { "zh-Hans": "7 天 Sonnet", "zh-Hant": "7 天 Sonnet", en: "7d Sonnet" },
   seven_day_opus: { "zh-Hans": "7 天 Opus", "zh-Hant": "7 天 Opus", en: "7d Opus" },
+  primary: { "zh-Hans": "主窗口", "zh-Hant": "主視窗", en: "Primary" },
+  secondary: { "zh-Hans": "次窗口", "zh-Hant": "次視窗", en: "Secondary" },
   weekly_limit: { "zh-Hans": "周限额", "zh-Hant": "週限額", en: "Weekly" },
   monthly: { "zh-Hans": "月度", "zh-Hant": "月度", en: "Monthly" },
 };
@@ -57,6 +59,12 @@ export const messages = {
       disabled: "已停用",
       secondsShort: "秒",
       minutesShort: "分",
+      time: {
+        justNow: "刚刚",
+        minutesAgo: "{count}分钟前",
+        hoursAgo: "{count}小时前",
+        daysAgo: "{count}天前",
+      },
     },
     titleBar: {
       minimize: "最小化",
@@ -438,6 +446,12 @@ export const messages = {
       disabled: "已停用",
       secondsShort: "秒",
       minutesShort: "分",
+      time: {
+        justNow: "剛剛",
+        minutesAgo: "{count}分鐘前",
+        hoursAgo: "{count}小時前",
+        daysAgo: "{count}天前",
+      },
     },
     titleBar: {
       minimize: "最小化",
@@ -819,6 +833,12 @@ export const messages = {
       disabled: "Disabled",
       secondsShort: "sec",
       minutesShort: "min",
+      time: {
+        justNow: "Just now",
+        minutesAgo: "{count}m ago",
+        hoursAgo: "{count}h ago",
+        daysAgo: "{count}d ago",
+      },
     },
     titleBar: {
       minimize: "Minimize",

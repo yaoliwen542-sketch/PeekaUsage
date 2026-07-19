@@ -135,7 +135,9 @@ export default function SubscriptionBadge({ subscription }: SubscriptionBadgePro
         </span>
       </div>
 
-      {usage.status === "success" && usage.windows.length > 0 && (
+      {/* extraUsage 渲染独立于 windows 数组：Anthropic 可能只返回 extra_usage
+          而没有任何订阅窗口，此时也要展示 Extra Usage 行 */}
+      {usage.status === "success" && (usage.windows.length > 0 || usage.extraUsage?.isEnabled) && (
         <div className="flex flex-col gap-1.5">
           {usage.windows.map((win, index) => renderWindowRow(
             `${subscription.subscriptionId}-${win.label}-${index}`,
@@ -146,10 +148,6 @@ export default function SubscriptionBadge({ subscription }: SubscriptionBadgePro
           ))}
           {usage.extraUsage && renderExtraUsage(usage.extraUsage)}
         </div>
-      )}
-
-      {usage.status === "success" && usage.windows.length === 0 && usage.extraUsage?.isEnabled && (
-        renderExtraUsage(usage.extraUsage)
       )}
 
       {usage.status === "error" && (

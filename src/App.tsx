@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { LogicalPosition, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import EdgeDockHandle from "./components/common/EdgeDockHandle";
 import TitleBar from "./components/common/TitleBar";
 import WidgetContainer from "./components/widget/WidgetContainer";
 import SettingsPanel from "./components/settings/SettingsPanel";
+import { useEdgeDock } from "./composables/useEdgeDock";
 import { useWindowControls } from "./composables/useWindowControls";
 import { useProviderStore } from "./stores/providerStore";
 import {
@@ -15,448 +16,29 @@ import {
 } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { applyTheme, observeSystemTheme } from "./utils/theme";
-import {
-  areWindowPositionsEqual,
-  areWindowSizesEqual,
-  isProgrammaticWindowMove,
-  isProgrammaticWindowResize,
-  markProgrammaticWindowMove,
-  markProgrammaticWindowResize,
-  normalizeWindowPosition,
-  normalizeWindowSize,
-  resolveWindowDockBounds,
-  suppressAutoFitAfterManualResize,
-  toLogicalWindowPosition,
-  toLogicalWindowSize,
-  wasLikelyResizedBySystemSnap,
-  type LogicalWindowPosition,
-  type LogicalWindowSize,
-  type WindowDockBounds,
-  type WindowDockEdge,
-} from "./utils/windowBounds";
-
-type WindowDockPhase = "collapsed" | "preview";
-
-type WindowDockState = {
-  edge: WindowDockEdge;
-  phase: WindowDockPhase;
-  expandedBounds: {
-    windowPosition: LogicalWindowPosition;
-    windowSize: LogicalWindowSize;
-  };
-  collapsedBounds: {
-    windowPosition: LogicalWindowPosition;
-    windowSize: LogicalWindowSize;
-  };
-};
 
 export default function App() {
   const [currentView, setCurrentView] = useState<"widget" | "settings">("widget");
-  const [dockVisualState, setDockVisualState] = useState<{
-    edge: WindowDockEdge;
-    phase: WindowDockPhase;
-  } | null>(null);
   const settings = useSettingsStore((state) => state.settings);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
   const { applyOpacity } = useWindowControls();
-  const restoringWindowBoundsRef = useRef(false);
-  const windowBoundsSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingWindowSizeRef = useRef<LogicalWindowSize | null>(null);
-  const pendingWindowPositionRef = useRef<LogicalWindowPosition | null>(null);
-  // 缓存 scaleFactor，避免拖拽时 onMoved/onResized 每帧都发起异步 IPC 调用导致卡顿
-  const scaleFactorRef = useRef<number | null>(null);
-  // 缓存最新窗口尺寸，供 onMoved 的边缘吸附检测使用，避免每次都 await innerSize()
-  const latestWindowSizeRef = useRef<LogicalWindowSize | null>(null);
-  const edgeDockCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const edgeDockEvaluateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const titlebarDragIntentUntilRef = useRef(0);
-  const titlebarDraggingRef = useRef(false);
-  const dragStartWindowSizeRef = useRef<LogicalWindowSize | null>(null);
-  const latestDragBoundsRef = useRef<{
-    windowPosition: LogicalWindowPosition;
-    windowSize: LogicalWindowSize;
-  } | null>(null);
-  const dockStateRef = useRef<WindowDockState | null>(null);
-
-  function clearWindowBoundsSaveTimer() {
-    if (windowBoundsSaveTimerRef.current) {
-      clearTimeout(windowBoundsSaveTimerRef.current);
-      windowBoundsSaveTimerRef.current = null;
-    }
-  }
-
-  function scheduleWindowBoundsSave(next: {
-    windowSize?: LogicalWindowSize | null;
-    windowPosition?: LogicalWindowPosition | null;
-  }) {
-    if (next.windowSize !== undefined) {
-      pendingWindowSizeRef.current = next.windowSize;
-    }
-
-    if (next.windowPosition !== undefined) {
-      pendingWindowPositionRef.current = next.windowPosition;
-    }
-
-    clearWindowBoundsSaveTimer();
-    windowBoundsSaveTimerRef.current = setTimeout(() => {
-      const size = pendingWindowSizeRef.current;
-      const position = pendingWindowPositionRef.current;
-      pendingWindowSizeRef.current = null;
-      pendingWindowPositionRef.current = null;
-      windowBoundsSaveTimerRef.current = null;
-
-      const currentSettings = useSettingsStore.getState().settings;
-      const patch: Partial<typeof currentSettings> = {};
-
-      if (size && !areWindowSizesEqual(currentSettings.windowSize, size)) {
-        patch.windowSize = size;
-      }
-
-      if (position && !areWindowPositionsEqual(currentSettings.windowPosition, position)) {
-        patch.windowPosition = position;
-      }
-
-      if (Object.keys(patch).length > 0) {
-        void useSettingsStore.getState().saveSettings(patch);
-      }
-    }, 180);
-  }
-
-  function clearEdgeDockCollapseTimer() {
-    if (edgeDockCollapseTimerRef.current) {
-      clearTimeout(edgeDockCollapseTimerRef.current);
-      edgeDockCollapseTimerRef.current = null;
-    }
-  }
-
-  function clearEdgeDockEvaluateTimer() {
-    if (edgeDockEvaluateTimerRef.current) {
-      clearTimeout(edgeDockEvaluateTimerRef.current);
-      edgeDockEvaluateTimerRef.current = null;
-    }
-  }
-
-  function updateDockState(nextState: WindowDockState | null) {
-    dockStateRef.current = nextState;
-    setDockVisualState(nextState
-      ? {
-        edge: nextState.edge,
-        phase: nextState.phase,
-      }
-      : null);
-  }
-
-  function persistDockExpandedBounds(dockState: WindowDockState) {
-    scheduleWindowBoundsSave({
-      windowSize: dockState.expandedBounds.windowSize,
-      windowPosition: dockState.expandedBounds.windowPosition,
-    });
-  }
-
-  async function setProgrammaticWindowBounds(
-    windowPosition: LogicalWindowPosition,
-    windowSize: LogicalWindowSize,
-  ) {
-    const currentWindow = getCurrentWindow();
-    markProgrammaticWindowMove();
-    markProgrammaticWindowResize();
-    await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
-    await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
-  }
-
-  async function collapseDockedWindow() {
-    if (!useSettingsStore.getState().settings.edgeDockCollapseEnabled) {
-      return;
-    }
-
-    const dockState = dockStateRef.current;
-    if (!dockState || dockState.phase === "collapsed") {
-      return;
-    }
-
-    const dockBounds = await resolveWindowDockBounds(
-      dockState.expandedBounds.windowPosition,
-      dockState.expandedBounds.windowSize,
-    );
-
-    if (!dockBounds || dockBounds.edge !== dockState.edge) {
-      updateDockState(null);
-      return;
-    }
-
-    const nextState: WindowDockState = {
-      edge: dockBounds.edge,
-      phase: "collapsed",
-      expandedBounds: {
-        windowPosition: dockBounds.expandedPosition,
-        windowSize: dockBounds.expandedSize,
-      },
-      collapsedBounds: {
-        windowPosition: dockBounds.collapsedPosition,
-        windowSize: dockBounds.collapsedSize,
-      },
-    };
-
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize);
-    updateDockState(nextState);
-    persistDockExpandedBounds(nextState);
-  }
-
-  async function expandDockedWindow() {
-    const dockState = dockStateRef.current;
-    if (!dockState || dockState.phase !== "collapsed") {
-      return;
-    }
-
-    await setProgrammaticWindowBounds(
-      dockState.expandedBounds.windowPosition,
-      dockState.expandedBounds.windowSize,
-    );
-
-    const nextState: WindowDockState = {
-      ...dockState,
-      phase: "preview",
-    };
-    updateDockState(nextState);
-    persistDockExpandedBounds(nextState);
-  }
-
-  async function activateWindowDock(dockBounds: WindowDockBounds) {
-    if (!useSettingsStore.getState().settings.edgeDockCollapseEnabled) {
-      return;
-    }
-
-    clearEdgeDockCollapseTimer();
-
-    const nextState: WindowDockState = {
-      edge: dockBounds.edge,
-      phase: "collapsed",
-      expandedBounds: {
-        windowPosition: dockBounds.expandedPosition,
-        windowSize: dockBounds.expandedSize,
-      },
-      collapsedBounds: {
-        windowPosition: dockBounds.collapsedPosition,
-        windowSize: dockBounds.collapsedSize,
-      },
-    };
-
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize);
-    updateDockState(nextState);
-    persistDockExpandedBounds(nextState);
-  }
-
-  function clearWindowDock(bounds?: {
-    windowPosition?: LogicalWindowPosition | null;
-    windowSize?: LogicalWindowSize | null;
-  }) {
-    clearEdgeDockCollapseTimer();
-    clearEdgeDockEvaluateTimer();
-    updateDockState(null);
-
-    if (bounds) {
-      scheduleWindowBoundsSave(bounds);
-    }
-  }
-
-  async function evaluateWindowDock(
-    windowPosition: LogicalWindowPosition,
-    windowSize: LogicalWindowSize,
-  ) {
-    if (!useSettingsStore.getState().settings.edgeDockCollapseEnabled) {
-      dragStartWindowSizeRef.current = null;
-      clearWindowDock({
-        windowPosition,
-        windowSize,
-      });
-      return;
-    }
-
-    if (wasLikelyResizedBySystemSnap(dragStartWindowSizeRef.current, windowSize)) {
-      dragStartWindowSizeRef.current = null;
-      clearWindowDock({
-        windowPosition,
-        windowSize,
-      });
-      return;
-    }
-
-    dragStartWindowSizeRef.current = null;
-    const dockBounds = await resolveWindowDockBounds(windowPosition, windowSize, {
-      requireExceeded: true,
-    });
-    if (dockBounds) {
-      await activateWindowDock(dockBounds);
-    } else {
-      clearWindowDock({
-        windowPosition,
-        windowSize,
-      });
-    }
-  }
-
-  function scheduleWindowDockEvaluation(
-    windowPosition: LogicalWindowPosition,
-    windowSize: LogicalWindowSize,
-  ) {
-    if (!titlebarDraggingRef.current || Date.now() >= titlebarDragIntentUntilRef.current) {
-      return;
-    }
-
-    latestDragBoundsRef.current = {
-      windowPosition,
-      windowSize,
-    };
-    clearEdgeDockEvaluateTimer();
-    edgeDockEvaluateTimerRef.current = setTimeout(() => {
-      edgeDockEvaluateTimerRef.current = null;
-      titlebarDraggingRef.current = false;
-      titlebarDragIntentUntilRef.current = 0;
-      const latestBounds = latestDragBoundsRef.current;
-      latestDragBoundsRef.current = null;
-
-      if (!latestBounds) {
-        return;
-      }
-
-      void (async () => {
-        await evaluateWindowDock(latestBounds.windowPosition, latestBounds.windowSize);
-      })();
-    }, 420);
-  }
-
-  function registerTitlebarDragIntent() {
-    titlebarDraggingRef.current = true;
-    titlebarDragIntentUntilRef.current = Date.now() + 5000;
-    latestDragBoundsRef.current = null;
-    dragStartWindowSizeRef.current = null;
-    clearEdgeDockCollapseTimer();
-
-    void (async () => {
-      try {
-        const currentWindow = getCurrentWindow();
-        const scaleFactor = await currentWindow.scaleFactor();
-        const size = await currentWindow.innerSize();
-        dragStartWindowSizeRef.current = toLogicalWindowSize(size, scaleFactor);
-      } catch {
-        dragStartWindowSizeRef.current = null;
-      }
-    })();
-  }
-
-  function finishTitlebarDragIntent() {
-    if (!titlebarDraggingRef.current) {
-      return;
-    }
-
-    titlebarDraggingRef.current = false;
-    titlebarDragIntentUntilRef.current = 0;
-    clearEdgeDockEvaluateTimer();
-
-    // 拖动结束：恢复 backdrop-filter（与 TitleBar 的 handleMouseUp 配合，
-    // 这里覆盖鼠标松手在窗口外的场景）
-    document.documentElement.style.setProperty("--backdrop-blur", "");
-
-    const latestBounds = latestDragBoundsRef.current;
-    latestDragBoundsRef.current = null;
-    if (!latestBounds) {
-      dragStartWindowSizeRef.current = null;
-      return;
-    }
-
-    void evaluateWindowDock(latestBounds.windowPosition, latestBounds.windowSize);
-  }
-
-  function handleAppMouseEnter() {
-    if (!settings.edgeDockCollapseEnabled) {
-      return;
-    }
-
-    clearEdgeDockCollapseTimer();
-
-    if (dockStateRef.current?.phase === "collapsed") {
-      void expandDockedWindow();
-    }
-  }
-
-  function handleAppMouseLeave() {
-    if (!settings.edgeDockCollapseEnabled) {
-      return;
-    }
-
-    const dockState = dockStateRef.current;
-    if (!dockState || dockState.phase !== "preview" || Date.now() < titlebarDragIntentUntilRef.current) {
-      return;
-    }
-
-    clearEdgeDockCollapseTimer();
-    edgeDockCollapseTimerRef.current = setTimeout(() => {
-      edgeDockCollapseTimerRef.current = null;
-      void collapseDockedWindow();
-    }, 180);
-  }
-
-  useEffect(() => {
-    if (settings.edgeDockCollapseEnabled) {
-      return;
-    }
-
-    clearEdgeDockCollapseTimer();
-    clearEdgeDockEvaluateTimer();
-    titlebarDraggingRef.current = false;
-    titlebarDragIntentUntilRef.current = 0;
-    latestDragBoundsRef.current = null;
-    dragStartWindowSizeRef.current = null;
-
-    const dockState = dockStateRef.current;
-    if (!dockState) {
-      return;
-    }
-
-    void (async () => {
-      if (dockState.phase === "collapsed") {
-        await setProgrammaticWindowBounds(
-          dockState.expandedBounds.windowPosition,
-          dockState.expandedBounds.windowSize,
-        );
-      }
-
-      updateDockState(null);
-      scheduleWindowBoundsSave({
-        windowPosition: dockState.expandedBounds.windowPosition,
-        windowSize: dockState.expandedBounds.windowSize,
-      });
-    })();
-  }, [settings.edgeDockCollapseEnabled]);
-
-  useEffect(() => {
-    const appElement = document.getElementById("app");
-    if (!appElement) {
-      return;
-    }
-
-    const isCollapsed = dockVisualState?.phase === "collapsed";
-    appElement.classList.toggle("app-edge-docked-collapsed", isCollapsed);
-
-    return () => {
-      appElement.classList.remove("app-edge-docked-collapsed");
-    };
-  }, [dockVisualState?.phase]);
+  // 窗口生命周期（启动恢复边界、移动/缩放监听与持久化、边缘吸附收起状态机）
+  // 已抽成 useEdgeDock composable，这里只消费视觉状态与拖拽/悬停入口
+  const {
+    dockVisualState,
+    initializeWindowLifecycle,
+    registerTitlebarDragIntent,
+    handleAppMouseEnter,
+    handleAppMouseLeave,
+  } = useEdgeDock();
 
   useEffect(() => {
     let active = true;
     let unlistenRefresh: UnlistenFn | null = null;
     let unlistenSettings: UnlistenFn | null = null;
-    let unlistenWindowResized: UnlistenFn | null = null;
-    let unlistenWindowMoved: UnlistenFn | null = null;
     let stopObservingSystemTheme: (() => void) | null = null;
+    let cleanupWindowLifecycle: (() => void) | null = null;
     const currentWindow = getCurrentWindow();
-
-    function handleGlobalMouseUp() {
-      finishTitlebarDragIntent();
-    }
-
-    window.addEventListener("mouseup", handleGlobalMouseUp);
 
     async function syncAlwaysOnTop(alwaysOnTop: boolean) {
       try {
@@ -466,52 +48,21 @@ export default function App() {
       }
     }
 
-    async function restoreWindowBounds() {
-      const currentSettings = useSettingsStore.getState().settings;
-      const windowSize = normalizeWindowSize(currentSettings.windowSize);
-      const windowPosition = normalizeWindowPosition(currentSettings.windowPosition);
-
-      if (!windowSize && !windowPosition) {
-        return;
-      }
-
-      restoringWindowBoundsRef.current = true;
-
-      try {
-        if (windowSize) {
-          markProgrammaticWindowResize();
-          await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
-        }
-
-        if (windowPosition) {
-          await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
-        }
-      } catch {
-        // 忽略无效的历史窗口边界，避免阻塞启动
-      } finally {
-        restoringWindowBoundsRef.current = false;
-      }
-    }
-
     void (async () => {
       await loadSettings();
       const currentSettings = useSettingsStore.getState().settings;
 
-      // 初始化 scaleFactor 缓存，后续拖拽时 onMoved/onResized 复用，避免高频 IPC 卡顿
-      try {
-        scaleFactorRef.current = await currentWindow.scaleFactor();
-      } catch {
-        scaleFactorRef.current = null;
-      }
-
       applyTheme(currentSettings.theme);
       await applyOpacity(currentSettings.windowOpacity);
       await syncAlwaysOnTop(currentSettings.alwaysOnTop);
-      await restoreWindowBounds();
+      // 恢复窗口边界并注册移动/缩放监听（useEdgeDock）
+      const cleanup = await initializeWindowLifecycle();
 
       if (!active) {
+        cleanup();
         return;
       }
+      cleanupWindowLifecycle = cleanup;
 
       unlistenRefresh = await listen("tray-refresh", () => {
         void useProviderStore.getState().refreshAll();
@@ -519,121 +70,6 @@ export default function App() {
 
       unlistenSettings = await listen("tray-open-settings", () => {
         setCurrentView("settings");
-      });
-
-      unlistenWindowResized = await currentWindow.onResized(async ({ payload }) => {
-        if (!active || restoringWindowBoundsRef.current) {
-          return;
-        }
-
-        const isManualResize = !isProgrammaticWindowResize();
-
-        if (isManualResize) {
-          suppressAutoFitAfterManualResize();
-        }
-
-        // 使用缓存的 scaleFactor，避免每帧 IPC 调用；缓存缺失时才回退到异步获取
-        let scaleFactor = scaleFactorRef.current;
-        if (scaleFactor === null) {
-          try {
-            scaleFactor = await currentWindow.scaleFactor();
-            scaleFactorRef.current = scaleFactor;
-          } catch {
-            return;
-          }
-        }
-        const nextSize = toLogicalWindowSize(payload, scaleFactor);
-        // 维护最新窗口尺寸缓存，供 onMoved 边缘吸附检测复用
-        latestWindowSizeRef.current = nextSize;
-        const dockState = dockStateRef.current;
-
-        if (dockState) {
-          if (dockState.phase === "preview" && isManualResize) {
-            clearWindowDock({
-              windowPosition: dockState.expandedBounds.windowPosition,
-              windowSize: nextSize,
-            });
-            return;
-          }
-
-          if (dockState.phase !== "collapsed") {
-            dockStateRef.current = {
-              ...dockState,
-              expandedBounds: {
-                ...dockState.expandedBounds,
-                windowSize: nextSize,
-              },
-            };
-          }
-
-          persistDockExpandedBounds(dockStateRef.current ?? dockState);
-          return;
-        }
-
-        scheduleWindowBoundsSave({
-          windowSize: nextSize,
-        });
-      });
-
-      unlistenWindowMoved = await currentWindow.onMoved(async ({ payload }) => {
-        if (!active || restoringWindowBoundsRef.current) {
-          return;
-        }
-
-        // 使用缓存的 scaleFactor，避免拖拽时每帧 IPC 调用导致卡顿
-        let scaleFactor = scaleFactorRef.current;
-        if (scaleFactor === null) {
-          try {
-            scaleFactor = await currentWindow.scaleFactor();
-            scaleFactorRef.current = scaleFactor;
-          } catch {
-            return;
-          }
-        }
-        const nextPosition = toLogicalWindowPosition(payload, scaleFactor);
-        if (!nextPosition) {
-          return;
-        }
-
-        const dockState = dockStateRef.current;
-        if (dockState) {
-          if (isProgrammaticWindowMove()) {
-            persistDockExpandedBounds(dockState);
-            return;
-          }
-
-          if (dockState.phase === "preview") {
-            // 用缓存的窗口尺寸，避免每次 onMoved 都 await innerSize()
-            const cachedSize = latestWindowSizeRef.current ?? dockState.expandedBounds.windowSize;
-            clearWindowDock({
-              windowPosition: nextPosition,
-              windowSize: cachedSize,
-            });
-          } else {
-          dockStateRef.current = dockState.phase === "collapsed"
-            ? dockState
-            : {
-              ...dockState,
-              expandedBounds: {
-                ...dockState.expandedBounds,
-                windowPosition: nextPosition,
-              },
-            };
-            persistDockExpandedBounds(dockStateRef.current ?? dockState);
-          }
-        } else {
-          scheduleWindowBoundsSave({
-            windowPosition: nextPosition,
-          });
-        }
-
-        if (!isProgrammaticWindowMove()) {
-          // 用缓存的窗口尺寸做边缘吸附检测，避免拖拽时高频 await innerSize()
-          const cachedSize = latestWindowSizeRef.current;
-          if (cachedSize) {
-            scheduleWindowDockEvaluation(nextPosition, cachedSize);
-          }
-        }
       });
 
       stopObservingSystemTheme = observeSystemTheme(() => {
@@ -647,15 +83,10 @@ export default function App() {
       active = false;
       unlistenRefresh?.();
       unlistenSettings?.();
-      unlistenWindowResized?.();
-      unlistenWindowMoved?.();
       stopObservingSystemTheme?.();
-      clearWindowBoundsSaveTimer();
-      clearEdgeDockCollapseTimer();
-      clearEdgeDockEvaluateTimer();
-      window.removeEventListener("mouseup", handleGlobalMouseUp);
+      cleanupWindowLifecycle?.();
     };
-  }, [applyOpacity, loadSettings]);
+  }, [applyOpacity, loadSettings, initializeWindowLifecycle]);
 
   // 跨窗口设置同步：收到其他窗口（如灵动岛）保存的设置后更新本地 store，
   // 忽略自己发出的事件避免回环；theme/opacity/alwaysOnTop 由下方既有 effect 响应

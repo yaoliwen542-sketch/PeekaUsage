@@ -34,6 +34,8 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
               notes: null,
               pubDate: null,
               errorMessage: null,
+              // 后端从未返回过下载进度（update_commands.rs 的进度回调是空闭包，
+              // 也不 emit 进度事件），该字段目前仅为满足 UpdateStatus 类型而置 null
               downloadProgress: null,
             },
       }));
