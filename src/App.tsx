@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  LogicalPosition,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import EdgeDockHandle from "./components/common/EdgeDockHandle";
 import TitleBar from "./components/common/TitleBar";
@@ -16,6 +21,12 @@ import {
 } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { applyTheme, observeSystemTheme } from "./utils/theme";
+import { markProgrammaticWindowResize } from "./utils/windowBounds";
+
+/** 设置页最小舒适尺寸：主浮窗常被内容自适应压到 300x200 左右，
+ * 直接渲染设置页会严重挤压换行，进入设置时临时扩大、返回时恢复 */
+const SETTINGS_MIN_WIDTH = 420;
+const SETTINGS_MIN_HEIGHT = 540;
 
 export default function App() {
   const [currentView, setCurrentView] = useState<"widget" | "settings">("widget");
@@ -31,6 +42,73 @@ export default function App() {
     handleAppMouseEnter,
     handleAppMouseLeave,
   } = useEdgeDock();
+
+  // 进入设置页前的浮窗尺寸：仅在发生过临时扩窗时有值，返回主界面时恢复
+  const preSettingsSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  /** 进入设置页：窗口小于设置页最小舒适尺寸时临时扩大（越界则平移校正）。
+   * 扩窗走 programmatic 标记，不会被误判成用户手动 resize；
+   * 边缘吸附收起/预览态不打扰（细条下扩窗会和吸附状态机打架） */
+  async function expandWindowForSettings() {
+    if (dockVisualState) {
+      return;
+    }
+    const win = getCurrentWindow();
+    try {
+      const scale = await win.scaleFactor();
+      const size = (await win.innerSize()).toLogical(scale);
+      if (size.width >= SETTINGS_MIN_WIDTH && size.height >= SETTINGS_MIN_HEIGHT) {
+        return;
+      }
+      const targetW = Math.max(Math.round(size.width), SETTINGS_MIN_WIDTH);
+      const targetH = Math.max(Math.round(size.height), SETTINGS_MIN_HEIGHT);
+      preSettingsSizeRef.current = {
+        width: Math.round(size.width),
+        height: Math.round(size.height),
+      };
+      markProgrammaticWindowResize();
+      await win.setSize(new LogicalSize(targetW, targetH));
+      // setSize 从左上角锚定扩展，浮窗贴屏幕右/下边缘时扩窗后会出屏，平移回工作区
+      const monitor = await currentMonitor();
+      if (monitor) {
+        const mScale = monitor.scaleFactor;
+        const pos = (await win.outerPosition()).toLogical(mScale);
+        const areaPos = monitor.workArea.position.toLogical(mScale);
+        const areaSize = monitor.workArea.size.toLogical(mScale);
+        const maxX = areaPos.x + areaSize.width - targetW;
+        const maxY = areaPos.y + areaSize.height - targetH;
+        const x = Math.min(Math.max(Math.round(pos.x), areaPos.x), Math.max(areaPos.x, maxX));
+        const y = Math.min(Math.max(Math.round(pos.y), areaPos.y), Math.max(areaPos.y, maxY));
+        if (x !== Math.round(pos.x) || y !== Math.round(pos.y)) {
+          markProgrammaticWindowResize();
+          await win.setPosition(new LogicalPosition(x, y));
+        }
+      }
+    } catch {
+      // 窗口 API 不可用时忽略，设置页仍按当前尺寸渲染
+    }
+  }
+
+  /** 返回主界面：恢复进入设置页前的浮窗尺寸（未扩过窗则不动）。
+   * 恢复触发的 onResized 会按既有防抖链路持久化，配置最终收敛回浮窗尺寸 */
+  async function restoreWindowFromSettings() {
+    const prev = preSettingsSizeRef.current;
+    preSettingsSizeRef.current = null;
+    if (!prev) {
+      return;
+    }
+    try {
+      markProgrammaticWindowResize();
+      await getCurrentWindow().setSize(new LogicalSize(prev.width, prev.height));
+    } catch {
+      // 忽略恢复失败，保持当前尺寸
+    }
+  }
+
+  function openSettings() {
+    setCurrentView("settings");
+    void expandWindowForSettings();
+  }
 
   useEffect(() => {
     let active = true;
@@ -69,7 +147,7 @@ export default function App() {
       });
 
       unlistenSettings = await listen("tray-open-settings", () => {
-        setCurrentView("settings");
+        openSettings();
       });
 
       stopObservingSystemTheme = observeSystemTheme(() => {
@@ -188,6 +266,7 @@ export default function App() {
 
   async function handleBackFromSettings() {
     setCurrentView("widget");
+    void restoreWindowFromSettings();
 
     if (useSettingsStore.getState().settings.refreshOnSettingsClose) {
       await useProviderStore.getState().refreshAll();
@@ -203,7 +282,7 @@ export default function App() {
       <TitleBar onDragIntentStart={registerTitlebarDragIntent} />
       {currentView === "widget" ? (
         <WidgetContainer
-          onOpenSettings={() => setCurrentView("settings")}
+          onOpenSettings={openSettings}
           onDragIntentStart={registerTitlebarDragIntent}
           suppressWindowAutoFit={dockVisualState?.phase === "collapsed"}
         />

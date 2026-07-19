@@ -574,7 +574,9 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
             <div className={`${SETTING_ROW_CLASS} flex-wrap gap-y-2`}>
               <span className={ROW_LABEL_CLASS}>{t("settings.polling.label")}</span>
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+              {/* 控件组内部绝不换行：空间不足时整组落到下一行右对齐，
+                  避免「自动/手动」「5」「秒/分」被拆散挤压成混乱多行 */}
+              <div className="ml-auto flex max-w-full flex-nowrap items-center justify-end gap-1.5">
                 <SegmentedControl
                   options={pollingModeOptions}
                   value={settings.pollingMode}
@@ -832,7 +834,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
                     <span className="truncate text-[13px] font-medium text-text">{config.displayName}</span>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex flex-nowrap items-center gap-1.5">
                     <SegmentedControl
                       options={pollingModeOptions}
                       value={providerPollingSettings.pollingMode}

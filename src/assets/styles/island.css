@@ -25,10 +25,11 @@ input {
   font: inherit;
 }
 
-/* 岛窗口透明，内容（胶囊 / 展开面板）整体居中 */
+/* 岛窗口透明，内容（胶囊 / 展开面板）贴窗口顶部：
+   展开时窗口从岛条位置向下生长，面板与岛条同锚点，视觉连续 */
 #app {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
 }
 

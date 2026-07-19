@@ -34,9 +34,14 @@ const ISLAND_POSITION_KEY = "peekausage.island.position";
 /** 窗口尺寸：与 tauri.conf.json 中 island 窗口的 200x40 保持一致 */
 const COLLAPSED_WIDTH = 200;
 const COLLAPSED_HEIGHT = 40;
-/** 展开态窗口尺寸：宽度略大于面板内容，高度覆盖快捷设置 + 供应商列表 */
+/** 展开态窗口宽度：略大于面板内容 */
 const EXPANDED_WIDTH = 300;
-const EXPANDED_HEIGHT = 400;
+/** 展开态初始高度：展开瞬间的过渡值，渲染后由 ResizeObserver 按内容校正 */
+const EXPANDED_INITIAL_HEIGHT = 400;
+/** 展开态高度上限：超出后面板内部列表滚动 */
+const EXPANDED_MAX_HEIGHT = 420;
+/** 展开态高度下限：空状态也有体面的最小面板 */
+const EXPANDED_MIN_HEIGHT = 120;
 
 /** 拖动判定阈值：mousedown 后移动超过该距离则视为拖动，松手后不触发展开 */
 const DRAG_CLICK_SUPPRESS_PX = 5;
@@ -218,6 +223,8 @@ export default function IslandWidget() {
   // 展开发生越界校正平移前的窗口位置：收起后恢复，
   // 避免「展开-收起」循环把岛条逐步推离用户拖放的位置
   const expandOriginRef = useRef<{ x: number; y: number } | null>(null);
+  // 展开面板根元素：ResizeObserver 监听内容高度，窗口高度跟随内容
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   // 启动：加载用户设置 + 恢复位置 + 注册各类监听
   useEffect(() => {
@@ -330,7 +337,7 @@ export default function IslandWidget() {
     const win = getCurrentWindow();
     try {
       if (nextExpanded) {
-        await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
+        await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_INITIAL_HEIGHT));
         // 展开后窗口若超出所在显示器工作区（例如岛条贴在屏幕右缘），
         // 平移回屏幕内——否则面板右缘（含收起按钮）会画到屏幕外
         const monitor = await currentMonitor();
@@ -340,7 +347,7 @@ export default function IslandWidget() {
           const areaPos = monitor.workArea.position.toLogical(scale);
           const areaSize = monitor.workArea.size.toLogical(scale);
           const maxX = areaPos.x + areaSize.width - EXPANDED_WIDTH;
-          const maxY = areaPos.y + areaSize.height - EXPANDED_HEIGHT;
+          const maxY = areaPos.y + areaSize.height - EXPANDED_MAX_HEIGHT;
           const x = clamp(Math.round(pos.x), areaPos.x, Math.max(areaPos.x, maxX));
           const y = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
           if (x !== Math.round(pos.x) || y !== Math.round(pos.y)) {
@@ -395,6 +402,67 @@ export default function IslandWidget() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [expanded]);
 
+  // 展开后面板高度跟随内容：供应商少时不留大片空白，
+  // 供应商多 / 打开快捷设置 / 展开详情时增高（超上限后面板内列表滚动）。
+  // 面板自身是 max-h-full + 内容自然撑开，这里只把窗口高度同步到面板实际高度
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+    const el = panelRef.current;
+    if (!el) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const syncWindowHeight = () => {
+      const panelH = clamp(
+        Math.ceil(el.getBoundingClientRect().height),
+        EXPANDED_MIN_HEIGHT,
+        EXPANDED_MAX_HEIGHT,
+      );
+      void (async () => {
+        const win = getCurrentWindow();
+        try {
+          const scale = await win.scaleFactor();
+          const size = (await win.innerSize()).toLogical(scale);
+          if (Math.round(size.height) === panelH && Math.round(size.width) === EXPANDED_WIDTH) {
+            return;
+          }
+          await win.setSize(new LogicalSize(EXPANDED_WIDTH, panelH));
+          // 高度增长后底部可能越出工作区（岛贴屏幕底边），夹取回屏幕内
+          const monitor = await currentMonitor();
+          if (monitor) {
+            const mScale = monitor.scaleFactor;
+            const pos = (await win.outerPosition()).toLogical(mScale);
+            const areaPos = monitor.workArea.position.toLogical(mScale);
+            const areaSize = monitor.workArea.size.toLogical(mScale);
+            const maxY = areaPos.y + areaSize.height - panelH;
+            const y = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
+            if (y !== Math.round(pos.y)) {
+              await win.setPosition(new LogicalPosition(Math.round(pos.x), y));
+            }
+          }
+        } catch {
+          // 窗口 API 不可用时忽略，面板按 max-h-full 内部滚动
+        }
+      })();
+    };
+    const observer = new ResizeObserver(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(syncWindowHeight, 60);
+    });
+    observer.observe(el);
+    syncWindowHeight();
+    return () => {
+      observer.disconnect();
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [expanded]);
+
   // 收起态岛条：mousedown 只记录起点，不立即 startDragging——
   // Windows 上 startDragging 会进入 OS 模态移动循环，可能吞掉 mouseup
   // 导致纯点击不合成 click（时序竞争，表现为"有时点不开"）。
@@ -443,7 +511,10 @@ export default function IslandWidget() {
   // 展开态
   if (expanded) {
     return (
-      <div className="island-panel flex h-full w-full flex-col overflow-hidden rounded-xl border border-white/6 bg-card shadow-xl backdrop-blur-md">
+      <div
+        ref={panelRef}
+        className="island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-white/6 bg-card shadow-xl backdrop-blur-md"
+      >
         {/* 顶部栏：标题 + 刷新 + 设置 + 收起（展开面板区域不挂拖动） */}
         <div className="flex h-10 shrink-0 items-center justify-between px-3">
           <span className="text-[13px] font-semibold text-foreground">{t("island.title")}</span>
@@ -502,10 +573,11 @@ export default function IslandWidget() {
           </div>
         </div>
 
-        {/* 供应商列表：紧凑版主界面卡片（图标 + 名称 + 状态色数字 + 4px 进度条） */}
-        <div className="island-scroll min-h-0 flex-1 divide-y divide-white/5 overflow-y-auto">
+        {/* 供应商列表：紧凑版主界面卡片（图标 + 名称 + 状态色数字 + 4px 进度条）。
+            不用 flex-1 撑满——高度由内容决定，窗口随面板高度收缩；超上限时这里滚动 */}
+        <div className="island-scroll min-h-0 divide-y divide-white/5 overflow-y-auto">
           {enabledSummaries.length === 0 && (
-            <div className="flex h-full items-center justify-center text-[11px] text-text-tertiary">
+            <div className="flex items-center justify-center py-8 text-[11px] text-text-tertiary">
               {t("island.noData")}
             </div>
           )}
