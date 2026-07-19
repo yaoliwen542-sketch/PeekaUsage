@@ -1017,6 +1017,7 @@ cargo check
 当前要求：
 
 - 灵动岛是第二个 Tauri 窗口（label `island`，200×40、alwaysOnTop、skipTaskbar）；权限走独立的 `capabilities/island.json`，**island 窗口调用任何新 Tauri API 前必须确认该 capability 已覆盖**，否则 ACL 静默拒绝
+- 两个窗口都已配置 `shadow: false`：**transparent + 无边框窗口必须禁用 DWM 阴影**，否则 Windows 会在窗口矩形边缘画一圈白色边框（岛条这类小窗口上尤其明显），新增窗口时保持该配置
 - 展开时 `setSize` 到 300×400，收起恢复 200×40；面板尺寸与窗口尺寸必须同步改，只改一边会被裁切
 - 拖动只走 `mousedown → getCurrentWindow().startDragging()`，禁止再混用 `data-tauri-drag-region` / `WebkitAppRegion` / 手写 mousemove（历史三套叠加 + 物理/逻辑像素混用已修掉）
 - 位置持久化在 localStorage（逻辑像素），恢复时基于 monitor workArea 做离屏校验，不足一半可见则回退工作区顶部居中
