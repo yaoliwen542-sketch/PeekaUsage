@@ -382,18 +382,19 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
 
 // ===== 火山方舟（Volcengine）=====
 //
-// 火山方舟用量查询走控制面 OpenAPI（非数据面 ark 域名），使用火山签名 V4（AK/SK）认证。
+// 火山方舟套餐用量查询走控制面 OpenAPI（非数据面 ark 域名），使用火山签名 V4（AK/SK）认证。
 // api_key 参数实际格式为 "AccessKeyId:SecretAccessKey"（用冒号分隔），在函数内部解析。
 //
-// 主链路：POST https://open.volcengineapi.com/?Action=GetAFPUsage&Version=2024-09-30
-//   - 返回绝对额度（已用/总额），转换成百分比型 UsageData
-//   - 若未订阅 AFP 或接口不可用，回退到 GetCodingPlanUsage
+// 唯一链路：POST https://open.volcengineapi.com/?Action=GetAFPUsage&Version=2024-01-01
+//   - 官方接口（Agent Plan / Coding Plan API 分组），返回 AFP 额度的
+//     5 小时 / 每日 / 每周 / 每月四个窗口（Quota + Used + ResetTime 毫秒时间戳）
+//   - 已用真实 AK/SK 端到端验证（2026-07）
 //
-// 回退链路：POST https://open.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-09-30
-//   - 返回百分比利用率，直接映射
-//
-// 注意：签名逻辑见 super::sigv4；本函数仅负责发请求 + 解析。
-// 签名算法待真实 AK/SK 端到端验证（当前实现遵循 cc-switch 的 V4 变体）。
+// 历史教训：
+// - API Version 必须是 2024-01-01；此前臆测的 2024-09-30 会被网关直接 404
+// - 臆造的 GetCodingPlanUsage Action 不存在（官方 Coding Plan 分组下只有
+//   ListArkCodingPlanModel / GetSeatInfoUsage / ListSeatInfoUsages），不要再加回退
+// - 请求体为 {}，多传 Region 等字段可能触发 InvalidParameter
 async fn fetch_volcengine(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
     // 解析 AK:SK
     let (ak, sk) = api_key.split_once(':').ok_or_else(|| {
@@ -405,28 +406,16 @@ async fn fetch_volcengine(client: &Client, api_key: &str) -> Result<UsageData, P
         ));
     }
 
-    // 主链路：GetAFPUsage
-    match fetch_volc_action(client, ak, sk, "GetAFPUsage").await {
-        Ok(usage) => Ok(usage),
-        Err(ProviderError::AuthError(e)) => Err(ProviderError::AuthError(e)),
-        Err(afp_err) => {
-            // AFP 失败（非鉴权类），回退到 GetCodingPlanUsage
-            match fetch_volc_action(client, ak, sk, "GetCodingPlanUsage").await {
-                Ok(usage) => Ok(usage),
-                Err(ProviderError::AuthError(e)) => Err(ProviderError::AuthError(e)),
-                Err(coding_err) => Err(ProviderError::RequestError(format!(
-                    "GetAFPUsage 失败({}) 且 GetCodingPlanUsage 失败({})",
-                    afp_err, coding_err
-                ))),
-            }
-        }
-    }
+    fetch_volc_action(client, ak, sk, "GetAFPUsage").await
 }
 
-/// 执行单个火山方舟 Action 查询
+/// 火山方舟控制面 API 版本（全部 Agent Plan / Coding Plan 接口统一）
+const VOLC_API_VERSION: &str = "2024-01-01";
+
+/// 执行火山方舟 Action 查询
 ///
 /// 通用流程：构造请求体 -> 签名 -> 发送 -> 状态码检查 -> 响应解析。
-/// 不同 Action 的响应字段不同，由 parse_*_response 处理。
+/// 响应字段由 parse_afp_response 处理。
 async fn fetch_volc_action(
     client: &Client,
     ak: &str,
@@ -434,16 +423,11 @@ async fn fetch_volc_action(
     action: &str,
 ) -> Result<UsageData, ProviderError> {
     let host = "open.volcengineapi.com";
-    let query = format!("Action={}&Version=2024-09-30", action);
-    let url = format!("https://{}?{}", host, query);
+    let query = format!("Action={}&Version={}", action, VOLC_API_VERSION);
+    let url = format!("https://{}/?{}", host, query);
 
-    // 请求体：火山方舟部分接口要求 Region 等参数。这里传最小 JSON。
-    // 即使是空对象 {} 也能签名（x-content-sha256 会反映 body 哈希）。
-    let body = serde_json::json!({
-        "Region": "cn-beijing",
-    });
-    let body_bytes = serde_json::to_vec(&body)
-        .map_err(|e| ProviderError::RequestError(format!("序列化请求体失败: {}", e)))?;
+    // 官方请求体为空对象
+    let body_bytes = b"{}".to_vec();
 
     // 签名
     let headers = super::sigv4::sign_volc_request(super::sigv4::VolcSignParams {
@@ -490,19 +474,10 @@ async fn fetch_volc_action(
     // 火山 OpenAPI 错误响应：{"ResponseMetadata": {"Error": {"Code": "...", "Message": "..."}}, "Result": null}
     // 或顶层 {"Code": "...", "Message": "..."}
     if let Some(err_msg) = extract_volc_error(&json) {
-        // 业务层错误：返回 RequestError（非鉴权类），让上层回退或汇总
         return Err(ProviderError::RequestError(err_msg));
     }
 
-    // 按 Action 分发解析
-    match action {
-        "GetAFPUsage" => parse_afp_response(&json),
-        "GetCodingPlanUsage" => parse_coding_plan_response(&json),
-        _ => Err(ProviderError::ParseError(format!(
-            "未实现的火山方舟 Action: {}",
-            action
-        ))),
-    }
+    parse_afp_response(&json)
 }
 
 /// 从火山 OpenAPI 响应中提取错误信息
@@ -540,74 +515,69 @@ fn extract_volc_error(json: &Value) -> Option<String> {
     None
 }
 
-/// 解析 GetAFPUsage 响应（绝对额度 -> 百分比型）
+/// 解析 GetAFPUsage 响应为分窗口 UsageData（纯函数，便于单测）
 ///
-/// 预期响应结构（火山方舟 GetAFPUsage）：
+/// 真实响应结构（官方文档 + 真实 AK/SK 验证，Version 2024-01-01）：
 /// ```json
 /// {
 ///   "Result": {
-///     "TotalAmount": 100.0,
-///     "UsedAmount": 30.0,
-///     "RemainingAmount": 70.0,
-///     "Currency": "CNY"
+///     "PlanType": "medium",
+///     "AFPFiveHour": { "Quota": 10000, "Used": 1.9221, "SubscribeTime": 1784526841000, "ResetTime": 1784544841000 },
+///     "AFPDaily":    { "Quota": 50000, "Used": 0,      "SubscribeTime": 1784476800000, "ResetTime": 1784563200000 },
+///     "AFPWeekly":   { "Quota": 35000, "Used": 4.1392, "SubscribeTime": 1784476800000, "ResetTime": 1785081600000 },
+///     "AFPMonthly":  { "Quota": 100000, "Used": 89968.2881, "SubscribeTime": 1782877567000, "ResetTime": 1785599999000 }
 ///   }
 /// }
 /// ```
-/// 映射：utilization = UsedAmount / TotalAmount * 100（TotalAmount 为 0 时返回 0%）。
-///
-/// 注意：实际字段名可能因火山接口版本不同而异。当前实现基于公开文档与 cc-switch 调研，
-/// 待真实 AK/SK 端到端验证。若字段缺失则回退到 GetCodingPlanUsage。
+/// 映射：四个窗口 -> five_hour / daily / weekly_limit / monthly，
+/// utilization = Used / Quota * 100；ResetTime 是 epoch 毫秒，转成 RFC3339。
+/// 窗口缺失或 Quota<=0 时跳过该窗口；四个窗口全无效才报错。
 fn parse_afp_response(json: &Value) -> Result<UsageData, ProviderError> {
     let result = json
         .get("Result")
         .ok_or_else(|| ProviderError::ParseError("GetAFPUsage 响应缺少 Result 字段".into()))?;
 
-    let total = result.get("TotalAmount").and_then(|v| v.as_f64());
-    let used = result.get("UsedAmount").and_then(|v| v.as_f64());
-
-    match (total, used) {
-        (Some(t), Some(u)) if t > 0.0 => {
-            let utilization = (u / t * 100.0).clamp(0.0, 100.0);
-            Ok(build_percent_usage(vec![utilization]))
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
+    for (field, label) in [
+        ("AFPFiveHour", window_labels::FIVE_HOUR),
+        ("AFPDaily", window_labels::DAILY),
+        ("AFPWeekly", window_labels::WEEKLY_LIMIT),
+        ("AFPMonthly", window_labels::MONTHLY),
+    ] {
+        if let Some(window) = parse_afp_window(result.get(field), label) {
+            windows.push(window);
         }
-        _ => Err(ProviderError::ParseError(
-            "GetAFPUsage 响应缺少 TotalAmount/UsedAmount 或 TotalAmount 为 0".into(),
-        )),
     }
+
+    if windows.is_empty() {
+        return Err(ProviderError::ParseError(
+            "GetAFPUsage 响应中未找到有效的 AFPFiveHour/AFPDaily/AFPWeekly/AFPMonthly 窗口".into(),
+        ));
+    }
+
+    Ok(build_percent_usage_with_windows(windows))
 }
 
-/// 解析 GetCodingPlanUsage 响应（百分比利用率）
-///
-/// 预期响应结构（火山方舟 GetCodingPlanUsage）：
-/// ```json
-/// {
-///   "Result": {
-///     "UsagePercent": 65.0,
-///     "ResetTime": "2026-07-20T00:00:00Z"
-///   }
-/// }
-/// ```
-/// 映射：utilization = UsagePercent（0-100）。
-///
-/// 注意：实际字段名待真实 AK/SK 端到端验证。
-fn parse_coding_plan_response(json: &Value) -> Result<UsageData, ProviderError> {
-    let result = json.get("Result").ok_or_else(|| {
-        ProviderError::ParseError("GetCodingPlanUsage 响应缺少 Result 字段".into())
-    })?;
-
-    // 优先用 UsagePercent
-    if let Some(percent) = result.get("UsagePercent").and_then(|v| v.as_f64()) {
-        return Ok(build_percent_usage(vec![percent.clamp(0.0, 100.0)]));
+/// 解析单个 AFP 窗口对象 {Quota, Used, SubscribeTime, ResetTime}
+/// Quota<=0 或字段缺失时返回 None
+fn parse_afp_window(value: Option<&Value>, label: &str) -> Option<SubscriptionWindow> {
+    let obj = value?;
+    let quota = json_number(obj.get("Quota"))?;
+    let used = json_number(obj.get("Used"))?;
+    if quota <= 0.0 {
+        return None;
     }
-
-    // 回退：尝试 Utilization 字段
-    if let Some(percent) = result.get("Utilization").and_then(|v| v.as_f64()) {
-        return Ok(build_percent_usage(vec![percent.clamp(0.0, 100.0)]));
-    }
-
-    Err(ProviderError::ParseError(
-        "GetCodingPlanUsage 响应缺少 UsagePercent/Utilization 字段".into(),
-    ))
+    let resets_at = obj
+        .get("ResetTime")
+        .and_then(|v| v.as_i64())
+        .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+        .filter(|dt| dt.timestamp_millis() > 0)
+        .map(|dt| dt.to_rfc3339());
+    Some(SubscriptionWindow {
+        label: label.to_string(),
+        utilization: (used / quota * 100.0).clamp(0.0, 100.0),
+        resets_at,
+    })
 }
 
 #[cfg(test)]
@@ -903,18 +873,45 @@ mod tests {
 
     #[test]
     fn test_volc_parse_afp_response() {
+        // 真实响应形态（2026-07 实测）：四个 AFP 窗口
         let json = serde_json::json!({
             "Result": {
-                "TotalAmount": 200.0,
-                "UsedAmount": 50.0,
-                "RemainingAmount": 150.0,
-                "Currency": "CNY"
+                "PlanType": "medium",
+                "AFPFiveHour": { "Quota": 10000, "Used": 1.9221, "SubscribeTime": 1784526841000i64, "ResetTime": 1784544841000i64 },
+                "AFPDaily":    { "Quota": 50000, "Used": 0,      "SubscribeTime": 1784476800000i64, "ResetTime": 1784563200000i64 },
+                "AFPWeekly":   { "Quota": 35000, "Used": 4.1392, "SubscribeTime": 1784476800000i64, "ResetTime": 1785081600000i64 },
+                "AFPMonthly":  { "Quota": 100000, "Used": 89968.2881, "SubscribeTime": 1782877567000i64, "ResetTime": 1785599999000i64 }
             }
         });
         let usage = parse_afp_response(&json).unwrap();
-        // 50 / 200 = 25%
-        assert!((usage.total_used - 25.0).abs() < 1e-6);
         assert_eq!(usage.currency, "%");
+        assert_eq!(usage.windows.len(), 4);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 1.9221 / 10000.0 * 100.0).abs() < 1e-6);
+        assert!(usage.windows[0].resets_at.is_some());
+        assert_eq!(usage.windows[1].label, "daily");
+        assert!((usage.windows[1].utilization - 0.0).abs() < 1e-6);
+        assert_eq!(usage.windows[2].label, "weekly_limit");
+        assert_eq!(usage.windows[3].label, "monthly");
+        assert!((usage.windows[3].utilization - 89968.2881 / 100000.0 * 100.0).abs() < 1e-4);
+        // total_used 取最高窗口（月度 89.97%）
+        assert!((usage.total_used - 89968.2881 / 100000.0 * 100.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_volc_parse_afp_response_skips_invalid_windows() {
+        // Quota=0 的窗口跳过；部分窗口缺失时其余正常展示
+        let json = serde_json::json!({
+            "Result": {
+                "PlanType": "medium",
+                "AFPFiveHour": { "Quota": 0, "Used": 0, "SubscribeTime": 0, "ResetTime": 0 },
+                "AFPMonthly":  { "Quota": 100000, "Used": 50000, "SubscribeTime": 1782877567000i64, "ResetTime": 1785599999000i64 }
+            }
+        });
+        let usage = parse_afp_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.windows[0].label, "monthly");
+        assert!((usage.windows[0].utilization - 50.0).abs() < 1e-6);
     }
 
     #[test]
@@ -924,19 +921,12 @@ mod tests {
     }
 
     #[test]
-    fn test_volc_parse_coding_plan_response() {
-        let json = serde_json::json!({
-            "Result": { "UsagePercent": 65.0, "ResetTime": "2026-07-20T00:00:00Z" }
-        });
-        let usage = parse_coding_plan_response(&json).unwrap();
-        assert!((usage.total_used - 65.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_volc_parse_coding_plan_response_fallback_field() {
-        // UsagePercent 缺失时回退到 Utilization
-        let json = serde_json::json!({ "Result": { "Utilization": 40.0 } });
-        let usage = parse_coding_plan_response(&json).unwrap();
-        assert!((usage.total_used - 40.0).abs() < 1e-6);
+    fn test_volc_parse_afp_window_reset_time_zero_is_none() {
+        // ResetTime 为 0（未激活窗口）时 resets_at 为 None，不产生 1970 时间
+        let json =
+            serde_json::json!({ "Quota": 100, "Used": 10, "SubscribeTime": 0, "ResetTime": 0 });
+        let window = parse_afp_window(Some(&json), "five_hour").unwrap();
+        assert!(window.resets_at.is_none());
+        assert!((window.utilization - 10.0).abs() < 1e-6);
     }
 }

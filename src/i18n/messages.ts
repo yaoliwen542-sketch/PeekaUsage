@@ -18,6 +18,7 @@ export const windowLabels: Record<string, Partial<Record<AppLanguage, string>>> 
   secondary: { "zh-Hans": "次窗口", "zh-Hant": "次視窗", en: "Secondary" },
   weekly_limit: { "zh-Hans": "周限额", "zh-Hant": "週限額", en: "Weekly" },
   monthly: { "zh-Hans": "月度", "zh-Hant": "月度", en: "Monthly" },
+  daily: { "zh-Hans": "每日", "zh-Hant": "每日", en: "Daily" },
 };
 
 /** 新供应商名称 i18n 映射（按供应商 ID -> 各语言文案） */

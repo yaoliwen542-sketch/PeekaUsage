@@ -1,24 +1,26 @@
 //! 火山方舟（Volcengine）请求签名 V4
 //!
 //! 火山方舟控制面 OpenAPI（`open.volcengineapi.com`）使用 AK/SK 签名认证，
-//! 属于火山签名 V4 变体（与 AWS SigV4 类似但不完全相同）。本模块实现该签名算法。
+//! 属于火山签名 V4（与 AWS SigV4 类似但不完全相同）。本模块实现该签名算法。
 //!
 //! 与 AWS SigV4 的差异：
-//! - algorithm 标识符为 `HMAC-SHA256`（AWS 是 `AWS-HMAC-SHA256`）
-//! - 派生签名密钥时 SecretKey 前缀为 `VOLC:`（AWS 是 `AWS4`）
+//! - algorithm 标识符为 `HMAC-SHA256`（AWS 是 `AWS4-HMAC-SHA256`）
+//! - 派生签名密钥时 SecretKey 直接使用，不加前缀（AWS 是 `AWS4` 前缀）
 //! - scope 结尾固定为 `request`（AWS 是 `aws4_request`）
-//! - 固定参与签名的 header 顺序：`content-type;host;x-content-sha256;x-date`
+//! - 固定参与签名的 header 顺序：`host;x-content-sha256;x-date`
 //!   （AWS 通常为 `host;x-amz-content-sha256;x-amz-date`）
 //!
 //! 算法步骤：
 //! 1. 计算请求体 SHA256 -> `x-content-sha256`
 //! 2. 构造 canonical request（method + URI + query + canonical headers + signed headers + payload hash）
 //! 3. 构造 string to sign（algorithm + x-date + scope + SHA256(canonical request)）
-//! 4. 派生签名密钥：HMAC(HMAC(HMAC(HMAC("VOLC:" + SK, date), region), service), "request")
+//! 4. 派生签名密钥：HMAC(HMAC(HMAC(HMAC(SK, date), region), service), "request")
 //! 5. 计算 signature = HEX(HMAC(signing_key, string_to_sign))
 //! 6. 组装 Authorization header
 //!
-//! 参考：cc-switch 项目火山方舟集成实现。
+//! 已经真实 AK/SK 端到端验证（2026-07）：官方算法可通过网关认证；
+//! 此前参照 cc-switch 的实现（content-type 参与签名、canonical request 末尾留空、
+//! VOLC: 前缀派生密钥）会被网关拒绝（SignatureDoesNotMatch），不要回退。
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -40,7 +42,7 @@ pub struct VolcSignParams<'a> {
     pub host: &'a str,
     /// HTTP 方法，如 "POST"
     pub method: &'a str,
-    /// canonical query string，如 "Action=GetAFPUsage&Version=2024-09-30"
+    /// canonical query string，如 "Action=GetAFPUsage&Version=2024-01-01"
     pub query: &'a str,
     /// 请求体字节
     pub body: &'a [u8],
@@ -66,19 +68,17 @@ pub fn sign_volc_request(params: VolcSignParams) -> Vec<(String, String)> {
 
     // 2. 构造 canonical request
     // canonical headers：每个 header 一行，格式 "key:value\n"
-    // 顺序必须与 signed_headers 一致：content-type;host;x-content-sha256;x-date
+    // 顺序必须与 signed_headers 一致：host;x-content-sha256;x-date
     let canonical_headers = format!(
-        "content-type:application/json\nhost:{}\nx-content-sha256:{}\nx-date:{}\n",
+        "host:{}\nx-content-sha256:{}\nx-date:{}\n",
         params.host, body_hash, x_date
     );
-    let signed_headers = "content-type;host;x-content-sha256;x-date";
+    let signed_headers = "host;x-content-sha256;x-date";
 
     // canonical request = method + canonical URI + canonical query + canonical headers + signed headers + payload hash
-    // 注意：火山签名中 payload hash 已包含在 canonical headers（x-content-sha256）中，
-    // 因此 canonical request 末尾的 payload hash 字段留空（与 cc-switch 实现一致）。
     let canonical_request = format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
-        params.method, "/", params.query, canonical_headers, signed_headers, ""
+        params.method, "/", params.query, canonical_headers, signed_headers, body_hash
     );
 
     // 3. 构造 string to sign
@@ -95,14 +95,11 @@ pub fn sign_volc_request(params: VolcSignParams) -> Vec<(String, String)> {
     );
 
     // 4. 派生签名密钥
-    // k_date = HMAC("VOLC:" + SK, short_date)
+    // k_date = HMAC(SK, short_date)（官方算法，无前缀）
     // k_region = HMAC(k_date, region)
     // k_service = HMAC(k_region, service)
     // k_signing = HMAC(k_service, "request")
-    let k_date = hmac_sha256(
-        format!("VOLC:{}", params.secret_access_key).as_bytes(),
-        short_date.as_bytes(),
-    );
+    let k_date = hmac_sha256(params.secret_access_key.as_bytes(), short_date.as_bytes());
     let k_region = hmac_sha256(&k_date, params.region.as_bytes());
     let k_service = hmac_sha256(&k_region, params.service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"request");
@@ -159,7 +156,7 @@ mod tests {
             service: "ark",
             host: "open.volcengineapi.com",
             method: "POST",
-            query: "Action=GetAFPUsage&Version=2024-09-30",
+            query: "Action=GetAFPUsage&Version=2024-01-01",
             body,
         };
 
@@ -209,7 +206,7 @@ mod tests {
             service: "ark",
             host: "open.volcengineapi.com",
             method: "POST",
-            query: "Action=GetAFPUsage&Version=2024-09-30",
+            query: "Action=GetAFPUsage&Version=2024-01-01",
             body: b"{}",
         };
 
@@ -235,7 +232,7 @@ mod tests {
             service: "ark",
             host: "open.volcengineapi.com",
             method: "POST",
-            query: "Action=GetAFPUsage&Version=2024-09-30",
+            query: "Action=GetAFPUsage&Version=2024-01-01",
             body,
         };
 
@@ -258,7 +255,7 @@ mod tests {
             service: "ark",
             host: "open.volcengineapi.com",
             method: "POST",
-            query: "Action=GetAFPUsage&Version=2024-09-30",
+            query: "Action=GetAFPUsage&Version=2024-01-01",
             body: b"{}",
         };
 
@@ -271,7 +268,7 @@ mod tests {
 
         assert!(auth.starts_with("HMAC-SHA256 Credential=AKTEST/"));
         assert!(auth.contains("/cn-beijing/ark/request"));
-        assert!(auth.contains("SignedHeaders=content-type;host;x-content-sha256;x-date"));
+        assert!(auth.contains("SignedHeaders=host;x-content-sha256;x-date"));
         assert!(auth.contains("Signature="));
     }
 
@@ -286,7 +283,7 @@ mod tests {
                 service: "ark",
                 host: "open.volcengineapi.com",
                 method: "POST",
-                query: "Action=GetAFPUsage&Version=2024-09-30",
+                query: "Action=GetAFPUsage&Version=2024-01-01",
                 body,
             })
         };

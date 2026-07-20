@@ -15,6 +15,8 @@ pub mod window_labels {
     pub const SEVEN_DAY_OPUS: &str = "seven_day_opus";
     pub const WEEKLY_LIMIT: &str = "weekly_limit";
     pub const MONTHLY: &str = "monthly";
+    /// 火山方舟 AFP 每日窗口
+    pub const DAILY: &str = "daily";
     /// OpenAI 主窗口（wham primary_window）在无法按时长归类时的兜底标签
     pub const PRIMARY: &str = "primary";
     /// OpenAI 次窗口（wham secondary_window）在无法按时长归类时的兜底标签

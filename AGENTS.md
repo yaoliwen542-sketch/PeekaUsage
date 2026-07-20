@@ -720,6 +720,16 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 百分比型（`currency == "%"`）多 Key 聚合绝不能求和：两个 Key 各 70% 不等于合计 140%。`aggregate_usage_data` 对百分比型取各 Key 最高利用率（预算恒 100），金额型保持求和；卡片 hero 大数字与灵动岛统一按"five_hour 窗口优先、否则第一个窗口"取值，多 Key 时聚合 windows 已按标签取最高利用率
 - 百分比型供应商卡片不显示"合计"行、不要用"按量 API"做标题（配额不是按量计费）
 
+### 火山方舟查询异常
+
+检查：
+
+- API Version 必须是 `2024-01-01`（`VOLC_API_VERSION` 常量）；臆测的版本号会被网关直接 404
+- 签名必须是官方 V4 算法（`sigv4.rs`）：SignedHeaders 为 `host;x-content-sha256;x-date`（content-type 不参与签名）、canonical request 末尾带 payload hash、密钥派生无前缀。cc-switch 的 V4 变体（content-type 签名 / 末尾留空 / `VOLC:` 前缀）会被网关拒绝 `SignatureDoesNotMatch`，不要回退
+- 用量查询唯一链路是 `GetAFPUsage`（请求体 `{}`），返回 AFP 额度的 5 小时 / 每日 / 每周 / 每月四窗口（`AFPFiveHour` / `AFPDaily` / `AFPWeekly` / `AFPMonthly`，各含 Quota / Used / ResetTime 毫秒时间戳）；`GetCodingPlanUsage` 这个 Action 不存在，不要再加回退
+- 窗口 ResetTime 为 0 表示窗口未激活，`parse_afp_window` 必须输出 `resets_at: None` 而不是 1970 时间
+- 排查套餐信息可用 `GetPersonalPlan`（需传 `{"Plan": "AgentPlan"}` 或 `{"Plan": "CodingPlan"}`，两种套餐可并存）
+
 ### 新增供应商下拉异常
 
 检查：
