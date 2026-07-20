@@ -729,6 +729,8 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 用量查询唯一链路是 `GetAFPUsage`（请求体 `{}`），返回 AFP 额度的 5 小时 / 每日 / 每周 / 每月四窗口（`AFPFiveHour` / `AFPDaily` / `AFPWeekly` / `AFPMonthly`，各含 Quota / Used / ResetTime 毫秒时间戳）；`GetCodingPlanUsage` 这个 Action 不存在，不要再加回退
 - 窗口 ResetTime 为 0 表示窗口未激活，`parse_afp_window` 必须输出 `resets_at: None` 而不是 1970 时间
 - 排查套餐信息可用 `GetPersonalPlan`（需传 `{"Plan": "AgentPlan"}` 或 `{"Plan": "CodingPlan"}`，两种套餐可并存）
+- 卡片套餐标注来自 `GetAFPUsage` 响应的 `Result.PlanType`，经 `UsageData.plan_name` 透传到前端 hero 标题（如「5 小时 · Agent Plan · Medium」）；字段缺失时不标注
+- Coding Plan 个人版没有公开额度查询接口（全部候选 Action 已验证 404），不要暴力探测或臆造端点；等官方开放后再分开展示
 
 ### 新增供应商下拉异常
 
