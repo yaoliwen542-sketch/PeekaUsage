@@ -345,6 +345,19 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   // 当前"新增供应商"下拉的选中值（自定义流程中无内置选中）
   const providerSelectValue: string = pendingCustomConfig ? "__custom__" : (creatingProviderId ?? "");
 
+  // 创建模式卡片内「选择供应商」下拉的数据源。
+  // 修复：之前误传空数组，导致下拉没有任何选项（打不开、点不动），
+  // 且当前选中的供应商（如 kimi）无法回显、永远显示占位文案。
+  // 自定义草稿本身也要并入选项，否则自定义流程中选中项同样无法回显。
+  const createModeSelectableProviders = useMemo<ProviderConfigItem[]>(() => {
+    const templateDrafts = availableTemplates.map((template) => buildDraftFromTemplate(template));
+    if (pendingCustomConfig && draftProviderConfig) {
+      return [...templateDrafts, draftProviderConfig];
+    }
+    return templateDrafts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTemplates, pendingCustomConfig, draftProviderConfig, language]);
+
   function handleProviderSelectChange(value: string) {
     if (value === "__custom__") {
       // 打开自定义供应商向导
@@ -758,7 +771,15 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
             config={draftProviderConfig}
             expanded
             mode="create"
-            selectableProviders={[]}
+            selectableProviders={createModeSelectableProviders}
+            onProviderChange={(providerId) => {
+              // 选中当前草稿自身时不动作；切到其它模板则放弃自定义草稿
+              if (providerId === draftProviderConfig.providerId) {
+                return;
+              }
+              setPendingCustomConfig(null);
+              setCreatingProviderId(providerId);
+            }}
             onCanceled={() => {
               setCreatingProviderId(null);
               setPendingCustomConfig(null);

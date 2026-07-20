@@ -104,12 +104,12 @@ async fn fetch_json(req: reqwest::RequestBuilder) -> Result<Value, ProviderError
 // GET https://api.kimi.com/coding/v1/usages
 // Authorization: Bearer {key}
 //
-// 响应：
+// 响应（注意 limit / remaining 是字符串）：
 // {
 //   "limits": [
-//     { "detail": { "limit": 100, "remaining": 30, "resetTime": "2026-07-17T10:00:00Z" } }
+//     { "detail": { "limit": "100", "remaining": "30", "resetTime": "2026-07-17T10:00:00Z" } }
 //   ],
-//   "usage": { "limit": 1000, "remaining": 800, "resetTime": "2026-07-20T00:00:00Z" }
+//   "usage": { "limit": "1000", "remaining": "800", "resetTime": "2026-07-20T00:00:00Z" }
 // }
 //
 // 映射：
@@ -156,14 +156,23 @@ async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, Provide
 ///
 /// utilization = (limit - remaining) / limit * 100
 /// 若 limit 为 0 或字段缺失，返回 None。
+/// 注意：Kimi usages 接口的 limit / remaining 是字符串（"100"）而非数字，
+/// 必须两种形态都兼容，否则永远解析不出有效利用率。
 fn utilization_from_limit_remaining(obj: &Value) -> Option<f64> {
-    let limit = obj.get("limit").and_then(|v| v.as_f64())?;
-    let remaining = obj.get("remaining").and_then(|v| v.as_f64())?;
+    let limit = json_number(obj.get("limit"))?;
+    let remaining = json_number(obj.get("remaining"))?;
     if limit <= 0.0 {
         return None;
     }
     let used = (limit - remaining).max(0.0);
     Some((used / limit * 100.0).clamp(0.0, 100.0))
+}
+
+/// 兼容数字与字符串两种 JSON 数值形态（如 100 与 "100"）
+fn json_number(value: Option<&Value>) -> Option<f64> {
+    value
+        .and_then(|v| v.as_f64())
+        .or_else(|| value?.as_str()?.trim().parse::<f64>().ok())
 }
 
 // ===== GLM（智谱，个人版）=====
@@ -550,6 +559,21 @@ mod tests {
 
         // missing fields -> None
         let v = serde_json::json!({ "limit": 100 });
+        assert!(utilization_from_limit_remaining(&v).is_none());
+    }
+
+    #[test]
+    fn test_utilization_from_limit_remaining_string_values() {
+        // Kimi usages 接口实际返回字符串形态（"100"），必须兼容
+        let v = serde_json::json!({ "limit": "100", "remaining": "30" });
+        assert!((utilization_from_limit_remaining(&v).unwrap() - 70.0).abs() < 1e-6);
+
+        // 数字与字符串混用
+        let v = serde_json::json!({ "limit": "1000", "remaining": 800 });
+        assert!((utilization_from_limit_remaining(&v).unwrap() - 20.0).abs() < 1e-6);
+
+        // 非法字符串 -> None
+        let v = serde_json::json!({ "limit": "abc", "remaining": "30" });
         assert!(utilization_from_limit_remaining(&v).is_none());
     }
 

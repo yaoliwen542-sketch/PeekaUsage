@@ -706,6 +706,19 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - Anthropic / OpenAI 跳转链接是否仍然是各自官方认证文档
 - `@tauri-apps/plugin-opener` 是否已在前端接入，且 `src-tauri/capabilities/default.json` 仍保留 `opener:default`
 
+### Kimi 用量解析异常
+
+检查：
+
+- Kimi usages 接口（`https://api.kimi.com/coding/v1/usages`）返回的 `limit` / `remaining` 是字符串（`"100"`）不是数字；`coding_plan.rs` 的 `utilization_from_limit_remaining` 必须通过 `json_number` 同时兼容两种形态
+- 用量查询链路始终使用应用内已保存的 Key 直接请求官方接口，不读系统环境变量；“切换环境”只是把 Key 写入系统环境变量供终端工具使用，不要给查询链路加环境变量依赖
+
+### 新增供应商下拉异常
+
+检查：
+
+- `SettingsPanel.tsx` 渲染创建模式 `ProviderConfig` 时，`selectableProviders` 是否传入了真实可选列表（含自定义草稿自身），不能回退成空数组——空数组会让 `AppSelect` 无选项打不开、选中项也无法回显
+
 ### 拖拽排序异常
 
 检查：
