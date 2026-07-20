@@ -122,6 +122,7 @@ impl UsageProvider for OpenRouterProvider {
                 currency: "USD".to_string(),
                 period_start: None,
                 period_end: None,
+                windows: Vec::new(),
             });
         }
 
@@ -155,6 +156,7 @@ impl UsageProvider for OpenRouterProvider {
             currency: "USD".to_string(),
             period_start: None,
             period_end: None,
+            windows: Vec::new(),
         })
     }
 

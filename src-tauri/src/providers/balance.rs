@@ -87,6 +87,7 @@ pub async fn execute_balance_query(
         currency: field_map.currency.clone(),
         period_start: None,
         period_end: None,
+        windows: Vec::new(),
     })
 }
 
@@ -192,6 +193,7 @@ pub async fn execute_deepseek_balance_query(
         currency,
         period_start: None,
         period_end: None,
+        windows: Vec::new(),
     })
 }
 

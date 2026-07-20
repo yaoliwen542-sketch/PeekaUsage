@@ -37,6 +37,8 @@ export interface UsageData {
   currency: string;
   periodStart: string | null;
   periodEnd: string | null;
+  /** 分窗口利用率（Coding Plan 类供应商的 5 小时 / 周限额等），空数组表示无 */
+  windows?: SubscriptionWindow[];
 }
 
 /** 订阅用量窗口 */

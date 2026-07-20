@@ -941,6 +941,24 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
         period_end = max_optional_iso(period_end, item.period_end.clone());
     }
 
+    // 分窗口利用率按标签合并：同名窗口取最高利用率，保持首次出现顺序
+    let mut windows: Vec<crate::providers::types::SubscriptionWindow> = Vec::new();
+    for item in items {
+        for window in &item.windows {
+            match windows.iter_mut().find(|w| w.label == window.label) {
+                Some(existing) => {
+                    if window.utilization > existing.utilization {
+                        existing.utilization = window.utilization;
+                    }
+                    if existing.resets_at.is_none() {
+                        existing.resets_at = window.resets_at.clone();
+                    }
+                }
+                None => windows.push(window.clone()),
+            }
+        }
+    }
+
     Some(UsageData {
         total_used,
         total_budget,
@@ -948,6 +966,7 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
         currency,
         period_start,
         period_end,
+        windows,
     })
 }
 

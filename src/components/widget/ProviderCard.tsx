@@ -179,6 +179,7 @@ export default function ProviderCard({
     const isPercent = usage?.currency === "%";
     const percent = usage ? keyUsagePercent(item) : null;
     const showBar = !!usage && (isPercent || usage.totalBudget != null);
+    const windows = usage?.windows ?? [];
     const mainValue = usage
       ? (isPercent ? `${Math.round(percent ?? 0)}%` : formatCurrency(usage.totalUsed, usage.currency))
       : null;
@@ -201,7 +202,23 @@ export default function ProviderCard({
           </div>
         )}
 
-        {showBar && (
+        {/* 有分窗口数据（如 Kimi 的 5 小时 / 周限额）时逐窗口渲染进度条，
+            否则回退到单条总进度条 */}
+        {windows.length > 0 ? (
+          <div className="flex flex-col gap-1 pl-3.5">
+            {windows.map((window, index) => (
+              <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex items-center gap-2">
+                <span
+                  className="w-[72px] shrink-0 truncate text-[11px] text-text-secondary"
+                  title={getWindowLabel(window.label, language)}
+                >
+                  {getWindowLabel(window.label, language)}
+                </span>
+                <UsageBar percent={window.utilization} size="sm" />
+              </div>
+            ))}
+          </div>
+        ) : showBar && (
           <div className="pl-3.5">
             <UsageBar percent={percent ?? 0} size="sm" />
           </div>
@@ -277,6 +294,39 @@ export default function ProviderCard({
     const valueText = isPercent
       ? null
       : formatCurrency(usage.remaining ?? usage.totalUsed, usage.currency);
+    const windows = usage.windows ?? [];
+
+    // 有分窗口数据时逐窗口渲染摘要行（如 Kimi 的 5 小时 / 周限额）
+    if (windows.length > 0) {
+      const windowRows = windows.map((window, index) => (
+        <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex items-center gap-2">
+          <span
+            className="w-[72px] shrink-0 truncate text-[10px] font-semibold text-text-secondary"
+            title={getWindowLabel(window.label, language)}
+          >
+            {getWindowLabel(window.label, language)}
+          </span>
+          <UsageBar percent={window.utilization} size="sm" labelClassName="w-7 text-[10px]" />
+        </div>
+      ));
+
+      if (useApiColorMarkers) {
+        return (
+          <div key={item.keyId} className="flex items-stretch gap-1.5">
+            <span
+              className="w-1 shrink-0 rounded-full bg-(--compact-marker-color)"
+              style={{ "--compact-marker-color": item.color } as CSSProperties}
+              aria-hidden="true"
+            />
+            <div className="flex min-w-0 flex-1 flex-col gap-1">{windowRows}</div>
+          </div>
+        );
+      }
+
+      return (
+        <div key={item.keyId} className="flex flex-col gap-1">{windowRows}</div>
+      );
+    }
 
     const label = (
       <span

@@ -196,6 +196,7 @@ impl UsageProvider for OpenAIProvider {
                                 currency: "USD".to_string(),
                                 period_start: None,
                                 period_end: None,
+                                windows: Vec::new(),
                             });
                         }
                     }
@@ -241,6 +242,7 @@ impl UsageProvider for OpenAIProvider {
             currency: "USD".to_string(),
             period_start: Some(start_of_month),
             period_end: Some(end_date),
+            windows: Vec::new(),
         })
     }
 

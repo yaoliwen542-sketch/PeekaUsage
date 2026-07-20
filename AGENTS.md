@@ -712,6 +712,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 
 - Kimi usages 接口（`https://api.kimi.com/coding/v1/usages`）返回的 `limit` / `remaining` 是字符串（`"100"`）不是数字；`coding_plan.rs` 的 `utilization_from_limit_remaining` 必须通过 `json_number` 同时兼容两种形态
 - 用量查询链路始终使用应用内已保存的 Key 直接请求官方接口，不读系统环境变量；“切换环境”只是把 Key 写入系统环境变量供终端工具使用，不要给查询链路加环境变量依赖
+- Coding Plan 类供应商（Kimi / GLM / MiniMax）的多窗口利用率放在 `UsageData.windows`（`five_hour` / `weekly_limit`），前端逐窗口渲染；不要把多窗口再压回单一 `total_used`（`total_used` 仅保留最高值用于兼容旧展示）
 
 ### 新增供应商下拉异常
 

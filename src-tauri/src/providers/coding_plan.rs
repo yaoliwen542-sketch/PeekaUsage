@@ -2,16 +2,13 @@ use reqwest::Client;
 use serde_json::Value;
 
 use super::traits::ProviderError;
-use super::types::UsageData;
+use super::types::{window_labels, SubscriptionWindow, UsageData};
 
 /// 执行 CodingPlan 查询
 ///
 /// CodingPlan 类供应商返回百分比型多窗口用量（如 Kimi 的 5 小时/周限额）。
-/// 统一转成 UsageData（currency="%"，total_budget=100，total_used=最高窗口 utilization）。
-///
-/// 注意：CodingPlan 本质是百分比型，和 Subscription 类似但用 API Key 查询。
-/// 当前返回 UsageData（单值），多窗口信息通过 total_used 取最高 utilization。
-/// 完整多窗口支持需要扩展 UsageData 结构（阶段 2.5），当前先保证能查到数据。
+/// 统一转成 UsageData（currency="%"，total_budget=100，total_used=最高窗口 utilization），
+/// 各窗口明细放入 UsageData.windows，供前端逐窗口展示。
 ///
 /// 支持的 provider：kimi / glm / minimax
 pub async fn execute_coding_plan_query(
@@ -31,7 +28,7 @@ pub async fn execute_coding_plan_query(
     }
 }
 
-/// 把 utilization (0-100) 组装成百分比型 UsageData
+/// 把 utilization (0-100) 组装成百分比型 UsageData（无分窗口明细的兜底）
 ///
 /// 取所有窗口中最高的 utilization 作为 total_used，便于前端进度条展示。
 fn build_percent_usage(utilizations: Vec<f64>) -> UsageData {
@@ -47,7 +44,18 @@ fn build_percent_usage(utilizations: Vec<f64>) -> UsageData {
         currency: "%".to_string(),
         period_start: None,
         period_end: None,
+        windows: Vec::new(),
     }
+}
+
+/// 带分窗口明细的百分比型 UsageData（Coding Plan 类供应商的标准返回）
+///
+/// total_used 仍取最高窗口 utilization，兼容只读单值的旧展示链路；
+/// windows 透传给前端逐窗口渲染（如 Kimi 的 5 小时窗口 + 周限额窗口）。
+fn build_percent_usage_with_windows(windows: Vec<SubscriptionWindow>) -> UsageData {
+    let mut data = build_percent_usage(windows.iter().map(|w| w.utilization).collect());
+    data.windows = windows;
+    data
 }
 
 /// 统一的 HTTP 状态码检查（抄 balance.rs）
@@ -123,7 +131,7 @@ async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, Provide
 
     let json = fetch_json(req).await?;
 
-    let mut utilizations: Vec<f64> = Vec::new();
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
     // limits[0].detail -> five_hour
     if let Some(detail) = json
@@ -132,24 +140,38 @@ async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, Provide
         .and_then(|v| v.get("detail"))
     {
         if let Some(u) = utilization_from_limit_remaining(detail) {
-            utilizations.push(u);
+            windows.push(SubscriptionWindow {
+                label: window_labels::FIVE_HOUR.to_string(),
+                utilization: u,
+                resets_at: detail
+                    .get("resetTime")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            });
         }
     }
 
     // usage -> weekly_limit
     if let Some(usage) = json.get("usage") {
         if let Some(u) = utilization_from_limit_remaining(usage) {
-            utilizations.push(u);
+            windows.push(SubscriptionWindow {
+                label: window_labels::WEEKLY_LIMIT.to_string(),
+                utilization: u,
+                resets_at: usage
+                    .get("resetTime")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            });
         }
     }
 
-    if utilizations.is_empty() {
+    if windows.is_empty() {
         return Err(ProviderError::ParseError(
             "Kimi 响应中未找到有效的 limits[0].detail 或 usage 字段".into(),
         ));
     }
 
-    Ok(build_percent_usage(utilizations))
+    Ok(build_percent_usage_with_windows(windows))
 }
 
 /// 从 { limit, remaining } 对象计算 utilization 百分比 (0-100)
@@ -205,7 +227,7 @@ async fn fetch_glm(client: &Client, api_key: &str) -> Result<UsageData, Provider
 
     let json = fetch_json(req).await?;
 
-    let mut utilizations: Vec<f64> = Vec::new();
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
     // data.limits[] 中找 unit==3 和 unit==6
     if let Some(limits) = json
@@ -218,20 +240,29 @@ async fn fetch_glm(client: &Client, api_key: &str) -> Result<UsageData, Provider
             let percentage = item.get("percentage").and_then(|v| v.as_f64());
             if let (Some(u), Some(p)) = (unit, percentage) {
                 // unit==3 -> five_hour, unit==6 -> weekly_limit
-                if u == 3 || u == 6 {
-                    utilizations.push(p.clamp(0.0, 100.0));
+                let label = match u {
+                    3 => Some(window_labels::FIVE_HOUR),
+                    6 => Some(window_labels::WEEKLY_LIMIT),
+                    _ => None,
+                };
+                if let Some(label) = label {
+                    windows.push(SubscriptionWindow {
+                        label: label.to_string(),
+                        utilization: p.clamp(0.0, 100.0),
+                        resets_at: None,
+                    });
                 }
             }
         }
     }
 
-    if utilizations.is_empty() {
+    if windows.is_empty() {
         return Err(ProviderError::ParseError(
             "GLM 响应中未找到 unit==3 或 unit==6 的 limits 条目".into(),
         ));
     }
 
-    Ok(build_percent_usage(utilizations))
+    Ok(build_percent_usage_with_windows(windows))
 }
 
 // ===== MiniMax =====
@@ -263,7 +294,7 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
 
     let json = fetch_json(req).await?;
 
-    let mut utilizations: Vec<f64> = Vec::new();
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
     // model_remains[] 中找 model_name=="general"
     if let Some(arr) = json.get("model_remains").and_then(|v| v.as_array()) {
@@ -282,7 +313,11 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
                 .get("current_interval_remaining_percent")
                 .and_then(|v| v.as_f64())
             {
-                utilizations.push((100.0 - remain).clamp(0.0, 100.0));
+                windows.push(SubscriptionWindow {
+                    label: window_labels::FIVE_HOUR.to_string(),
+                    utilization: (100.0 - remain).clamp(0.0, 100.0),
+                    resets_at: None,
+                });
             }
 
             // weekly_limit: 仅当 current_weekly_status==1 时取
@@ -292,19 +327,23 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
                     .get("current_weekly_remaining_percent")
                     .and_then(|v| v.as_f64())
                 {
-                    utilizations.push((100.0 - remain).clamp(0.0, 100.0));
+                    windows.push(SubscriptionWindow {
+                        label: window_labels::WEEKLY_LIMIT.to_string(),
+                        utilization: (100.0 - remain).clamp(0.0, 100.0),
+                        resets_at: None,
+                    });
                 }
             }
         }
     }
 
-    if utilizations.is_empty() {
+    if windows.is_empty() {
         return Err(ProviderError::ParseError(
             "MiniMax 响应中未找到 model_name==\"general\" 的有效用量条目".into(),
         ));
     }
 
-    Ok(build_percent_usage(utilizations))
+    Ok(build_percent_usage_with_windows(windows))
 }
 
 // ===== 火山方舟（Volcengine）=====
@@ -598,6 +637,28 @@ mod tests {
         let usage = build_percent_usage(vec![]);
         assert!((usage.total_used - 0.0).abs() < 1e-6);
         assert_eq!(usage.remaining, Some(100.0));
+    }
+
+    #[test]
+    fn test_build_percent_usage_with_windows() {
+        let usage = build_percent_usage_with_windows(vec![
+            SubscriptionWindow {
+                label: window_labels::FIVE_HOUR.to_string(),
+                utilization: 30.0,
+                resets_at: None,
+            },
+            SubscriptionWindow {
+                label: window_labels::WEEKLY_LIMIT.to_string(),
+                utilization: 80.0,
+                resets_at: Some("2026-07-20T00:00:00Z".to_string()),
+            },
+        ]);
+        // total_used 仍取最高窗口，windows 明细完整透传
+        assert!((usage.total_used - 80.0).abs() < 1e-6);
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+        assert!(usage.windows[1].resets_at.is_some());
     }
 
     #[test]

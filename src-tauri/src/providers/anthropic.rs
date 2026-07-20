@@ -98,6 +98,7 @@ impl UsageProvider for AnthropicProvider {
             currency: "USD".to_string(),
             period_start: Some(start_date),
             period_end: Some(end_date),
+            windows: Vec::new(),
         })
     }
 

@@ -41,6 +41,10 @@ pub struct UsageData {
     pub currency: String,
     pub period_start: Option<String>,
     pub period_end: Option<String>,
+    /// 分窗口利用率（Coding Plan 类供应商的 5 小时 / 周限额等窗口）
+    /// 空数组表示无分窗口数据，前端回退显示单条总进度条
+    #[serde(default)]
+    pub windows: Vec<SubscriptionWindow>,
 }
 
 /// 单个 API Key 的用量摘要

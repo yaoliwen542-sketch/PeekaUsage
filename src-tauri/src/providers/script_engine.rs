@@ -102,6 +102,7 @@ pub async fn run(
         currency: result.currency.unwrap_or_else(|| "credits".to_string()),
         period_start: None,
         period_end: None,
+        windows: Vec::new(),
     })
 }
 
