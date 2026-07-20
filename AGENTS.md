@@ -717,6 +717,8 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - `totalQuota` 在部分套餐（如 LEVEL_INTERMEDIATE）是空对象 `{}`，此时不展示月度窗口；返回有效额度时才渲染 `monthly` 窗口
 - 用量查询链路始终使用应用内已保存的 Key 直接请求官方接口，不读系统环境变量；“切换环境”只是把 Key 写入系统环境变量供终端工具使用，不要给查询链路加环境变量依赖
 - Coding Plan 类供应商（Kimi / GLM / MiniMax）的多窗口利用率放在 `UsageData.windows`（`five_hour` / `weekly_limit` / `monthly`），前端逐窗口渲染；不要把多窗口再压回单一 `total_used`（`total_used` 仅保留最高值用于兼容旧展示）
+- 百分比型（`currency == "%"`）多 Key 聚合绝不能求和：两个 Key 各 70% 不等于合计 140%。`aggregate_usage_data` 对百分比型取各 Key 最高利用率（预算恒 100），金额型保持求和；卡片 hero 大数字与灵动岛统一按"five_hour 窗口优先、否则第一个窗口"取值，多 Key 时聚合 windows 已按标签取最高利用率
+- 百分比型供应商卡片不显示"合计"行、不要用"按量 API"做标题（配额不是按量计费）
 
 ### 新增供应商下拉异常
 

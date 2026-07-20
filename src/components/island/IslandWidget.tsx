@@ -124,9 +124,13 @@ function getDisplayInfo(s: UsageSummary): { text: string; percent: number | null
   const usage = s.usage;
   // 百分比型供应商（Kimi / GLM / MiniMax 等 Coding Plan）：
   // remaining 是"剩余百分比"，直接展示会被误读成余额（如 "% 10.0"），
-  // 必须与主界面一致展示利用率
+  // 必须与主界面一致展示利用率。
+  // 取值规则与主界面 hero 统一：优先 5 小时窗口，否则第一个窗口；
+  // 多 Key 时后端聚合已按窗口取各 Key 最高利用率，直接用聚合值即可。
   if (usage && usage.currency === "%") {
-    const util = clamp(getProviderUtil(s), 0, 100);
+    const priorityWindow =
+      usage.windows?.find((w) => w.label === "five_hour") ?? usage.windows?.[0];
+    const util = clamp(priorityWindow ? priorityWindow.utilization : getProviderUtil(s), 0, 100);
     return { text: `${Math.round(util)}%`, percent: util };
   }
   if (usage && usage.remaining !== null && usage.remaining !== undefined) {

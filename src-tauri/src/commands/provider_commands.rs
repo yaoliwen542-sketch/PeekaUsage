@@ -918,11 +918,38 @@ async fn load_provider_subscriptions(
 fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
     let first = items.first()?;
     let currency = first.currency.clone();
+
+    let period_start = items.iter().fold(first.period_start.clone(), |acc, item| {
+        min_optional_iso(acc, item.period_start.clone())
+    });
+    let period_end = items.iter().fold(first.period_end.clone(), |acc, item| {
+        max_optional_iso(acc, item.period_end.clone())
+    });
+    let windows = merge_windows_by_label(items);
+
+    // 百分比型（Coding Plan 配额）：跨 Key 求和没有语义——两个 Key 各用 70%
+    // 不等于合计 140%。聚合取各 Key 最差值（最高利用率）作为整体状态，
+    // 预算恒为 100，剩余 = 100 - 最高利用率。
+    if currency == "%" {
+        let total_used = items
+            .iter()
+            .map(|item| item.total_used)
+            .fold(0.0_f64, f64::max)
+            .clamp(0.0, 100.0);
+        return Some(UsageData {
+            total_used,
+            total_budget: Some(100.0),
+            remaining: Some((100.0 - total_used).clamp(0.0, 100.0)),
+            currency,
+            period_start,
+            period_end,
+            windows,
+        });
+    }
+
     let mut total_used = 0.0;
     let mut total_budget = Some(0.0);
     let mut remaining = Some(0.0);
-    let mut period_start = first.period_start.clone();
-    let mut period_end = first.period_end.clone();
 
     for item in items {
         total_used += item.total_used;
@@ -936,12 +963,21 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
             (Some(acc), Some(value)) => Some(acc + value),
             _ => None,
         };
-
-        period_start = min_optional_iso(period_start, item.period_start.clone());
-        period_end = max_optional_iso(period_end, item.period_end.clone());
     }
 
-    // 分窗口利用率按标签合并：同名窗口取最高利用率，保持首次出现顺序
+    Some(UsageData {
+        total_used,
+        total_budget,
+        remaining,
+        currency,
+        period_start,
+        period_end,
+        windows,
+    })
+}
+
+/// 分窗口利用率按标签合并：同名窗口取最高利用率，保持首次出现顺序
+fn merge_windows_by_label(items: &[UsageData]) -> Vec<crate::providers::types::SubscriptionWindow> {
     let mut windows: Vec<crate::providers::types::SubscriptionWindow> = Vec::new();
     for item in items {
         for window in &item.windows {
@@ -958,16 +994,7 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
             }
         }
     }
-
-    Some(UsageData {
-        total_used,
-        total_budget,
-        remaining,
-        currency,
-        period_start,
-        period_end,
-        windows,
-    })
+    windows
 }
 
 fn min_optional_iso(current: Option<String>, next: Option<String>) -> Option<String> {
@@ -1206,4 +1233,87 @@ pub async fn test_custom_provider_script(
             .map_or("未知".to_string(), |v| format!("{:.2}", v)),
         result.currency
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn percent_usage(total_used: f64, windows: Vec<(&str, f64)>) -> UsageData {
+        UsageData {
+            total_used,
+            total_budget: Some(100.0),
+            remaining: Some(100.0 - total_used),
+            currency: "%".to_string(),
+            period_start: None,
+            period_end: None,
+            windows: windows
+                .into_iter()
+                .map(|(label, utilization)| SubscriptionWindow {
+                    label: label.to_string(),
+                    utilization,
+                    resets_at: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn money_usage(total_used: f64, budget: f64, remaining: f64) -> UsageData {
+        UsageData {
+            total_used,
+            total_budget: Some(budget),
+            remaining: Some(remaining),
+            currency: "USD".to_string(),
+            period_start: None,
+            period_end: None,
+            windows: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_aggregate_percent_multi_key_uses_max_not_sum() {
+        // 两个 Kimi Key 各 20% / 40%：合计绝不能是 60% / 余额 140%
+        let items = vec![
+            percent_usage(20.0, vec![("five_hour", 0.0), ("weekly_limit", 20.0)]),
+            percent_usage(40.0, vec![("five_hour", 0.0), ("weekly_limit", 40.0)]),
+        ];
+        let agg = aggregate_usage_data(&items).unwrap();
+        assert!((agg.total_used - 40.0).abs() < 1e-6);
+        assert_eq!(agg.total_budget, Some(100.0));
+        assert!((agg.remaining.unwrap() - 60.0).abs() < 1e-6);
+        assert_eq!(agg.currency, "%");
+        // 同名窗口取最高利用率，保持首次出现顺序
+        assert_eq!(agg.windows.len(), 2);
+        assert_eq!(agg.windows[0].label, "five_hour");
+        assert!((agg.windows[0].utilization - 0.0).abs() < 1e-6);
+        assert_eq!(agg.windows[1].label, "weekly_limit");
+        assert!((agg.windows[1].utilization - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_aggregate_percent_single_key_passthrough() {
+        let items = vec![percent_usage(
+            80.0,
+            vec![("five_hour", 80.0), ("weekly_limit", 16.0)],
+        )];
+        let agg = aggregate_usage_data(&items).unwrap();
+        assert!((agg.total_used - 80.0).abs() < 1e-6);
+        assert!((agg.remaining.unwrap() - 20.0).abs() < 1e-6);
+        assert_eq!(agg.windows.len(), 2);
+    }
+
+    #[test]
+    fn test_aggregate_money_multi_key_sums() {
+        // 金额型保持求和语义不变
+        let items = vec![money_usage(3.5, 10.0, 6.5), money_usage(1.5, 5.0, 3.5)];
+        let agg = aggregate_usage_data(&items).unwrap();
+        assert!((agg.total_used - 5.0).abs() < 1e-6);
+        assert_eq!(agg.total_budget, Some(15.0));
+        assert!((agg.remaining.unwrap() - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_aggregate_empty_returns_none() {
+        assert!(aggregate_usage_data(&[]).is_none());
+    }
 }

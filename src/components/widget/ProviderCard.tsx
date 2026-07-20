@@ -106,7 +106,21 @@ export default function ProviderCard({
       : (provider.apiKeyUsages.find((item) => item.usage)?.keyName ?? t("widget.providerCard.apiShort"));
 
     if (aggregate.currency === "%") {
-      // CodingPlan 百分比型：大数字即利用率
+      // CodingPlan 百分比型：有分窗口数据时，大数字固定优先展示 5 小时窗口
+      // （最细粒度、最可能卡住当前会话的限额），避免随利用率高低在窗口间跳动；
+      // 标题必须带窗口名，否则看不出这个数字属于哪个窗口
+      const priorityWindow =
+        aggregate.windows?.find((win) => win.label === "five_hour") ?? aggregate.windows?.[0];
+      if (priorityWindow) {
+        // 多 Key 时聚合值已是各 Key 最差值，标题只标窗口名即可，
+        // 不要再拼 Key 名或“按量 API”（既不是单 Key 数据，也会误导成分类）
+        return {
+          kind: "percent",
+          percent: priorityWindow.utilization,
+          caption: getWindowLabel(priorityWindow.label, language),
+        };
+      }
+      // 无分窗口数据时回退：大数字即利用率
       return { kind: "percent", percent: aggregate.totalUsed, caption: fallbackKeyName };
     }
 
@@ -249,7 +263,8 @@ export default function ProviderCard({
           </div>
         )}
 
-        {hasMultipleApiKeys && aggregate && (
+        {/* 合计行只对金额型有意义；百分比型（配额）跨 Key 求和没有语义，不显示 */}
+        {hasMultipleApiKeys && aggregate && aggregate.currency !== "%" && (
           <div className="flex items-center justify-between gap-2">
             <span className="shrink-0 text-[11px] text-text-muted">{t("widget.providerCard.total")}</span>
             <div className="flex min-w-0 items-baseline gap-2">
