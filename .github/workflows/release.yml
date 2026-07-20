@@ -1,7 +1,11 @@
 name: Release
 
-# 推送 v* 标签触发：校验版本一致性 → 三平台构建发布 → 校验 latest.json
+# 推送 v* 标签触发：校验版本一致性 → 四平台构建发布 → 统一生成并校验 latest.json
 # 发版流程：先补 .github/release-notes/vX.Y.Z.md，再 git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# 注意：构建任务一律 uploadUpdaterJson: false。matrix 并发下各任务各自上传
+# latest.json 会互相覆盖丢平台条目（v0.2.4 曾因此丢失 darwin-aarch64），
+# 必须统一由最后的 verify-updater 任务在所有构建完成后生成并上传。
 
 on:
   push:
@@ -108,22 +112,116 @@ jobs:
           releaseName: "PeekaUsage ${{ github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           args: ${{ matrix.platform.args }}
+          # latest.json 禁止由各构建任务各自上传（matrix 并发会互相覆盖丢条目），
+          # 统一由 verify-updater 任务生成；.sig 签名文件不受影响仍会上传
+          uploadUpdaterJson: false
 
   verify-updater:
-    name: 校验 latest.json 可访问且合法
+    name: 生成并校验 latest.json
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: 轮询校验 latest.json
+      - name: 汇总产物签名并生成 latest.json
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          URL="https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest/download/latest.json"
-          TAG="${GITHUB_REF_NAME#v}"
+          gh api "repos/$REPO/releases/tags/$TAG" > .release-assets.json
+          VER="${TAG#v}" python3 - <<'PYEOF'
+          import json, os, subprocess, datetime
+
+          repo = os.environ["REPO"]
+          ver = os.environ["VER"]
+          rel = json.load(open(".release-assets.json", encoding="utf-8"))
+          assets = {a["name"]: a for a in rel["assets"]}
+
+          def find_bundle(suffix: str) -> str:
+              matches = [n for n in assets if n.endswith(suffix)]
+              if len(matches) != 1:
+                  raise SystemExit(f"资产匹配失败 suffix={suffix}: {matches}")
+              return matches[0]
+
+          def signature_of(bundle: str) -> str:
+              sig_name = bundle + ".sig"
+              if sig_name not in assets:
+                  raise SystemExit(f"缺少签名文件 {sig_name}")
+              url = assets[sig_name]["browser_download_url"]
+              out = subprocess.run(
+                  ["curl", "-fsL", "-H", f"Authorization: Bearer {os.environ['GH_TOKEN']}", url],
+                  capture_output=True, check=True,
+              )
+              return out.stdout.decode().strip()
+
+          def entry(bundle: str) -> dict:
+              return {
+                  "signature": signature_of(bundle),
+                  "url": assets[bundle]["browser_download_url"],
+              }
+
+          nsis = find_bundle("x64-setup.exe")
+          appimage = find_bundle(".AppImage")
+          deb = find_bundle(".deb")
+          mac_x64 = find_bundle("_x64.app.tar.gz")
+          mac_arm = find_bundle("_aarch64.app.tar.gz")
+
+          platforms = {
+              "windows-x86_64": entry(nsis),
+              "windows-x86_64-nsis": entry(nsis),
+              "linux-x86_64": entry(appimage),
+              "linux-x86_64-appimage": entry(appimage),
+              "linux-x86_64-deb": entry(deb),
+              "darwin-x86_64": entry(mac_x64),
+              "darwin-x86_64-app": entry(mac_x64),
+              "darwin-aarch64": entry(mac_arm),
+              "darwin-aarch64-app": entry(mac_arm),
+          }
+          latest = {
+              "version": ver,
+              "notes": rel.get("body") or "",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc)
+              .isoformat(timespec="milliseconds")
+              .replace("+00:00", "Z"),
+              "platforms": platforms,
+          }
+          with open("latest.json", "w", encoding="utf-8") as f:
+              json.dump(latest, f, ensure_ascii=False, indent=2)
+          print(f"latest.json 生成完成，共 {len(platforms)} 个平台条目")
+          PYEOF
+          gh release upload "$TAG" latest.json --clobber --repo "$REPO"
+
+      - name: 轮询校验 latest.json
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/$REPO/releases/latest/download/latest.json"
+          EXPECT="${TAG#v}"
           for i in $(seq 1 20); do
             if BODY=$(curl -fsL "$URL" 2>/dev/null); then
-              if echo "$BODY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.version||!j.platforms)process.exit(1);console.log('latest.json version:',j.version)})"; then
-                echo "$BODY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(j.version!=='$TAG'){console.error('latest.json 版本',j.version,'与标签','$TAG','不符');process.exit(1)}})"
+              if EXPECT="$EXPECT" BODY="$BODY" python3 - <<'PYEOF'
+          import json, os, sys
+          j = json.loads(os.environ["BODY"])
+          required = {
+              "windows-x86_64", "windows-x86_64-nsis",
+              "linux-x86_64", "linux-x86_64-appimage", "linux-x86_64-deb",
+              "darwin-x86_64", "darwin-x86_64-app",
+              "darwin-aarch64", "darwin-aarch64-app",
+          }
+          if j.get("version") != os.environ["EXPECT"]:
+              print("latest.json 版本", j.get("version"), "与标签不符", flush=True)
+              sys.exit(1)
+          missing = required - set(j.get("platforms", {}))
+          if missing:
+              print("latest.json 缺少平台条目:", sorted(missing), flush=True)
+              sys.exit(1)
+          print("latest.json version:", j["version"], "| 平台条目齐全")
+          PYEOF
+              then
                 echo "latest.json 校验通过"
                 exit 0
               fi
@@ -131,5 +229,5 @@ jobs:
             echo "等待 latest.json 就绪（$i/20）..."
             sleep 15
           done
-          echo "::error::latest.json 不可访问或内容非法。若是首次发版，请确认仓库 secrets 已配置 TAURI_SIGNING_PRIVATE_KEY（及密码），否则 tauri-action 不会生成 latest.json。"
+          echo "::error::latest.json 不可访问或内容非法。请检查 verify-updater 生成步骤日志。"
           exit 1

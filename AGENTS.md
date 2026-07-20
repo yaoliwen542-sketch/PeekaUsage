@@ -669,6 +669,8 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 每次发版必须同步提交对应的发版说明文件 `.github/release-notes/vX.Y.Z.md`
 - 发版说明必须覆盖本次功能更新和修复内容，不能只发空 Release 或只上传安装包
 - Release 流水线结束前还必须校验对应 tag 下的 `latest.json` 可访问且内容合法，避免应用内更新读取失败
+- `latest.json` 必须统一由流水线最后的 `verify-updater` 任务生成上传；各构建任务必须保持 `uploadUpdaterJson: false`。matrix 并发下各任务各自上传会互相覆盖丢平台条目（v0.2.4 曾因此丢失 `darwin-aarch64`），不要回退成按任务各自生成
+- 校验 `latest.json` 时必须确认 9 个平台条目齐全：`windows-x86_64`（+`-nsis`）、`linux-x86_64`（+`-appimage`、`-deb`）、`darwin-x86_64`（+`-app`）、`darwin-aarch64`（+`-app`）
 - Windows 产物是 `nsis`
 - Linux 产物当前是 `x86_64` 的 `deb` 和 `appimage`
 - macOS 产物是 `x86_64` / `arm64` 的 `app` 和 `dmg`
