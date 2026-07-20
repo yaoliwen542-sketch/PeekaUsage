@@ -1,239 +1,205 @@
-# PeekaUsage
+<p align="center">
+  <img src="./src-tauri/icons/128x128.png" alt="PeekaUsage Logo" width="96" />
+</p>
 
-[English README](./README.en.md)
+<h1 align="center">PeekaUsage</h1>
 
-> 一个常驻桌面角落的 AI 用量小浮窗。用来快速查看 OpenAI、Anthropic、OpenRouter 的订阅配额、API 用量、预算、余额和速率限制，少敲几次 `/usage`，少切几次 Dashboard。
+<p align="center">
+  常驻桌面角落的 AI 用量监控浮窗：订阅配额、Coding Plan 限额、API 余额，一眼扫到。
+</p>
 
 <p align="center">
   <a href="https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/yaoliwen542-sketch/PeekaUsage?label=release" /></a>
   <a href="https://github.com/yaoliwen542-sketch/PeekaUsage/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/yaoliwen542-sketch/PeekaUsage" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue" />
-  <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20React-orange" />
+  <img alt="Built with" src="https://img.shields.io/badge/built%20with-Tauri%20v2%20%2B%20React-orange" />
 </p>
 
 <p align="center">
-  <img src="./src/assets/Overview.png" alt="PeekaUsage 总览" width="280" />
-  <img src="./src/assets/Overview1.png" alt="PeekaUsage 视图 1" width="280" />
-  <img src="./src/assets/Overview2.png" alt="PeekaUsage 视图 2" width="280" />
-  <img src="./src/assets/Overview3.png" alt="PeekaUsage 视图 3" width="280" />
+  <a href="./README.en.md">English README</a>
 </p>
 
-## 它解决什么问题
+---
 
-如果你同时在用 Claude Code、Codex、OpenClaw，或者自己写脚本调 OpenAI / Anthropic / OpenRouter，大概率已经体验过这种日常折磨：
+如果你同时挂着 Claude Code、Codex、Kimi Code 好几个 AI 编程工具，大概熟悉这种日常：
 
-- 跑一会儿就想知道配额还剩多少
-- 要反复打开 CLI 敲 `/usage`、`/status`
-- 或者去不同供应商 Dashboard 来回切
-- 还要担心速率限制、预算、余额和订阅窗口
+- 跑一会儿就想知道配额还剩多少，反复敲 `/usage`、切 Dashboard
+- 5 小时窗口、周限额、余额、速率限制分散在各家页面里
+- 等发现打满时，任务已经卡了半天
 
-PeekaUsage 干的事情很简单：**把这些信息钉在桌面角落里，变成一眼就能扫到的状态面板。**
+PeekaUsage 干的事情很简单：**把这些数字钉在桌面上，变成不用点开就能看到的呼吸灯。**
 
-它不是一个新的模型平台，也不是代理层。它就是一个轻量桌面 Widget，让你更快知道：
+它不是模型平台，不是代理层，不碰你的请求流量——只用你保存的 Key 直接请求各家官方接口，把结果画成进度条。
 
-- 现在花了多少
-- 还剩多少
-- 哪家快打满了
-- 要不要切 Key / 切账号 / 停手
+## 界面一览
 
-## 适合谁用
+<p align="center">
+  <img src="./docs/screenshots/widget-detailed.png" alt="主浮窗：订阅窗口与分窗口限额" width="360" />
+</p>
 
-- 同时订阅 OpenAI 和 Anthropic 的重度 AI 工具用户
-- 一边用 Claude Code / Codex，一边还会直接调 API 的开发者
-- 想在桌面常驻查看消耗，而不是反复切终端和网页的人
-- 对成本、速率限制、订阅窗口比较敏感的个人开发者或小团队
+<p align="center">
+  <em>主浮窗：OpenAI 订阅窗口、Kimi 的 5 小时窗口与周限额，逐窗口独立显示</em>
+</p>
 
-## 核心特性
+<p align="center">
+  <img src="./docs/screenshots/island.png" alt="灵动岛：屏幕顶部的迷你状态条" width="360" />
+</p>
 
-### 多供应商总览
+<p align="center">
+  <em>灵动岛：悬浮在屏幕顶部的迷你状态条，鼠标移入展开详情与快捷设置</em>
+</p>
 
-- OpenAI、Anthropic、OpenRouter 的按量用量、预算、余额、速率限制
-- OpenAI、Anthropic 的订阅窗口消耗
-- Anthropic 额外支持展示更多订阅窗口和 Extra Usage
-- 同一个桌面浮窗里统一查看，不用来回切页面
+<p align="center">
+  <img src="./docs/screenshots/settings-providers.png" alt="设置页：供应商管理" width="360" />
+</p>
 
-### OAuth 与 API Key 双通路
+<p align="center">
+  <em>设置页：多 Key 管理、OAuth 自动检测、一键切换系统环境变量</em>
+</p>
 
-- 自动检测本地 Claude Code / Codex CLI 的 OAuth Token
-- 提供官方获取入口，减少手工找配置的麻烦
-- 支持每个供应商保存多个命名 API Key
-- 支持校验、清理和一键切换当前系统环境变量
+## 支持的供应商
 
-### 真正面向日常使用的小部件体验
+| 类型 | 供应商 | 展示内容 |
+| --- | --- | --- |
+| 订阅窗口 | OpenAI | 5 小时 / 7 天等订阅窗口利用率与重置时间 |
+| 订阅窗口 | Anthropic | 5 小时 / 7 天 / 7 天 Sonnet / 7 天 Opus 窗口、Extra Usage |
+| 订阅窗口 | Gemini | OAuth 订阅用量 |
+| Coding Plan | Kimi / GLM / MiniMax / 火山方舟 | 5 小时窗口 + 周限额分窗口利用率 |
+| 余额 | OpenRouter / DeepSeek / SiliconFlow / StepFun / Novita AI | 余额与用量 |
+| 自定义 | 任意供应商 | 脚本化查询（余额类），自定义名称、环境变量与查询逻辑 |
 
-- 主界面手动刷新、单卡刷新、托盘刷新
-- 自动刷新 / 仅手动两种模式
-- 刷新间隔可按秒或按分钟配置
-- 支持按供应商独立刷新策略
-- 卡片拖拽排序并持久化
-- 详细 / 精简两种显示模式
-- 设置页内置更新分区，支持检查更新、查看更新说明和安装应用内更新
-- 浅色 / 深色 / 跟随系统主题
-- 始终置顶、窗口透明度调节
-- 系统托盘显示 / 隐藏 / 刷新 / 打开设置
-- 简体中文、繁体中文、English 即时切换
+凭据管理方式：
 
-## 为什么它可能值得 Star
+- **OAuth 自动检测**：自动读取本地 Claude Code / Codex CLI 凭据（含多账号 `account_id`），也提供官方获取入口
+- **多 Key 管理**：每个供应商可保存多个命名 Key，支持验证、单独刷新
+- **环境变量切换**：一键把指定 Key 写入系统环境变量（`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等），供终端工具使用——浮窗查询本身始终直连官方接口，不依赖环境变量
 
-因为它不是“又一个聊天壳子”或者“又一个模型聚合页”。
+## 功能特性
 
-它更像是一个 **AI 配额监控小部件**：
+**监控展示**
 
-- 对经常用 AI 编程工具的人有真实痛点
-- 比起命令行和 Dashboard，查看路径更短
-- 适合长期挂在桌面角落里当状态指示器
-- 对多供应商混用场景尤其友好
+- 订阅窗口、Coding Plan 限额、余额统一成进度条卡片，利用率按绿 / 黄 / 红分级
+- 详细 / 精简两种显示模式，精简模式保留全部分窗口进度条
+- 卡片拖拽排序，顺序持久化
+- 使用统计面板，回顾历史消耗
 
-如果你也有“AI Token 焦虑”，这玩意儿至少能让你焦虑得更高效一点。社畜式减负，多少算点减负。
+**灵动岛**
+
+- 屏幕顶部常驻迷你状态条，轮播各供应商当前利用率
+- 鼠标移入展开详情面板与快捷设置，移出自动收起
+
+**刷新策略**
+
+- 全局自动刷新（秒 / 分钟自定义）或仅手动
+- 可按供应商设置独立刷新策略
+- 主界面整页刷新、单卡刷新、托盘刷新
+
+**桌面体验**
+
+- 浅色 / 深色 / 跟随系统主题，窗口透明度调节
+- 始终置顶；拖到屏幕边缘自动吸附成细条，鼠标移入展开
+- 窗口大小随内容自动调整；开机自启；系统托盘
+- 简体中文 / 繁体中文 / English 即时切换
+
+**应用内更新**
+
+- 设置页内置更新分区：检查更新、查看 Release 说明、一键安装
+- 支持启动时自动检查与定时检查
 
 ## 下载与安装
 
-### 直接下载已构建版本
+前往 [GitHub Releases](https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest) 下载对应平台安装包：
 
-前往 [GitHub Releases](https://github.com/yaoliwen542-sketch/PeekaUsage/releases/latest) 下载对应平台安装包。
+| 平台 | 产物 |
+| --- | --- |
+| Windows | NSIS 安装包（`x64`） |
+| Linux | `.deb` / `.AppImage`（`x86_64`） |
+| macOS | `.dmg` / `.app`（`x86_64` 与 `arm64`） |
 
-当前仓库会产出：
-
-- Windows：NSIS 安装包
-- Linux：DEB / AppImage
-- macOS：`app` / `dmg`（`x86_64` 与 `arm64`）
-
-### macOS 说明
-
-- macOS 安装包必须在 Mac 上构建
-- 当前尚未接入 Apple Developer 签名与 notarization
-- 首次打开如果被系统拦截，可能需要手动放行
-
-如果提示“文件已损坏，无法打开”，可执行：
+**macOS 说明**：当前产物未签名、未 notarize。如果首次打开提示「文件已损坏，无法打开」，执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/PeekaUsage.app
 ```
 
+## 快速上手
+
+1. 打开设置页（主界面右下角齿轮），切到「供应商」
+2. 「新增供应商」选择要监控的供应商
+3. 订阅类供应商（OpenAI / Anthropic / Gemini）点「自动检测」读取本地凭据，或按「获取方式」前往官方文档获取；用量 / 余额类供应商直接粘贴 API Key
+4. 保存后回到主界面，用量会自动出现在卡片上
+
 ## 本地开发
 
-### 1. 安装依赖
-
 ```bash
-npm install
+npm install          # 安装依赖
+npm run dev          # 前端开发服务器
+npm run tauri dev    # 启动桌面应用
 ```
 
-### 2. Linux 额外依赖
-
-如果你在 Ubuntu / Debian 上开发或打包，还需要先安装：
+Linux 开发 / 打包需要额外依赖：
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential curl file libfuse2 libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
 
-### 3. 启动前端
+基本检查：
 
 ```bash
-npm run dev
-```
-
-### 4. 启动桌面应用
-
-```bash
-npm run tauri dev
-```
-
-### 5. 基本检查
-
-```bash
-npm run typecheck
+npx tsc --noEmit
 cargo fmt --all --check
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-发版前还需要先补齐对应版本的发版说明文件，例如 `.github/release-notes/v0.1.0.md`，再打 `v0.1.0` 标签并推送。
+平台打包：
 
-## 凭据来源
-
-### API Key
-
-你可以在设置页里填，也可以使用环境变量。
-
-| 服务商 | 环境变量 |
-| --- | --- |
-| OpenAI | `OPENAI_API_KEY` |
-| Anthropic | `ANTHROPIC_API_KEY` |
-| OpenRouter | `OPENROUTER_API_KEY` |
-
-说明：
-
-- Anthropic 的按量成本接口需要 Admin Key
-- 环境变量优先级高于设置页里保存的值
-- 设置页支持把某个已保存的 Key 一键切换为当前系统环境变量
-- Windows 会写入用户级环境变量；Linux / macOS 会同步当前进程并写入应用托管的 Shell 环境脚本，新开的终端会读取新值
-
-### OAuth Token
-
-订阅数据会优先从本地工具凭据里自动检测。
-
-> 注意：Anthropic 订阅接口查得太频繁可能返回 HTTP 429。
-
-| 来源 | 文件路径 | 字段 |
-| --- | --- | --- |
-| Claude Code | `~/.claude/.credentials.json` | `claudeAiOauth.accessToken` |
-| Codex CLI | `~/.codex/auth.json` | `tokens.access_token` |
-
-说明：
-
-- OpenAI 的 `tokens.access_token` 同时兼容字符串和索引对象两种格式
-- OpenAI 凭据也可能保存在系统凭据库，而不一定存在 `~/.codex/auth.json`
-- OpenRouter 当前没有订阅 OAuth 查询
-
-## 支持平台
-
-- Windows
-- Linux
-- macOS
+```bash
+npm run tauri:build:linux   # Linux（目标见 src-tauri/tauri.linux.conf.json）
+npm run tauri:build:macos   # macOS（目标见 src-tauri/tauri.macos.conf.json）
+```
 
 ## 项目结构
 
 ```text
-src/
-  components/
-  composables/
-  stores/
-  utils/
+src/                    # React 前端
+  components/widget/    # 主浮窗卡片、拖拽排序
+  components/island/    # 灵动岛
+  components/settings/  # 设置页（供应商、通用、高级、更新）
+  i18n/                 # 多语言文案与窗口标签映射
+  stores/               # provider / settings / update 状态
 
 src-tauri/src/
-  commands/
-  config/
-  providers/
-  tray/
+  providers/            # 供应商查询（订阅 / CodingPlan / 余额 / 脚本）
+  commands/             # Tauri 命令（配置、用量、窗口、更新）
+  config/               # 配置持久化、凭据存储、系统环境变量
+  tray/                 # 系统托盘
 ```
 
-## 为什么还没有支持所有模型提供商
+## 发版流程
 
-因为有些提供商没有公开、稳定、可维护的官方接口；当然，也有一部分原因是作者精力有限，社畜下班后体力条见底。
+推送 `v*` 标签即触发 GitHub Actions 构建并发布四平台产物：
 
-如果你正在用某个还没接入的 provider，欢迎提 PR。比较理想的贡献包括：
+```bash
+# 先补齐 .github/release-notes/vX.Y.Z.md，并确认
+# package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml 三处版本一致
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
 
-- Rust 侧 provider 实现和类型定义
-- 前端 provider 展示与设置项
+流水线会同时生成应用内更新所需的 `latest.json` 与签名产物，并在发布结束后校验其可访问性。
+
+## 为什么还没有支持所有供应商
+
+有些供应商没有公开、稳定、可维护的官方用量接口；也有一部分原因是作者精力有限，社畜下班后体力条见底。
+
+欢迎提 Issue / PR 接入新 provider，比较理想的贡献包括：
+
+- Rust 侧 provider 实现与类型定义
+- 前端展示与设置项
 - 对应文档、环境变量、图标资源和验证步骤
 
 只要数据来源可靠、行为边界清楚、不会把现有交互搞坏，就很欢迎一起补。
-
-## Roadmap
-
-欢迎提 Issue / PR，比较值得继续做的方向包括：
-
-- 接入更多支持官方用量接口的 provider
-- 更完整的异常态与错误提示
-- 更丰富的桌面 Widget 展示样式
-- 更好的首启配置引导
-- 已签名 / 已 notarize 的 macOS 发布流程
-
-## 贡献
-
-如果你想帮忙，Issue、PR、功能建议都欢迎。
-
-如果这个项目对你有帮助，欢迎点个 Star —— 这玩意儿至少能让我知道不是只有我一个人在被配额折磨。
 
 ## License
 

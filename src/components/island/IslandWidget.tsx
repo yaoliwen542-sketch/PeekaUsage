@@ -122,6 +122,13 @@ function formatCompactAmount(value: number): string {
  */
 function getDisplayInfo(s: UsageSummary): { text: string; percent: number | null } {
   const usage = s.usage;
+  // 百分比型供应商（Kimi / GLM / MiniMax 等 Coding Plan）：
+  // remaining 是"剩余百分比"，直接展示会被误读成余额（如 "% 10.0"），
+  // 必须与主界面一致展示利用率
+  if (usage && usage.currency === "%") {
+    const util = clamp(getProviderUtil(s), 0, 100);
+    return { text: `${Math.round(util)}%`, percent: util };
+  }
   if (usage && usage.remaining !== null && usage.remaining !== undefined) {
     const symbol = CURRENCY_SYMBOLS[usage.currency] ?? `${usage.currency} `;
     const text = `${symbol}${formatCompactAmount(usage.remaining)}`;
