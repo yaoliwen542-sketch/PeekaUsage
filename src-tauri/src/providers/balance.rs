@@ -88,6 +88,7 @@ pub async fn execute_balance_query(
         period_start: None,
         period_end: None,
         windows: Vec::new(),
+        plan_name: None,
     })
 }
 
@@ -194,6 +195,7 @@ pub async fn execute_deepseek_balance_query(
         period_start: None,
         period_end: None,
         windows: Vec::new(),
+        plan_name: None,
     })
 }
 

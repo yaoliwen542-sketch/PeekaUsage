@@ -197,6 +197,7 @@ impl UsageProvider for OpenAIProvider {
                                 period_start: None,
                                 period_end: None,
                                 windows: Vec::new(),
+                                plan_name: None,
                             });
                         }
                     }
@@ -243,6 +244,7 @@ impl UsageProvider for OpenAIProvider {
             period_start: Some(start_of_month),
             period_end: Some(end_date),
             windows: Vec::new(),
+            plan_name: None,
         })
     }
 

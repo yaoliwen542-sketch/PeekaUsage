@@ -47,6 +47,9 @@ pub struct UsageData {
     /// 空数组表示无分窗口数据，前端回退显示单条总进度条
     #[serde(default)]
     pub windows: Vec<SubscriptionWindow>,
+    /// 套餐标注（如火山方舟 "Agent Plan · Medium"），无套餐概念时为 None
+    #[serde(default)]
+    pub plan_name: Option<String>,
 }
 
 /// 单个 API Key 的用量摘要

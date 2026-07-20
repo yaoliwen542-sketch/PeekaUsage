@@ -103,6 +103,7 @@ pub async fn run(
         period_start: None,
         period_end: None,
         windows: Vec::new(),
+        plan_name: None,
     })
 }
 

@@ -99,6 +99,7 @@ impl UsageProvider for AnthropicProvider {
             period_start: Some(start_date),
             period_end: Some(end_date),
             windows: Vec::new(),
+            plan_name: None,
         })
     }
 

@@ -930,6 +930,8 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
     // 百分比型（Coding Plan 配额）：跨 Key 求和没有语义——两个 Key 各用 70%
     // 不等于合计 140%。聚合取各 Key 最差值（最高利用率）作为整体状态，
     // 预算恒为 100，剩余 = 100 - 最高利用率。
+    let plan_name = items.iter().find_map(|item| item.plan_name.clone());
+
     if currency == "%" {
         let total_used = items
             .iter()
@@ -944,6 +946,7 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
             period_start,
             period_end,
             windows,
+            plan_name,
         });
     }
 
@@ -973,6 +976,7 @@ fn aggregate_usage_data(items: &[UsageData]) -> Option<UsageData> {
         period_start,
         period_end,
         windows,
+        plan_name,
     })
 }
 
@@ -1255,6 +1259,7 @@ mod tests {
                     resets_at: None,
                 })
                 .collect(),
+            plan_name: None,
         }
     }
 
@@ -1267,6 +1272,7 @@ mod tests {
             period_start: None,
             period_end: None,
             windows: Vec::new(),
+            plan_name: None,
         }
     }
 

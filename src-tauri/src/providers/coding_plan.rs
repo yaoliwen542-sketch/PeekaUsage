@@ -45,6 +45,7 @@ fn build_percent_usage(utilizations: Vec<f64>) -> UsageData {
         period_start: None,
         period_end: None,
         windows: Vec::new(),
+        plan_name: None,
     }
 }
 
@@ -555,7 +556,17 @@ fn parse_afp_response(json: &Value) -> Result<UsageData, ProviderError> {
         ));
     }
 
-    Ok(build_percent_usage_with_windows(windows))
+    let mut data = build_percent_usage_with_windows(windows);
+    // 套餐标注：Result.PlanType（如 "medium"）→ "Agent Plan · Medium"，缺失则不标注
+    data.plan_name = result.get("PlanType").and_then(|v| v.as_str()).map(|raw| {
+        let mut chars = raw.chars();
+        let capitalized = match chars.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        };
+        format!("Agent Plan · {}", capitalized)
+    });
+    Ok(data)
 }
 
 /// 解析单个 AFP 窗口对象 {Quota, Used, SubscribeTime, ResetTime}
@@ -896,6 +907,20 @@ mod tests {
         assert!((usage.windows[3].utilization - 89968.2881 / 100000.0 * 100.0).abs() < 1e-4);
         // total_used 取最高窗口（月度 89.97%）
         assert!((usage.total_used - 89968.2881 / 100000.0 * 100.0).abs() < 1e-4);
+        // PlanType → 套餐标注
+        assert_eq!(usage.plan_name.as_deref(), Some("Agent Plan · Medium"));
+    }
+
+    #[test]
+    fn test_volc_parse_afp_response_without_plan_type() {
+        // 老响应没有 PlanType 字段时不标注套餐，也不报错
+        let json = serde_json::json!({
+            "Result": {
+                "AFPMonthly": { "Quota": 100000, "Used": 50000, "SubscribeTime": 1782877567000i64, "ResetTime": 1785599999000i64 }
+            }
+        });
+        let usage = parse_afp_response(&json).unwrap();
+        assert_eq!(usage.plan_name, None);
     }
 
     #[test]

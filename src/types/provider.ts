@@ -39,6 +39,8 @@ export interface UsageData {
   periodEnd: string | null;
   /** 分窗口利用率（Coding Plan 类供应商的 5 小时 / 周限额等），空数组表示无 */
   windows?: SubscriptionWindow[];
+  /** 套餐标注（如火山方舟 "Agent Plan · Medium"），无套餐概念时为 null/缺省 */
+  planName?: string | null;
 }
 
 /** 订阅用量窗口 */

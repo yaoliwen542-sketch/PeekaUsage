@@ -117,7 +117,9 @@ export default function ProviderCard({
         return {
           kind: "percent",
           percent: priorityWindow.utilization,
-          caption: getWindowLabel(priorityWindow.label, language),
+          caption: aggregate.planName
+            ? `${getWindowLabel(priorityWindow.label, language)} · ${aggregate.planName}`
+            : getWindowLabel(priorityWindow.label, language),
         };
       }
       // 无分窗口数据时回退：大数字即利用率
