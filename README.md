@@ -176,19 +176,6 @@ src-tauri/src/
   tray/                 # 系统托盘
 ```
 
-## 发版流程
-
-推送 `v*` 标签即触发 GitHub Actions 构建并发布四平台产物：
-
-```bash
-# 先补齐 .github/release-notes/vX.Y.Z.md，并确认
-# package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml 三处版本一致
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-流水线会同时生成应用内更新所需的 `latest.json` 与签名产物，并在发布结束后校验其可访问性。
-
 ## 为什么还没有支持所有供应商
 
 有些供应商没有公开、稳定、可维护的官方用量接口；也有一部分原因是作者精力有限，社畜下班后体力条见底。

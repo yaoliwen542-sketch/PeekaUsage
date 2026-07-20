@@ -40,3 +40,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .playwright-mcp/
+
+# 本地 UI 审查工具（CDP 脚本与截图），不入库
+.ui-review/

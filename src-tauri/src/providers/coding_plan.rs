@@ -123,6 +123,11 @@ async fn fetch_json(req: reqwest::RequestBuilder) -> Result<Value, ProviderError
 // 映射：
 // - limits[0].detail -> five_hour 窗口（utilization = (limit-remaining)/limit*100）
 // - usage -> weekly_limit 窗口（utilization = (limit-remaining)/limit*100）
+// - totalQuota -> monthly 窗口（仅部分套餐返回；空对象时不展示）
+//
+// 注意：5 小时窗口打满后 detail 里会省略 remaining 只留 used；
+// 窗口未激活时 limits 可能整个是空数组。这两种情况都必须兜底展示，
+// 不能让卡片上的 5 小时进度条时有时无。
 async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
     let req = client
         .get("https://api.kimi.com/coding/v1/usages")
@@ -130,30 +135,39 @@ async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, Provide
         .header("Accept", "application/json");
 
     let json = fetch_json(req).await?;
+    parse_kimi_response(&json)
+}
 
+/// 解析 Kimi usages 响应为分窗口 UsageData（纯函数，便于单测）
+fn parse_kimi_response(json: &Value) -> Result<UsageData, ProviderError> {
     let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
-    // limits[0].detail -> five_hour
-    if let Some(detail) = json
+    // limits[0].detail -> five_hour（始终展示：字段缺失按 0% 兜底，保持卡片布局稳定）
+    let five_hour_detail = json
         .get("limits")
         .and_then(|v| v.get(0))
-        .and_then(|v| v.get("detail"))
-    {
-        if let Some(u) = utilization_from_limit_remaining(detail) {
-            windows.push(SubscriptionWindow {
-                label: window_labels::FIVE_HOUR.to_string(),
-                utilization: u,
-                resets_at: detail
-                    .get("resetTime")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-            });
-        }
-    }
+        .and_then(|v| v.get("detail"));
+    let (five_hour_utilization, five_hour_resets) = match five_hour_detail {
+        Some(detail) => (
+            utilization_from_quota(detail).unwrap_or(0.0),
+            detail
+                .get("resetTime")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        ),
+        None => (0.0, None),
+    };
+    windows.push(SubscriptionWindow {
+        label: window_labels::FIVE_HOUR.to_string(),
+        utilization: five_hour_utilization,
+        resets_at: five_hour_resets,
+    });
 
     // usage -> weekly_limit
+    let mut has_weekly = false;
     if let Some(usage) = json.get("usage") {
-        if let Some(u) = utilization_from_limit_remaining(usage) {
+        if let Some(u) = utilization_from_quota(usage) {
+            has_weekly = true;
             windows.push(SubscriptionWindow {
                 label: window_labels::WEEKLY_LIMIT.to_string(),
                 utilization: u,
@@ -165,28 +179,48 @@ async fn fetch_kimi(client: &Client, api_key: &str) -> Result<UsageData, Provide
         }
     }
 
-    if windows.is_empty() {
+    // totalQuota -> monthly（只有部分套餐级别返回有效额度；LEVEL_INTERMEDIATE 是空对象）
+    if let Some(total) = json.get("totalQuota") {
+        if let Some(u) = utilization_from_quota(total) {
+            windows.push(SubscriptionWindow {
+                label: window_labels::MONTHLY.to_string(),
+                utilization: u,
+                resets_at: total
+                    .get("resetTime")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+            });
+        }
+    }
+
+    // 周限额是 Kimi 订阅的核心窗口；连它都解析不出来才认为响应无效
+    if !has_weekly {
         return Err(ProviderError::ParseError(
-            "Kimi 响应中未找到有效的 limits[0].detail 或 usage 字段".into(),
+            "Kimi 响应中未找到有效的 usage 周限额字段".into(),
         ));
     }
 
     Ok(build_percent_usage_with_windows(windows))
 }
 
-/// 从 { limit, remaining } 对象计算 utilization 百分比 (0-100)
+/// 从 { limit, remaining } 或 { limit, used } 对象计算 utilization 百分比 (0-100)
 ///
-/// utilization = (limit - remaining) / limit * 100
-/// 若 limit 为 0 或字段缺失，返回 None。
-/// 注意：Kimi usages 接口的 limit / remaining 是字符串（"100"）而非数字，
+/// utilization = (limit - remaining) / limit * 100，或 used / limit * 100。
+/// 优先读 remaining；remaining 缺失时回退到 used（Kimi 的 5 小时窗口打满后
+/// detail 里只剩 limit + used，没有 remaining）。
+/// 若 limit 为 0、缺失，或 remaining / used 都缺失，返回 None。
+/// 注意：Kimi usages 接口的 limit / remaining / used 是字符串（"100"）而非数字，
 /// 必须两种形态都兼容，否则永远解析不出有效利用率。
-fn utilization_from_limit_remaining(obj: &Value) -> Option<f64> {
+fn utilization_from_quota(obj: &Value) -> Option<f64> {
     let limit = json_number(obj.get("limit"))?;
-    let remaining = json_number(obj.get("remaining"))?;
     if limit <= 0.0 {
         return None;
     }
-    let used = (limit - remaining).max(0.0);
+    let used = if let Some(remaining) = json_number(obj.get("remaining")) {
+        (limit - remaining).max(0.0)
+    } else {
+        json_number(obj.get("used"))?.max(0.0)
+    };
     Some((used / limit * 100.0).clamp(0.0, 100.0))
 }
 
@@ -581,39 +615,131 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_utilization_from_limit_remaining() {
+    fn test_utilization_from_quota_remaining_form() {
         let v = serde_json::json!({ "limit": 100, "remaining": 30 });
-        assert!((utilization_from_limit_remaining(&v).unwrap() - 70.0).abs() < 1e-6);
+        assert!((utilization_from_quota(&v).unwrap() - 70.0).abs() < 1e-6);
 
         let v = serde_json::json!({ "limit": 1000, "remaining": 800 });
-        assert!((utilization_from_limit_remaining(&v).unwrap() - 20.0).abs() < 1e-6);
+        assert!((utilization_from_quota(&v).unwrap() - 20.0).abs() < 1e-6);
 
         // limit=0 -> None
         let v = serde_json::json!({ "limit": 0, "remaining": 0 });
-        assert!(utilization_from_limit_remaining(&v).is_none());
+        assert!(utilization_from_quota(&v).is_none());
 
         // remaining > limit -> clamped to 0
         let v = serde_json::json!({ "limit": 100, "remaining": 150 });
-        assert!((utilization_from_limit_remaining(&v).unwrap() - 0.0).abs() < 1e-6);
+        assert!((utilization_from_quota(&v).unwrap() - 0.0).abs() < 1e-6);
 
-        // missing fields -> None
+        // remaining / used 都缺失 -> None
         let v = serde_json::json!({ "limit": 100 });
-        assert!(utilization_from_limit_remaining(&v).is_none());
+        assert!(utilization_from_quota(&v).is_none());
     }
 
     #[test]
-    fn test_utilization_from_limit_remaining_string_values() {
+    fn test_utilization_from_quota_used_fallback() {
+        // Kimi 5 小时窗口打满后 detail 只剩 limit + used，没有 remaining
+        let v = serde_json::json!({ "limit": "100", "used": "100" });
+        assert!((utilization_from_quota(&v).unwrap() - 100.0).abs() < 1e-6);
+
+        let v = serde_json::json!({ "limit": "100", "used": "80" });
+        assert!((utilization_from_quota(&v).unwrap() - 80.0).abs() < 1e-6);
+
+        // used > limit -> clamped to 100
+        let v = serde_json::json!({ "limit": 100, "used": 120 });
+        assert!((utilization_from_quota(&v).unwrap() - 100.0).abs() < 1e-6);
+
+        // remaining 优先于 used
+        let v = serde_json::json!({ "limit": 100, "remaining": 90, "used": 50 });
+        assert!((utilization_from_quota(&v).unwrap() - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_utilization_from_quota_string_values() {
         // Kimi usages 接口实际返回字符串形态（"100"），必须兼容
         let v = serde_json::json!({ "limit": "100", "remaining": "30" });
-        assert!((utilization_from_limit_remaining(&v).unwrap() - 70.0).abs() < 1e-6);
+        assert!((utilization_from_quota(&v).unwrap() - 70.0).abs() < 1e-6);
 
         // 数字与字符串混用
         let v = serde_json::json!({ "limit": "1000", "remaining": 800 });
-        assert!((utilization_from_limit_remaining(&v).unwrap() - 20.0).abs() < 1e-6);
+        assert!((utilization_from_quota(&v).unwrap() - 20.0).abs() < 1e-6);
 
         // 非法字符串 -> None
         let v = serde_json::json!({ "limit": "abc", "remaining": "30" });
-        assert!(utilization_from_limit_remaining(&v).is_none());
+        assert!(utilization_from_quota(&v).is_none());
+    }
+
+    #[test]
+    fn test_parse_kimi_response_normal() {
+        // 常规形态：remaining 存在，5 小时窗口 + 周限额 + 空 totalQuota
+        let json = serde_json::json!({
+            "usage": { "limit": "100", "used": "16", "remaining": "84", "resetTime": "2026-07-26T00:00:00Z" },
+            "limits": [
+                { "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": "100", "remaining": "20", "used": "80", "resetTime": "2026-07-19T10:00:00Z" } }
+            ],
+            "totalQuota": {}
+        });
+        let usage = parse_kimi_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 80.0).abs() < 1e-6);
+        assert!(usage.windows[0].resets_at.is_some());
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+        assert!((usage.windows[1].utilization - 16.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_kimi_response_five_hour_full_without_remaining() {
+        // 线上实测：5 小时窗口打满后 detail 省略 remaining，只剩 limit + used
+        let json = serde_json::json!({
+            "usage": { "limit": "100", "used": "20", "remaining": "80", "resetTime": "2026-07-26T00:00:00Z" },
+            "limits": [
+                { "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                  "detail": { "limit": "100", "used": "100", "resetTime": "2026-07-20T06:33:24Z" } }
+            ],
+            "totalQuota": {}
+        });
+        let usage = parse_kimi_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 100.0).abs() < 1e-6);
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+    }
+
+    #[test]
+    fn test_parse_kimi_response_empty_limits_shows_five_hour_zero() {
+        // 5 小时窗口未激活时 limits 是空数组：仍要展示 0%，不能让卡片少一行
+        let json = serde_json::json!({
+            "usage": { "limit": "100", "used": "20", "remaining": "80", "resetTime": "2026-07-26T00:00:00Z" },
+            "limits": [],
+            "totalQuota": {}
+        });
+        let usage = parse_kimi_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 0.0).abs() < 1e-6);
+        assert!(usage.windows[0].resets_at.is_none());
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+    }
+
+    #[test]
+    fn test_parse_kimi_response_monthly_quota() {
+        // 更高套餐返回有效 totalQuota 时要展示月度窗口
+        let json = serde_json::json!({
+            "usage": { "limit": "100", "used": "20", "remaining": "80", "resetTime": "2026-07-26T00:00:00Z" },
+            "limits": [],
+            "totalQuota": { "limit": "1000", "used": "500", "remaining": "500", "resetTime": "2026-08-01T00:00:00Z" }
+        });
+        let usage = parse_kimi_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 3);
+        assert_eq!(usage.windows[2].label, "monthly");
+        assert!((usage.windows[2].utilization - 50.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_kimi_response_missing_usage_is_error() {
+        let json = serde_json::json!({ "limits": [], "totalQuota": {} });
+        assert!(parse_kimi_response(&json).is_err());
     }
 
     #[test]
