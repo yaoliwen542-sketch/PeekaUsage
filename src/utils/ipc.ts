@@ -214,3 +214,24 @@ export async function getWebdavSyncPassword(): Promise<string> {
 export async function saveWebdavSyncPassword(password: string): Promise<void> {
   return invoke("save_webdav_sync_password", { password });
 }
+
+/**
+ * 把窗口从当前边界缓动动画到目标边界（逻辑像素）。
+ * Rust 侧独立任务按 ~125fps 步进，重复调用会顶掉旧动画（可打断、可反向）。
+ * durationMs 为 0 时直接落定。
+ */
+export async function animateWindowBounds(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  durationMs: number,
+): Promise<void> {
+  return invoke("animate_window_bounds", {
+    x: Math.round(x),
+    y: Math.round(y),
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height)),
+    durationMs: Math.max(0, Math.round(durationMs)),
+  });
+}

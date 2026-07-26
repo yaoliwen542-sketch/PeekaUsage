@@ -63,10 +63,21 @@ input {
   background: rgba(237, 228, 210, 0.95);
 }
 
-/* 展开面板入场过渡（窗口 setSize 是即时的，过渡只做在内容上，避免闪烁） */
+/* 展开面板入场：窗口几何动画（240ms）进行中延迟淡入，避免内容在还是胶囊尺寸的窗口里硬切；
+   收起时面板先播 120ms 退场，胶囊延迟接管（IslandWidget 的 panelExiting 驱动） */
 .island-panel {
-  animation: island-panel-in 150ms ease-out;
+  animation: island-panel-in 200ms ease-out 80ms backwards;
   transform-origin: top center;
+}
+
+.island-panel-out {
+  animation: island-panel-out 120ms ease-in both;
+  transform-origin: top center;
+}
+
+/* 胶囊从展开态切回时的快速淡入（挂载即播放） */
+.island-pill-in {
+  animation: island-fade-in 170ms ease-out 40ms backwards;
 }
 
 @keyframes island-panel-in {
@@ -77,6 +88,26 @@ input {
   to {
     opacity: 1;
     transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes island-panel-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+}
+
+@keyframes island-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

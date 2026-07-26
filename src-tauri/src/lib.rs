@@ -102,6 +102,7 @@ pub fn run() {
             commands::stats_commands::get_usage_stats_snapshot,
             commands::taskbar_commands::set_window_skip_taskbar,
             commands::window_commands::detect_oauth_tokens,
+            commands::window_commands::animate_window_bounds,
             commands::data_commands::export_app_data,
             commands::data_commands::export_app_data_to_downloads,
             commands::data_commands::import_app_data,

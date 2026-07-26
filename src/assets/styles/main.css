@@ -56,9 +56,50 @@ textarea {
   flex-direction: column;
 }
 
+/* 吸附态下内容统一带透明度过渡：收起时内容先淡出（180ms），
+   展开时延迟 70ms 再淡入，与窗口几何动画（240/260ms）对齐 */
+.app-shell.is-edge-docked > :not(.edge-dock-handle) {
+  transition: opacity 180ms ease;
+}
+
+.app-shell.is-edge-docked-preview > :not(.edge-dock-handle) {
+  transition-delay: 70ms;
+}
+
 .app-shell.is-edge-docked-collapsed > :not(.edge-dock-handle) {
   opacity: 0;
   pointer-events: none;
+}
+
+/* 细条把手进场：窗口收进边缘后从吸附边长出；退场在展开时快速溶解 */
+.app-shell.is-edge-docked-collapsed .edge-dock-handle {
+  animation: edge-dock-handle-in 180ms ease-out 90ms backwards;
+}
+
+.edge-dock-handle.is-exiting {
+  animation: edge-dock-handle-out 150ms ease-in both;
+}
+
+@keyframes edge-dock-handle-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes edge-dock-handle-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 .edge-dock-handle {
@@ -71,15 +112,18 @@ textarea {
 
 .edge-dock-handle.edge-left {
   justify-content: flex-start;
+  transform-origin: left center;
 }
 
 .edge-dock-handle.edge-right {
   justify-content: flex-end;
+  transform-origin: right center;
 }
 
 .edge-dock-handle.edge-top {
   justify-content: center;
   align-items: flex-start;
+  transform-origin: center top;
 }
 
 .edge-dock-handle-shell {

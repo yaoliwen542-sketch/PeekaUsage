@@ -4,7 +4,6 @@ import {
   currentMonitor,
   getCurrentWindow,
   LogicalPosition,
-  LogicalSize,
 } from "@tauri-apps/api/window";
 import ProviderIcon from "../common/ProviderIcon";
 import { usageFillClass } from "../widget/SubscriptionBadge";
@@ -27,6 +26,7 @@ import { useI18n } from "../../i18n";
 import { getWindowLabel } from "../../i18n/windowLabels";
 import { applyTheme, observeSystemTheme } from "../../utils/theme";
 import { toLogicalWindowPosition } from "../../utils/windowBounds";
+import { animateWindowBounds } from "../../utils/ipc";
 import { cn } from "@/lib/utils";
 
 const ISLAND_POSITION_KEY = "peekausage.island.position";
@@ -212,6 +212,8 @@ export default function IslandWidget() {
   const [summaries, setSummaries] = useState<UsageSummary[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  // 面板退场：收起时先播 120ms 退场动画再切回胶囊，避免大窗口里硬弹出胶囊
+  const [panelExiting, setPanelExiting] = useState(false);
   const [showQuickSettings, setShowQuickSettings] = useState(false);
   const { t, language } = useI18n();
   const refreshAll = useProviderStore((s) => s.refreshAll);
@@ -344,27 +346,30 @@ export default function IslandWidget() {
     void applyOpacity(windowOpacity);
   }, [settingsLoaded, windowOpacity, applyOpacity]);
 
-  /** 展开 / 收起时同步调整窗口尺寸（setSize 不受 resizable:false 限制） */
+  /** 展开 / 收起时同步调整窗口边界（setSize 不受 resizable:false 限制；
+      位置与尺寸走 Rust 侧缓动动画，避免瞬跳割裂） */
   async function applyWindowSize(nextExpanded: boolean) {
     const win = getCurrentWindow();
     try {
       if (nextExpanded) {
-        await win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_INITIAL_HEIGHT));
         // 展开后窗口若超出所在显示器工作区（例如岛条贴在屏幕右缘），
-        // 平移回屏幕内——否则面板右缘（含收起按钮）会画到屏幕外
+        // 目标位置平移回屏幕内——否则面板右缘（含收起按钮）会画到屏幕外
+        const scale = await win.scaleFactor();
+        const pos = (await win.outerPosition()).toLogical(scale);
+        let targetX = Math.round(pos.x);
+        let targetY = Math.round(pos.y);
         const monitor = await currentMonitor();
         if (monitor) {
-          const scale = monitor.scaleFactor;
-          const pos = (await win.outerPosition()).toLogical(scale);
           const areaPos = monitor.workArea.position.toLogical(scale);
           const areaSize = monitor.workArea.size.toLogical(scale);
           const maxX = areaPos.x + areaSize.width - EXPANDED_WIDTH;
           const maxY = areaPos.y + areaSize.height - EXPANDED_MAX_HEIGHT;
-          const x = clamp(Math.round(pos.x), areaPos.x, Math.max(areaPos.x, maxX));
-          const y = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
-          if (x !== Math.round(pos.x) || y !== Math.round(pos.y)) {
-            expandOriginRef.current = { x: Math.round(pos.x), y: Math.round(pos.y) };
-            await win.setPosition(new LogicalPosition(x, y));
+          const x = clamp(targetX, areaPos.x, Math.max(areaPos.x, maxX));
+          const y = clamp(targetY, areaPos.y, Math.max(areaPos.y, maxY));
+          if (x !== targetX || y !== targetY) {
+            expandOriginRef.current = { x: targetX, y: targetY };
+            targetX = x;
+            targetY = y;
           } else {
             expandOriginRef.current = null;
           }
@@ -373,19 +378,26 @@ export default function IslandWidget() {
         // 1) 快捷设置的输入框需要焦点才能输入
         // 2) 失焦自动收起依赖「先获得焦点、后失去焦点」的完整转换
         expandAtRef.current = Date.now();
-        await win.setFocus().catch(() => {
+        void win.setFocus().catch(() => {
           // 权限未就绪等平台差异场景忽略，失焦收起会退化为仅按钮/Esc
         });
+        await animateWindowBounds(targetX, targetY, EXPANDED_WIDTH, EXPANDED_INITIAL_HEIGHT, 240);
       } else {
-        await win.setSize(new LogicalSize(COLLAPSED_WIDTH, COLLAPSED_HEIGHT));
         // 展开时若做过越界校正平移，收起后把岛条恢复到用户原始拖放位置
         const origin = expandOriginRef.current;
         expandOriginRef.current = null;
+        let targetX: number;
+        let targetY: number;
         if (origin) {
-          await win.setPosition(new LogicalPosition(origin.x, origin.y)).catch(() => {
-            // 显示器热插拔等极端场景忽略，保持校正后的位置也可接受
-          });
+          targetX = origin.x;
+          targetY = origin.y;
+        } else {
+          const scale = await win.scaleFactor();
+          const pos = (await win.outerPosition()).toLogical(scale);
+          targetX = Math.round(pos.x);
+          targetY = Math.round(pos.y);
         }
+        await animateWindowBounds(targetX, targetY, COLLAPSED_WIDTH, COLLAPSED_HEIGHT, 220);
       }
     } catch {
       // 窗口权限未就绪等场景忽略，面板仍按收起态展示
@@ -393,6 +405,19 @@ export default function IslandWidget() {
   }
 
   function setExpandedWithSize(nextExpanded: boolean) {
+    if (!nextExpanded && expandedRef.current) {
+      // 收起：面板先快速退场，窗口几何收缩同时进行，胶囊延迟接管
+      setPanelExiting(true);
+      expandedRef.current = false;
+      setExpandedProvider(null);
+      setShowQuickSettings(false);
+      void applyWindowSize(false);
+      window.setTimeout(() => {
+        setPanelExiting(false);
+        setExpanded(false);
+      }, 120);
+      return;
+    }
     expandedRef.current = nextExpanded;
     setExpanded(nextExpanded);
     setExpandedProvider(null);
@@ -450,20 +475,25 @@ export default function IslandWidget() {
           if (Math.round(size.height) === panelH && Math.round(size.width) === EXPANDED_WIDTH) {
             return;
           }
-          await win.setSize(new LogicalSize(EXPANDED_WIDTH, panelH));
-          // 高度增长后底部可能越出工作区（岛贴屏幕底边），夹取回屏幕内
+          // 高度增长后底部可能越出工作区（岛贴屏幕底边），目标位置先向上夹取，
+          // 再与最终尺寸一次性动画到位（位置、尺寸同帧缓动，避免先跳位再变高的割裂）
           const monitor = await currentMonitor();
+          let targetX: number;
+          let targetY: number;
           if (monitor) {
             const mScale = monitor.scaleFactor;
             const pos = (await win.outerPosition()).toLogical(mScale);
             const areaPos = monitor.workArea.position.toLogical(mScale);
             const areaSize = monitor.workArea.size.toLogical(mScale);
             const maxY = areaPos.y + areaSize.height - panelH;
-            const y = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
-            if (y !== Math.round(pos.y)) {
-              await win.setPosition(new LogicalPosition(Math.round(pos.x), y));
-            }
+            targetX = Math.round(pos.x);
+            targetY = clamp(Math.round(pos.y), areaPos.y, Math.max(areaPos.y, maxY));
+          } else {
+            const pos = (await win.outerPosition()).toLogical(scale);
+            targetX = Math.round(pos.x);
+            targetY = Math.round(pos.y);
           }
+          await animateWindowBounds(targetX, targetY, EXPANDED_WIDTH, panelH, 160);
         } catch {
           // 窗口 API 不可用时忽略，面板按 max-h-full 内部滚动
         }
@@ -521,7 +551,10 @@ export default function IslandWidget() {
   if (expanded) {
     return (
       <div
-        className="island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl backdrop-blur-md"
+        className={cn(
+          "island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl backdrop-blur-md",
+          panelExiting && "island-panel-out",
+        )}
       >
         {/* 顶部栏：标题 + 刷新 + 设置 + 收起（展开面板区域不挂拖动） */}
         <div className="flex h-10 shrink-0 items-center justify-between px-3">
@@ -685,7 +718,7 @@ export default function IslandWidget() {
   if (summaries.length === 0) {
     return (
       <div
-        className="flex h-full w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
+        className="island-pill-in flex h-full w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
         onMouseDown={handleBarMouseDown}
         onMouseMove={handleBarMouseMove}
         onMouseUp={handleBarMouseUp}
@@ -704,7 +737,7 @@ export default function IslandWidget() {
 
   return (
     <div
-      className="flex h-full w-full cursor-pointer select-none items-center overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
+      className="island-pill-in flex h-full w-full cursor-pointer select-none items-center overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
       onMouseDown={handleBarMouseDown}
       onMouseMove={handleBarMouseMove}
       onMouseUp={handleBarMouseUp}

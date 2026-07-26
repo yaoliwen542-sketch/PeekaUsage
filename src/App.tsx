@@ -21,7 +21,7 @@ import {
 } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { applyTheme, observeSystemTheme } from "./utils/theme";
-import { markProgrammaticWindowResize } from "./utils/windowBounds";
+import { markProgrammaticWindowResize, type WindowDockEdge } from "./utils/windowBounds";
 
 /** 设置页最小舒适尺寸：主浮窗常被内容自适应压到 300x200 左右，
  * 直接渲染设置页会严重挤压换行，进入设置时临时扩大、返回时恢复 */
@@ -45,6 +45,20 @@ export default function App() {
 
   // 进入设置页前的浮窗尺寸：仅在发生过临时扩窗时有值，返回主界面时恢复
   const preSettingsSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  // 细条把手退场：collapsed → preview 瞬间保留把手 160ms 播放溶解动画，
+  // 避免窗口展开时发光细条硬消失
+  const prevDockPhaseRef = useRef<string | null>(null);
+  const [exitingHandleEdge, setExitingHandleEdge] = useState<WindowDockEdge | null>(null);
+  useEffect(() => {
+    const prevPhase = prevDockPhaseRef.current;
+    prevDockPhaseRef.current = dockVisualState?.phase ?? null;
+    if (prevPhase === "collapsed" && dockVisualState && dockVisualState.phase !== "collapsed") {
+      setExitingHandleEdge(dockVisualState.edge);
+      const timer = window.setTimeout(() => setExitingHandleEdge(null), 170);
+      return () => window.clearTimeout(timer);
+    }
+  }, [dockVisualState?.phase, dockVisualState?.edge]);
 
   /** 进入设置页：窗口小于设置页最小舒适尺寸时临时扩大（越界则平移校正）。
    * 扩窗走 programmatic 标记，不会被误判成用户手动 resize；
@@ -290,6 +304,9 @@ export default function App() {
         <SettingsPanel onBack={() => void handleBackFromSettings()} />
       )}
       {dockVisualState?.phase === "collapsed" ? <EdgeDockHandle edge={dockVisualState.edge} /> : null}
+      {dockVisualState?.phase !== "collapsed" && exitingHandleEdge ? (
+        <EdgeDockHandle edge={exitingHandleEdge} exiting />
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   getCurrentWindow,
 } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../stores/settingsStore";
+import { animateWindowBounds } from "../utils/ipc";
 import {
   areWindowPositionsEqual,
   areWindowSizesEqual,
@@ -252,10 +253,27 @@ export function useEdgeDock() {
   async function setProgrammaticWindowBounds(
     windowPosition: LogicalWindowPosition,
     windowSize: LogicalWindowSize,
+    animateMs = 0,
   ) {
     const currentWindow = getCurrentWindow();
     markProgrammaticWindowMove();
     markProgrammaticWindowResize();
+    if (animateMs > 0) {
+      try {
+        // Rust 侧按 ~125fps 步进缓动；命令立即返回（动画异步执行），
+        // PROGRAMMATIC 保持窗（400ms）覆盖动画全程（≤260ms）
+        await animateWindowBounds(
+          windowPosition.x,
+          windowPosition.y,
+          windowSize.width,
+          windowSize.height,
+          animateMs,
+        );
+        return;
+      } catch {
+        // 动画命令不可用时回退瞬时落定
+      }
+    }
     await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
     await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
   }
@@ -293,7 +311,7 @@ export function useEdgeDock() {
       },
     };
 
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize);
+    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize, 240);
     updateDockState(nextState);
     persistDockExpandedBounds(nextState);
   }
@@ -307,6 +325,7 @@ export function useEdgeDock() {
     await setProgrammaticWindowBounds(
       dockState.expandedBounds.windowPosition,
       dockState.expandedBounds.windowSize,
+      260,
     );
 
     const nextState: WindowDockState = {
@@ -337,7 +356,7 @@ export function useEdgeDock() {
       },
     };
 
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize);
+    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize, 240);
     updateDockState(nextState);
     persistDockExpandedBounds(nextState);
   }
@@ -658,6 +677,7 @@ export function useEdgeDock() {
         await setProgrammaticWindowBounds(
           dockState.expandedBounds.windowPosition,
           dockState.expandedBounds.windowSize,
+          260,
         );
       }
 

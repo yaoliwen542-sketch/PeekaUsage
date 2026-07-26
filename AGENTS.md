@@ -428,6 +428,11 @@
 - 设置页“通用”里提供该功能开关，持久化字段是 `edgeDockCollapseEnabled`
 - 该开关放在“自动调整窗口高度以适应内容”后；注意通用区其后还有紧凑色标（`compactColorMarkers`）和“显示灵动岛”（`islandVisible`），灵动岛开关固定为通用区最后一个条目
 - 收起细条只保留呼吸发光的核心条；`.edge-dock-handle-shell` 不要加回描边/投影/圆角外壳，否则桌面上会看到一个透明框套住细条（v0.2.8 已按此修正，相关死 token 已清理）
+- 收起/展开的窗口几何变化必须走缓动动画，不要回退成瞬时 `setSize`/`setPosition`：
+  - Rust 侧提供 `animate_window_bounds` 命令（`window_commands.rs`，逻辑像素入参、内部乘 scaleFactor、easeInOutCubic、代次取消、结束精确落定），前端封装在 `utils/ipc.ts` 的 `animateWindowBounds(x, y, width, height, durationMs)`
+  - 时长约定：边缘吸附收起 240ms、展开 260ms；灵动岛展开 240ms、收起 220ms、展开后面板高度自适应 160ms
+  - 内容层 CSS 过渡与几何动画 t=0 对齐：收起时内容先淡出（180ms）、把手延迟 90ms 从边缘长出；展开时把手以 `is-exiting` 类溶解 150ms、内容延迟 70ms 淡入
+  - 灵动岛面板高度自适应（`IslandWidget.tsx`）同样走 `animateWindowBounds`，位置夹取与尺寸变化必须一次性动画到位，不能先 `setPosition` 再 `setSize`（会产生先跳位再变高的割裂）
 
 ### 22. Anthropic 已支持更多订阅窗口与 Extra Usage 展示
 
