@@ -521,7 +521,7 @@ export default function IslandWidget() {
   if (expanded) {
     return (
       <div
-        className="island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-white/6 bg-card shadow-xl backdrop-blur-md"
+        className="island-panel flex max-h-full w-full flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl backdrop-blur-md"
       >
         {/* 顶部栏：标题 + 刷新 + 设置 + 收起（展开面板区域不挂拖动） */}
         <div className="flex h-10 shrink-0 items-center justify-between px-3">
@@ -685,7 +685,7 @@ export default function IslandWidget() {
   if (summaries.length === 0) {
     return (
       <div
-        className="flex h-full w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-full border border-white/8 bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-white/16"
+        className="flex h-full w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
         onMouseDown={handleBarMouseDown}
         onMouseMove={handleBarMouseMove}
         onMouseUp={handleBarMouseUp}
@@ -704,7 +704,7 @@ export default function IslandWidget() {
 
   return (
     <div
-      className="flex h-full w-full cursor-pointer select-none items-center overflow-hidden rounded-full border border-white/8 bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-white/16"
+      className="flex h-full w-full cursor-pointer select-none items-center overflow-hidden rounded-full border border-border bg-card/90 px-3 backdrop-blur-md transition-colors duration-150 hover:border-border-hover"
       onMouseDown={handleBarMouseDown}
       onMouseMove={handleBarMouseMove}
       onMouseUp={handleBarMouseUp}

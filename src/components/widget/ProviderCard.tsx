@@ -27,7 +27,7 @@ function statusDotClass(item: ApiKeyUsageSummary): string {
   if (item.status === "error") return "bg-danger";
   if (item.status === "loading") return "bg-warning";
   if (item.status === "success") return "bg-success";
-  return "bg-white/20";
+  return "bg-text-muted/40";
 }
 
 /** 单个 Key 的利用率：CodingPlan 百分比型直接取 totalUsed，余额型按预算折算 */
@@ -201,7 +201,7 @@ export default function ProviderCard({
       : null;
 
     return (
-      <div key={item.keyId} className="flex flex-col gap-1 rounded-md bg-white/3 px-2 py-1.5">
+      <div key={item.keyId} className="flex flex-col gap-1 rounded-md bg-usage-item px-2 py-1.5">
         <div className="flex items-center gap-2">
           <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(item))} aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground" title={item.keyName}>
@@ -258,7 +258,7 @@ export default function ProviderCard({
     const aggregate = provider.usage;
 
     return (
-      <div className={cn("flex flex-col gap-1.5", hasSubscription && "border-t border-white/6 pt-2")}>
+      <div className={cn("flex flex-col gap-1.5", hasSubscription && "border-t border-border pt-2")}>
         {hasSubscription && (
           <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-text-muted">
             {t("widget.providerCard.apiLabel")}
@@ -396,8 +396,8 @@ export default function ProviderCard({
   return (
     <div
       className={cn(
-        "provider-card flex flex-col gap-2.5 rounded-xl border border-white/6 bg-card p-3",
-        "transition-[border-color,box-shadow] duration-150 hover:border-white/12",
+        "provider-card flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3",
+        "transition-[border-color,box-shadow] duration-150 hover:border-border-hover",
         isProviderErrorOnly && "border-danger/30",
         isCompact && "gap-1.5 px-2.5 py-2",
       )}
@@ -416,7 +416,7 @@ export default function ProviderCard({
           className={cn(
             "inline-flex shrink-0 items-center justify-center rounded-md border border-transparent",
             "cursor-pointer text-text-secondary transition-colors duration-150",
-            "hover:bg-white/8 hover:text-text",
+            "hover:bg-ghost-hover hover:text-text",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
             "disabled:cursor-not-allowed disabled:opacity-50",
             isCompact ? "h-6 w-6 [&_svg]:size-3" : "h-7 w-7 [&_svg]:size-3.5",
@@ -473,7 +473,7 @@ export default function ProviderCard({
                   <div
                     key={subscription.subscriptionId}
                     className={cn(
-                      "flex flex-col gap-1 rounded-md border border-white/6 bg-white/3 px-2 py-1.5",
+                      "flex flex-col gap-1 rounded-md border border-border bg-usage-item px-2 py-1.5",
                       useSubscriptionColorMarkers && cn(
                         "relative pl-3",
                         "before:absolute before:top-1.5 before:bottom-1.5 before:left-1.5 before:w-0.5 before:rounded-full",

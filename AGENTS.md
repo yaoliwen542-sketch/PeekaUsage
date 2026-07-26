@@ -446,6 +446,26 @@
 - 如果 OAuth 返回 `extra_usage`，主界面也要展示 Extra Usage 的利用率
 - 精简模式下也要保留这些额外窗口和 Extra Usage 的进度条
 
+### 23. UI 主题 token 已全面收敛，新增本地 UI 截图审查设施
+
+文件：
+
+- `src/index.css`
+- `src/assets/styles/common.css`、`src/assets/styles/island.css`
+- `src/components/widget/WidgetContainer.tsx`、`ProviderCard.tsx`、`SubscriptionBadge.tsx`、`UsageStatsPanel.tsx`、`RateLimitBadge.tsx`
+- `src/components/common/TitleBar.tsx`
+- `src/components/island/IslandWidget.tsx`
+- `preview.html`、`src/preview/`、`preview-shots/`
+
+当前要求：
+
+- 严禁再引入 `*-white/\d+` 这类硬编码白色透明度类（`border-white/8`、`bg-white/4` 等）；亮色主题下它们会失效。统一走语义 token：`border-border` / `hover:border-border-hover` / `bg-usage-item` / `hover:bg-ghost-hover` / `bg-surface-elevated`
+- `.provider-icon` 底座颜色走 `--color-ghost-bg` / `--color-border`，不再硬编码白色
+- 标题栏左侧使用真实应用 logo（`src/assets/app-icon.png`，源自 `src-tauri/icons/32x32.png`），不再用通用圆点；换 logo 时同步替换该文件
+- 统计抽屉的分段控件与设置页 segmented 风格一致（`rounded-full bg-ghost` 容器 + active `bg-surface-elevated`）
+- UI 截图审查走 `bash preview-shots/capture.sh`（vite dev + Edge 无头 + PIL 裁剪）；场景参数见 `src/preview/main.tsx`，mock 数据在 `src/preview/mockData.ts`
+- 截图避坑：Edge 无头强制最小窗口宽约 500 CSS px，窄窗口场景必须用 `?fixwidth=N` 约束 body 再裁剪（`capture.sh` 已封装）；虚拟时间下合成器帧可能与 DOM 终态不一致，`capture.sh` 统一带 `&noanim=1`；`preview.html` / `src/preview/` / `preview-shots/` 不进正式包
+
 ## 先读哪些文件
 
 如果你是新的 coding agent，按这个顺序进入代码：

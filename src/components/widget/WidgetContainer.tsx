@@ -53,7 +53,7 @@ function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
 const ICON_BTN_CLASS = cn(
   "flex h-7 w-7 items-center justify-center rounded-md border border-transparent",
   "cursor-pointer text-text-secondary transition-colors duration-150",
-  "hover:bg-white/8 hover:text-text",
+  "hover:bg-ghost-hover hover:text-text",
   "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
   "disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:size-4",
 );
@@ -608,7 +608,7 @@ export default function WidgetContainer({
         )}
       </div>
 
-      <div ref={footerRef} className="flex shrink-0 items-center justify-end gap-1 border-t border-white/6 px-2 py-1">
+      <div ref={footerRef} className="flex shrink-0 items-center justify-end gap-1 border-t border-border px-2 py-1">
         <div
           className="flex min-h-7 flex-1 cursor-grab items-center pr-1 active:cursor-grabbing"
           data-tauri-drag-region
@@ -698,7 +698,7 @@ export default function WidgetContainer({
                 ref={themeMenuRef}
                 className={cn(
                   "absolute bottom-[calc(100%+6px)] left-1/2 z-[8] flex -translate-x-1/2 items-center gap-0.5",
-                  "rounded-lg border border-white/8 bg-surface-elevated p-1 shadow-overlay",
+                  "rounded-lg border border-border bg-surface-elevated p-1 shadow-overlay",
                   "[backdrop-filter:blur(var(--backdrop-blur))]",
                 )}
               >
@@ -708,9 +708,9 @@ export default function WidgetContainer({
                     className={cn(
                       "flex h-7 w-7 items-center justify-center rounded-md border border-transparent p-0",
                       "cursor-pointer text-text-secondary transition-colors duration-150",
-                      "hover:bg-white/8 hover:text-text",
+                      "hover:bg-ghost-hover hover:text-text",
                       "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
-                      settings.theme === option.value && "bg-white/8 text-primary!",
+                      settings.theme === option.value && "bg-ghost-hover text-primary!",
                     )}
                     title={option.label}
                     aria-label={option.label}

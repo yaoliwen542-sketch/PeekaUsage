@@ -127,7 +127,7 @@ export default function SubscriptionBadge({ subscription, hidePlanLabel = false 
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg border border-white/6 bg-white/3 px-2.5 py-2">
+    <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-usage-item px-2.5 py-2">
       <div className="flex min-w-0 items-baseline justify-between gap-2">
         <span className="min-w-0 truncate text-[12px] font-semibold text-foreground" title={subscription.subscriptionName}>
           {subscription.subscriptionName}

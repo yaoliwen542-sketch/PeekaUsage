@@ -43,3 +43,8 @@ pnpm-debug.log*
 
 # 本地 UI 审查工具（CDP 脚本与截图），不入库
 .ui-review/
+
+# UI 截图审查产物（截图与浏览器配置可再生，不入库；脚本本身入库）
+preview-shots/*.png
+preview-shots/.edge-profile/
+preview-shots/.edge-test/

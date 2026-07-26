@@ -22,7 +22,7 @@ type UsageStatsPanelProps = {
 /** 指标小块：标签 + 等宽数字值，与卡片内的明细块视觉统一 */
 function MetricBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-md bg-white/4 px-2 py-1.5">
+    <div className="flex min-w-0 flex-col gap-0.5 rounded-md bg-usage-item px-2 py-1.5">
       <span className="truncate text-[10px] text-text-muted">{label}</span>
       <strong className="truncate text-[11px] font-semibold tabular-nums text-foreground" title={value}>
         {value}
@@ -100,7 +100,7 @@ export default function UsageStatsPanel({
 
   return (
     <div
-      className="flex min-h-0 w-full flex-1 flex-col gap-2.5 rounded-xl border border-white/8 bg-surface-elevated p-3 shadow-overlay [backdrop-filter:blur(var(--backdrop-blur))]"
+      className="flex min-h-0 w-full flex-1 flex-col gap-2.5 rounded-xl border border-border bg-surface-elevated p-3 shadow-overlay [backdrop-filter:blur(var(--backdrop-blur))]"
       role="dialog"
       aria-modal="false"
       aria-label={t("widget.stats.title")}
@@ -112,7 +112,7 @@ export default function UsageStatsPanel({
             className={cn(
               "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent",
               "cursor-pointer text-text-secondary transition-colors duration-150",
-              "hover:bg-white/8 hover:text-text",
+              "hover:bg-ghost-hover hover:text-text",
               "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
               "[&_svg]:size-3.5",
             )}
@@ -133,7 +133,7 @@ export default function UsageStatsPanel({
         </div>
 
         <div
-          className="inline-flex items-center gap-0.5 self-start rounded-lg border border-white/6 bg-white/4 p-0.5"
+          className="inline-flex items-center gap-0.5 self-start rounded-full bg-ghost p-0.5"
           role="tablist"
           aria-label={t("widget.stats.range.ariaLabel")}
         >
@@ -141,10 +141,10 @@ export default function UsageStatsPanel({
             <button
               key={item}
               className={cn(
-                "h-6 min-w-[44px] cursor-pointer rounded-md border border-transparent px-2.5",
+                "h-6 min-w-[44px] cursor-pointer rounded-full border border-transparent px-2.5",
                 "text-[11px] font-semibold text-text-secondary transition-colors duration-150",
                 "hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
-                range === item && "bg-white/10 text-foreground",
+                range === item && "bg-surface-elevated text-text shadow-sm",
               )}
               type="button"
               aria-pressed={range === item}
@@ -162,7 +162,7 @@ export default function UsageStatsPanel({
             <div
               key={notice.code}
               className={cn(
-                "rounded-md border border-white/6 bg-white/3 px-2 py-1.5 text-[11px] leading-snug text-text-secondary",
+                "rounded-md border border-border bg-usage-item px-2 py-1.5 text-[11px] leading-snug text-text-secondary",
                 notice.level === "warning" && "border-warning/30 bg-warning/10 text-warning",
               )}
             >
@@ -187,17 +187,17 @@ export default function UsageStatsPanel({
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           <div className="grid grid-cols-3 gap-1.5">
-            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border bg-usage-item px-2 py-1.5">
               <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.providerCount")}</span>
               <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">{snapshot.providers.length}</strong>
             </div>
-            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border bg-usage-item px-2 py-1.5">
               <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.lastSampleAt")}</span>
               <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">
                 {lastSampleAt ? formatDateTime(lastSampleAt, locale) : t("widget.stats.value.unavailable")}
               </strong>
             </div>
-            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-white/6 bg-white/3 px-2 py-1.5">
+            <div className="flex min-w-0 flex-col gap-0.5 rounded-lg border border-border bg-usage-item px-2 py-1.5">
               <span className="truncate text-[10px] text-text-muted">{t("widget.stats.summary.range")}</span>
               <strong className="truncate text-[12px] font-bold tabular-nums text-foreground">{t(`widget.stats.summary.${range}Description`)}</strong>
             </div>
@@ -207,7 +207,7 @@ export default function UsageStatsPanel({
             {snapshot.providers.map((provider) => (
               <article
                 key={provider.providerId}
-                className="flex flex-col gap-2 rounded-xl border border-white/6 bg-white/3 p-2.5"
+                className="flex flex-col gap-2 rounded-xl border border-border bg-usage-item p-2.5"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-1.5 text-[12px] font-bold text-foreground">
@@ -222,7 +222,7 @@ export default function UsageStatsPanel({
                 </div>
 
                 {provider.apiSummary ? (
-                  <div className="flex flex-col gap-1.5 rounded-lg bg-white/3 p-2">
+                  <div className="flex flex-col gap-1.5 rounded-lg bg-usage-item p-2">
                     <div className="text-[11px] font-bold text-foreground">{t("widget.stats.api.title")}</div>
                     <div className="grid grid-cols-2 gap-1.5">
                       <MetricBlock
@@ -252,13 +252,13 @@ export default function UsageStatsPanel({
                 ) : null}
 
                 {provider.subscriptionTrends.length ? (
-                  <div className="flex flex-col gap-1.5 rounded-lg bg-white/3 p-2">
+                  <div className="flex flex-col gap-1.5 rounded-lg bg-usage-item p-2">
                     <div className="text-[11px] font-bold text-foreground">{t("widget.stats.subscription.title")}</div>
                     <div className="flex flex-col gap-1.5">
                       {provider.subscriptionTrends.map((trend) => (
                         <div
                           key={`${trend.subscriptionId}-${trend.kind}-${trend.label}`}
-                          className="flex flex-col gap-1.5 rounded-lg border border-white/6 bg-white/3 p-2"
+                          className="flex flex-col gap-1.5 rounded-lg border border-border bg-usage-item p-2"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
