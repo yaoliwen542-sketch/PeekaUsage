@@ -193,6 +193,7 @@ struct ProviderStatsHistory {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UsageStatsFile {
+    #[serde(default)]
     version: u32,
     #[serde(default)]
     providers: HashMap<String, ProviderStatsHistory>,
@@ -341,6 +342,37 @@ impl UsageStatsStore {
         let now = Utc::now();
         let stats = self.stats.read().await;
         build_snapshot(&stats, &range, settings, enabled_provider_ids, now)
+    }
+
+    pub async fn get_snapshot_json(&self) -> Result<serde_json::Value, String> {
+        let stats = self.stats.read().await;
+        serde_json::to_value(&*stats).map_err(|error| format!("序列化用量历史失败: {}", error))
+    }
+
+    pub fn validate_snapshot_json(&self, snapshot: &serde_json::Value) -> Result<(), String> {
+        serde_json::from_value::<UsageStatsFile>(snapshot.clone())
+            .map(|_| ())
+            .map_err(|error| format!("导入用量历史失败: {}", error))
+    }
+
+    pub async fn replace_all_from_json(&self, snapshot: serde_json::Value) -> Result<(), String> {
+        let mut snapshot = serde_json::from_value::<UsageStatsFile>(snapshot)
+            .map_err(|error| format!("导入用量历史失败: {}", error))?;
+        prune_stats_file(&mut snapshot, Utc::now());
+
+        {
+            let mut stats = self.stats.write().await;
+            *stats = snapshot;
+        }
+
+        let result = self.save().await;
+        {
+            let mut state = self.write_state.write().await;
+            state.last_save_at = Some(std::time::Instant::now());
+            state.dirty = result.is_err();
+        }
+
+        result
     }
 }
 

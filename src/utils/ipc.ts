@@ -8,7 +8,11 @@ import type {
   ProviderTemplate,
   CustomProviderConfig,
 } from "../types/provider";
-import type { AppSettings } from "../types/settings";
+import type {
+  AppDataSnapshot,
+  AppSettings,
+  WebDavSyncConfig,
+} from "../types/settings";
 import type { StatsRange, UsageStatsSnapshot } from "../types/stats";
 
 /** 获取所有供应商用量摘要 */
@@ -140,4 +144,73 @@ export interface DetectedTokens {
 /** 自动检测本地 OAuth Token */
 export async function detectOAuthTokens(): Promise<DetectedTokens> {
   return invoke<DetectedTokens>("detect_oauth_tokens");
+}
+
+/** 导出应用配置快照（配置、密钥、统计） */
+export async function exportAppData(): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>("export_app_data");
+}
+
+/** 导出应用快照到系统下载目录，返回实际文件路径 */
+export async function exportAppDataToDownloads(): Promise<string> {
+  return invoke<string>("export_app_data_to_downloads");
+}
+
+/** 用快照覆盖应用全部配置 */
+export async function importAppData(snapshot: AppDataSnapshot): Promise<void> {
+  return invoke("import_app_data", { snapshot });
+}
+
+/** 上传快照到 WebDAV */
+function buildWebdavEndpoint(syncConfig: WebDavSyncConfig): string {
+  const remoteRoot = syncConfig.remoteRoot.trim().replace(/\\/g, "/");
+  if (!remoteRoot) {
+    return syncConfig.endpoint;
+  }
+
+  const segments = remoteRoot.split("/").filter(Boolean);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("WebDAV 远程根目录不能包含 . 或 .. 路径段");
+  }
+
+  const endpoint = new URL(syncConfig.endpoint);
+  const basePath = endpoint.pathname.replace(/\/+$/, "");
+  endpoint.pathname = `${basePath}/${segments.join("/")}/`;
+  return endpoint.toString();
+}
+
+export async function uploadAppDataToWebdav(
+  snapshot: AppDataSnapshot,
+  syncConfig: WebDavSyncConfig,
+): Promise<void> {
+  return invoke("upload_app_data_to_webdav_with_root", {
+    snapshot,
+    syncConfig: {
+      endpoint: syncConfig.endpoint,
+      username: syncConfig.username,
+      password: syncConfig.password,
+    },
+    remoteRoot: syncConfig.remoteRoot,
+  });
+}
+
+/** 从 WebDAV 下载快照 */
+export async function downloadAppDataFromWebdav(syncConfig: WebDavSyncConfig): Promise<AppDataSnapshot> {
+  return invoke<AppDataSnapshot>("download_app_data_from_webdav", {
+    syncConfig: {
+      endpoint: buildWebdavEndpoint(syncConfig),
+      username: syncConfig.username,
+      password: syncConfig.password,
+    },
+  });
+}
+
+/** 获取当前设备保存的 WebDAV 密码 */
+export async function getWebdavSyncPassword(): Promise<string> {
+  return invoke<string>("get_webdav_sync_password");
+}
+
+/** 将 WebDAV 密码保存到当前设备的 KeyStore */
+export async function saveWebdavSyncPassword(password: string): Promise<void> {
+  return invoke("save_webdav_sync_password", { password });
 }

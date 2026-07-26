@@ -1,4 +1,5 @@
 pub mod provider_commands;
+pub mod data_commands;
 pub mod settings_commands;
 pub mod stats_commands;
 pub mod taskbar_commands;

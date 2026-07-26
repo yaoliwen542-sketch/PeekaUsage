@@ -57,6 +57,7 @@ pub fn run() {
 
             // 初始化系统托盘（菜单文案与灵动岛勾选态按初始设置生成）
             let handle = app.handle().clone();
+            commands::data_commands::start_webdav_auto_sync(handle.clone());
             tray::setup_tray(&handle, &initial_settings)?;
 
             // 启动时按配置恢复灵动岛显隐（默认显示；用户关闭后重启保持隐藏，避免先闪一下再隐藏）
@@ -101,6 +102,14 @@ pub fn run() {
             commands::stats_commands::get_usage_stats_snapshot,
             commands::taskbar_commands::set_window_skip_taskbar,
             commands::window_commands::detect_oauth_tokens,
+            commands::data_commands::export_app_data,
+            commands::data_commands::export_app_data_to_downloads,
+            commands::data_commands::import_app_data,
+            commands::data_commands::upload_app_data_to_webdav,
+            commands::data_commands::upload_app_data_to_webdav_with_root,
+            commands::data_commands::download_app_data_from_webdav,
+            commands::data_commands::get_webdav_sync_password,
+            commands::data_commands::save_webdav_sync_password,
             commands::update_commands::check_app_update,
             commands::update_commands::install_app_update,
             commands::update_commands::get_current_version,

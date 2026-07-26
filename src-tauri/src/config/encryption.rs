@@ -75,6 +75,19 @@ impl KeyStore {
         Ok(())
     }
 
+    pub async fn get_snapshot(&self) -> HashMap<String, String> {
+        self.keys.read().await.clone()
+    }
+
+    pub async fn replace_all(&self, keys: HashMap<String, String>) -> Result<(), String> {
+        {
+            let mut stored = self.keys.write().await;
+            *stored = keys;
+        }
+
+        self.save().await
+    }
+
     /// 获取存储中的原始 Key，不读取环境变量
     pub async fn get_stored_key(&self, storage_key: &str) -> Option<String> {
         let keys = self.keys.read().await;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import type { CustomProviderConfig, ProviderConfigItem, ProviderId, ProviderTemplate } from "../../types/provider";
 import {
@@ -6,7 +6,9 @@ import {
   MIN_POLLING_INTERVAL,
   getEffectivePollingSettings,
   normalizePollingInterval,
+  type AppDataSnapshot,
   type AppLanguage,
+  type WebDavSyncConfig,
   type PollingMode,
   type PollingSettings,
   type PollingUnit,
@@ -16,10 +18,22 @@ import { LANGUAGE_OPTIONS } from "../../i18n/messages";
 import { useProviderStore } from "../../stores/providerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { syncLaunchAtStartup } from "../../utils/autostart";
-import { getProviderConfigs, getProviderTemplates, setWindowSkipTaskbar } from "../../utils/ipc";
+import {
+  downloadAppDataFromWebdav,
+  exportAppData,
+  exportAppDataToDownloads,
+  getWebdavSyncPassword,
+  getProviderConfigs,
+  getProviderTemplates,
+  importAppData,
+  saveWebdavSyncPassword,
+  setWindowSkipTaskbar,
+  uploadAppDataToWebdav,
+} from "../../utils/ipc";
 import AppSelect, { type AppSelectGroup, type SelectOption } from "../common/AppSelect";
 import ProviderIcon from "../common/ProviderIcon";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import ProviderConfig from "./ProviderConfig";
 import { ProviderWizardDialog } from "./ProviderWizardDialog";
 import UpdateSettings from "./UpdateSettings";
@@ -30,12 +44,18 @@ type SettingsPanelProps = {
 };
 
 type SettingsSectionId = "general" | "providers" | "advanced" | "updates";
+const FORM_INPUT_CLASS = "h-7 rounded-lg border border-border bg-surface px-2 text-xs text-text transition-colors duration-150 focus:border-primary-soft-border focus:outline-none focus:ring-1 focus:ring-primary/40";
 
 type SettingsMenuItem =
   {
     id: SettingsSectionId;
     label: string;
   };
+
+type DataSyncNotice = {
+  type: "success" | "error";
+  message: string;
+};
 
 /* ===== 设置页共享视觉常量（与 ProviderConfig / UpdateSettings 中的同款类保持同步） ===== */
 /** 分组标题：12px 大写弱色 */
@@ -130,6 +150,7 @@ function BackIcon() {
 
 export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const settings = useSettingsStore((state) => state.settings);
+  const loadSettings = useSettingsStore((state) => state.loadSettings);
   const saveSettings = useSettingsStore((state) => state.saveSettings);
   const { updateOpacity } = useWindowControls();
   const { t, language } = useI18n();
@@ -146,6 +167,21 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const [pollingIntervalDraft, setPollingIntervalDraft] = useState(String(settings.pollingInterval));
   const [providerPollingIntervalDrafts, setProviderPollingIntervalDrafts] = useState<Partial<Record<ProviderId, string>>>({});
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("general");
+  const [isExportingData, setIsExportingData] = useState(false);
+  const [isImportingData, setIsImportingData] = useState(false);
+  const [isUploadingData, setIsUploadingData] = useState(false);
+  const [isDownloadingData, setIsDownloadingData] = useState(false);
+  const [isSavingWebdavConfig, setIsSavingWebdavConfig] = useState(false);
+  const [dataSyncNotice, setDataSyncNotice] = useState<DataSyncNotice | null>(null);
+  const [webdavConfig, setWebdavConfig] = useState<WebDavSyncConfig>({
+    endpoint: settings.webdavEndpoint,
+    username: settings.webdavUsername,
+    password: "",
+    remoteRoot: settings.webdavRemoteRoot,
+    autoSyncEnabled: settings.webdavAutoSyncEnabled,
+  });
+  const dataImportInputRef = useRef<HTMLInputElement | null>(null);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
   const isWindows = useMemo(
     () => typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent),
     [],
@@ -186,6 +222,11 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   );
   const isManualPolling = settings.pollingMode === "manual";
   const configuredPollingProviders = providerConfigs.filter((item) => item.enabled);
+  const isDataSyncBusy = isExportingData
+    || isImportingData
+    || isUploadingData
+    || isDownloadingData
+    || isSavingWebdavConfig;
 
   // 从模板构造草稿 ProviderConfigItem（用于创建模式渲染）
   function buildDraftFromTemplate(template: ProviderTemplate): ProviderConfigItem {
@@ -441,6 +482,284 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     await useProviderStore.getState().refreshAll();
   }
 
+  function getDisplayErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    return String(error);
+  }
+
+  function normalizeNoticeMessagePrefix(value: DataSyncNotice["type"], base: string): DataSyncNotice {
+    return {
+      type: value,
+      message: base,
+    };
+  }
+
+  async function refreshDataAfterImport() {
+    await loadSettings(true);
+    await loadProviderData();
+    await useProviderStore.getState().refreshAll();
+  }
+
+  function normalizeWebDavConfig(): WebDavSyncConfig {
+    const remoteRootSegments = webdavConfig.remoteRoot
+      .trim()
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean);
+
+    return {
+      endpoint: webdavConfig.endpoint.trim(),
+      username: webdavConfig.username.trim(),
+      password: webdavConfig.password,
+      remoteRoot: remoteRootSegments.length > 0 ? `/${remoteRootSegments.join("/")}` : "",
+      autoSyncEnabled: webdavConfig.autoSyncEnabled,
+    };
+  }
+
+  function getWebDavValidationError(config: WebDavSyncConfig): string | null {
+    if (!config.endpoint) {
+      return t("settings.dataSync.endpointRequired");
+    }
+
+    try {
+      const endpoint = new URL(config.endpoint);
+      if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+        return t("settings.dataSync.endpointInvalid");
+      }
+    } catch {
+      return t("settings.dataSync.endpointInvalid");
+    }
+
+    if (config.remoteRoot
+      .split("/")
+      .some((segment) => segment === "." || segment === "..")) {
+      return t("settings.dataSync.remoteRootInvalid");
+    }
+
+    if (!config.username) {
+      return t("settings.dataSync.usernameRequired");
+    }
+
+    if (!config.password) {
+      return t("settings.dataSync.passwordRequired");
+    }
+
+    return null;
+  }
+
+  async function persistWebdavConfig(config: WebDavSyncConfig) {
+    await saveWebdavSyncPassword(config.password);
+    await saveSettings({
+      webdavEndpoint: config.endpoint,
+      webdavUsername: config.username,
+      webdavRemoteRoot: config.remoteRoot,
+      webdavAutoSyncEnabled: config.autoSyncEnabled,
+    });
+  }
+
+  async function handleSaveWebdavConfig() {
+    if (isDataSyncBusy) {
+      return;
+    }
+
+    const config = normalizeWebDavConfig();
+    const validationError = getWebDavValidationError(config);
+    if (validationError) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", validationError));
+      return;
+    }
+
+    setIsSavingWebdavConfig(true);
+    try {
+      await persistWebdavConfig(config);
+      setWebdavConfig(config);
+      setDataSyncNotice(normalizeNoticeMessagePrefix(
+        "success",
+        t("settings.dataSync.configSaved"),
+      ));
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix(
+        "error",
+        `${t("settings.dataSync.configSaveFailed")}: ${getDisplayErrorMessage(error)}`,
+      ));
+    } finally {
+      setIsSavingWebdavConfig(false);
+    }
+  }
+
+  async function handleWebdavAutoSyncChange(enabled: boolean) {
+    if (isDataSyncBusy || enabled === webdavConfig.autoSyncEnabled) {
+      return;
+    }
+
+    const config = {
+      ...normalizeWebDavConfig(),
+      autoSyncEnabled: enabled,
+    };
+    if (enabled) {
+      const validationError = getWebDavValidationError(config);
+      if (validationError) {
+        setDataSyncNotice(normalizeNoticeMessagePrefix("error", validationError));
+        return;
+      }
+    }
+
+    setIsSavingWebdavConfig(true);
+    try {
+      await persistWebdavConfig(config);
+      setWebdavConfig(config);
+      setDataSyncNotice(normalizeNoticeMessagePrefix(
+        "success",
+        t("settings.dataSync.configSaved"),
+      ));
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix(
+        "error",
+        `${t("settings.dataSync.configSaveFailed")}: ${getDisplayErrorMessage(error)}`,
+      ));
+    } finally {
+      setIsSavingWebdavConfig(false);
+    }
+  }
+
+  function parseAppDataSnapshot(raw: string): AppDataSnapshot {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(t("settings.dataSync.invalidFormat"));
+    }
+
+    const snapshot = parsed as Partial<AppDataSnapshot>;
+    if (!snapshot.config || typeof snapshot.config !== "object" || Array.isArray(snapshot.config)) {
+      throw new Error(t("settings.dataSync.invalidFormat"));
+    }
+
+    if (!snapshot.keys || typeof snapshot.keys !== "object" || Array.isArray(snapshot.keys)) {
+      throw new Error(t("settings.dataSync.invalidFormat"));
+    }
+
+    if (!snapshot.usageStats || typeof snapshot.usageStats !== "object" || Array.isArray(snapshot.usageStats)) {
+      throw new Error(t("settings.dataSync.invalidFormat"));
+    }
+
+    return snapshot as AppDataSnapshot;
+  }
+
+  async function handleExportData() {
+    if (isDataSyncBusy) {
+      return;
+    }
+
+    setIsExportingData(true);
+    try {
+      const path = await exportAppDataToDownloads();
+      setDataSyncNotice(normalizeNoticeMessagePrefix(
+        "success",
+        `${t("settings.dataSync.exportSuccess")}: ${path}`,
+      ));
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", `${t("settings.dataSync.exportFailed")}: ${getDisplayErrorMessage(error)}`));
+    } finally {
+      setIsExportingData(false);
+    }
+  }
+
+  async function importSnapshot(snapshot: AppDataSnapshot) {
+    await importAppData(snapshot);
+    await refreshDataAfterImport();
+    setDataSyncNotice(normalizeNoticeMessagePrefix("success", t("settings.dataSync.importSuccess")));
+  }
+
+  async function handleImportFileSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+    event.currentTarget.value = "";
+
+    if (!file || isDataSyncBusy) {
+      return;
+    }
+
+    setIsImportingData(true);
+    try {
+      const content = await file.text();
+      const snapshot = parseAppDataSnapshot(content);
+      await importSnapshot(snapshot);
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", `${t("settings.dataSync.importFailed")}: ${getDisplayErrorMessage(error)}`));
+    } finally {
+      setIsImportingData(false);
+    }
+  }
+
+  function triggerImportFileDialog() {
+    dataImportInputRef.current?.click();
+  }
+
+  async function handleUploadToWebdav() {
+    if (isDataSyncBusy) {
+      return;
+    }
+
+    const config = normalizeWebDavConfig();
+    const validationError = getWebDavValidationError(config);
+    if (validationError) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", validationError));
+      return;
+    }
+
+    setWebdavConfig(config);
+    setIsUploadingData(true);
+    try {
+      await persistWebdavConfig(config);
+      const snapshot = await exportAppData();
+      await uploadAppDataToWebdav(snapshot, config);
+      setDataSyncNotice(normalizeNoticeMessagePrefix("success", t("settings.dataSync.uploadSuccess")));
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", `${t("settings.dataSync.uploadFailed")}: ${getDisplayErrorMessage(error)}`));
+    } finally {
+      setIsUploadingData(false);
+    }
+  }
+
+  async function handleDownloadFromWebdav() {
+    if (isDataSyncBusy) {
+      return;
+    }
+
+    const config = normalizeWebDavConfig();
+    const validationError = getWebDavValidationError(config);
+    if (validationError) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", validationError));
+      return;
+    }
+
+    setWebdavConfig(config);
+    setIsDownloadingData(true);
+    try {
+      await persistWebdavConfig(config);
+      const snapshot = await downloadAppDataFromWebdav(config);
+      await importSnapshot(snapshot);
+      setDataSyncNotice(normalizeNoticeMessagePrefix("success", t("settings.dataSync.downloadAndImportSuccess")));
+    } catch (error) {
+      setDataSyncNotice(normalizeNoticeMessagePrefix("error", `${t("settings.dataSync.downloadFailed")}: ${getDisplayErrorMessage(error)}`));
+    } finally {
+      setIsDownloadingData(false);
+    }
+  }
+
+  function handleWebdavInputChange(
+    key: "endpoint" | "username" | "password" | "remoteRoot",
+    value: string,
+  ) {
+    setWebdavConfig((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
   function showHideTaskbarNotice() {
     setGeneralNotice(t("settings.hideTaskbarIcon.notice"));
   }
@@ -519,12 +838,45 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   }
 
   function handleSectionSelect(sectionId: SettingsSectionId) {
+    contentScrollRef.current?.scrollTo({ top: 0 });
     setActiveSection(sectionId);
   }
 
   useEffect(() => {
     void loadProviderData();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void getWebdavSyncPassword()
+      .then((password) => {
+        if (active) {
+          setWebdavConfig((current) => ({ ...current, password }));
+        }
+      })
+      .catch(() => {
+        // 密码读取失败不覆盖输入框，后续保存或连接操作仍会给出明确错误。
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setWebdavConfig((current) => ({
+      ...current,
+      endpoint: settings.webdavEndpoint,
+      username: settings.webdavUsername,
+      remoteRoot: settings.webdavRemoteRoot,
+      autoSyncEnabled: settings.webdavAutoSyncEnabled,
+    }));
+  }, [
+    settings.webdavEndpoint,
+    settings.webdavUsername,
+    settings.webdavRemoteRoot,
+    settings.webdavAutoSyncEnabled,
+  ]);
 
   useEffect(() => {
     setOpacityDraft(settings.windowOpacity);
@@ -556,6 +908,18 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
 
     return () => window.clearTimeout(timer);
   }, [generalNotice]);
+
+  useEffect(() => {
+    if (!dataSyncNotice) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setDataSyncNotice(null);
+    }, 6000);
+
+    return () => window.clearTimeout(timer);
+  }, [dataSyncNotice]);
 
   const sectionContent: Record<SettingsSectionId, ReactNode> = {
     general: (
@@ -828,6 +1192,172 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     ),
     advanced: (
       <section className="flex flex-col gap-3">
+        {dataSyncNotice && (
+          <div
+            className={`rounded-lg border px-3 py-2 text-xs ${
+              dataSyncNotice.type === "success"
+                ? "border-success-soft-border bg-success-soft-bg text-success-soft-text"
+                : "border-danger-soft-border bg-danger-soft-bg text-danger-soft-text"
+            }`}
+            role="status"
+          >
+            {dataSyncNotice.message}
+          </div>
+        )}
+
+        <div className={`${GROUP_CARD_CLASS} divide-y divide-border`}>
+          <div className="px-3.5 py-2.5">
+            <h4 className="text-sm font-medium text-text">{t("settings.dataSync.title")}</h4>
+            <p className="mt-1 text-xs text-text-muted">{t("settings.dataSync.description")}</p>
+          </div>
+
+          <div className={SETTING_ROW_CLASS}>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.export")}</span>
+              <span className={ROW_HINT_CLASS}>{t("settings.dataSync.exportHint")}</span>
+            </div>
+            <Button
+              size="sm"
+              type="button"
+              disabled={isDataSyncBusy}
+              onClick={() => void handleExportData()}
+            >
+              {isExportingData ? t("settings.dataSync.exporting") : t("settings.dataSync.export")}
+            </Button>
+          </div>
+
+          <div className={SETTING_ROW_CLASS}>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.import")}</span>
+              <span className={ROW_HINT_CLASS}>{t("settings.dataSync.importHint")}</span>
+            </div>
+            <Button
+              size="sm"
+              type="button"
+              variant="softGhost"
+              disabled={isDataSyncBusy}
+              onClick={() => void triggerImportFileDialog()}
+            >
+              {isImportingData ? t("settings.dataSync.importing") : t("settings.dataSync.import")}
+            </Button>
+            <input
+              ref={dataImportInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              disabled={isDataSyncBusy}
+              onChange={(event) => void handleImportFileSelect(event)}
+            />
+          </div>
+        </div>
+
+        <div className={`${GROUP_CARD_CLASS} divide-y divide-border`}>
+          <div className="px-3.5 py-2.5">
+            <h4 className="text-sm font-medium text-text">{t("settings.dataSync.webdav.title")}</h4>
+            <p className="mt-1 text-xs text-text-muted">{t("settings.dataSync.webdav.description")}</p>
+          </div>
+
+          <div className="flex flex-col gap-1.5 px-3.5 py-2.5">
+            <label className="flex min-w-0 flex-col gap-0.5" htmlFor="webdav-endpoint">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.webdav.endpoint")}</span>
+              <span className={ROW_HINT_CLASS}>{t("settings.dataSync.webdav.endpointHint")}</span>
+            </label>
+            <input
+              id="webdav-endpoint"
+              className={`${FORM_INPUT_CLASS} w-full`}
+              type="url"
+              inputMode="url"
+              placeholder={t("settings.dataSync.webdav.endpointPlaceholder")}
+              value={webdavConfig.endpoint}
+              disabled={isDataSyncBusy}
+              onChange={(event) => handleWebdavInputChange("endpoint", event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5 px-3.5 py-2.5">
+            <label className="flex min-w-0 flex-col gap-0.5" htmlFor="webdav-remote-root">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.webdav.remoteRoot")}</span>
+              <span className={ROW_HINT_CLASS}>{t("settings.dataSync.webdav.remoteRootHint")}</span>
+            </label>
+            <input
+              id="webdav-remote-root"
+              className={`${FORM_INPUT_CLASS} w-full`}
+              type="text"
+              placeholder={t("settings.dataSync.webdav.remoteRootPlaceholder")}
+              value={webdavConfig.remoteRoot}
+              disabled={isDataSyncBusy}
+              onChange={(event) => handleWebdavInputChange("remoteRoot", event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5 px-3.5 py-2.5">
+            <label className="flex min-w-0 flex-col gap-0.5" htmlFor="webdav-username">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.webdav.username")}</span>
+            </label>
+            <input
+              id="webdav-username"
+              className={`${FORM_INPUT_CLASS} w-full`}
+              type="text"
+              placeholder={t("settings.dataSync.webdav.usernamePlaceholder")}
+              value={webdavConfig.username}
+              disabled={isDataSyncBusy}
+              onChange={(event) => handleWebdavInputChange("username", event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5 px-3.5 py-2.5">
+            <label className="flex min-w-0 flex-col gap-0.5" htmlFor="webdav-password">
+              <span className={ROW_LABEL_CLASS}>{t("settings.dataSync.webdav.password")}</span>
+            </label>
+            <input
+              id="webdav-password"
+              className={`${FORM_INPUT_CLASS} w-full`}
+              type="password"
+              placeholder={t("settings.dataSync.webdav.passwordPlaceholder")}
+              value={webdavConfig.password}
+              disabled={isDataSyncBusy}
+              onChange={(event) => handleWebdavInputChange("password", event.target.value)}
+            />
+          </div>
+
+          <ToggleRow
+            label={t("settings.dataSync.webdav.autoSync")}
+            hint={t("settings.dataSync.webdav.autoSyncHint")}
+            checked={webdavConfig.autoSyncEnabled}
+            disabled={isDataSyncBusy}
+            onChange={(checked) => void handleWebdavAutoSyncChange(checked)}
+          />
+
+          <div className="flex flex-wrap items-center justify-end gap-2 px-3.5 py-2.5">
+              <Button
+                size="sm"
+                type="button"
+                variant="softGhost"
+                disabled={isDataSyncBusy}
+                onClick={() => void handleSaveWebdavConfig()}
+              >
+                {isSavingWebdavConfig ? t("settings.dataSync.webdav.saving") : t("settings.dataSync.webdav.save")}
+              </Button>
+              <Button
+                size="sm"
+                type="button"
+                variant="softGhost"
+                disabled={isDataSyncBusy}
+                onClick={() => void handleUploadToWebdav()}
+              >
+                {isUploadingData ? t("settings.dataSync.webdav.uploading") : t("settings.dataSync.webdav.upload")}
+              </Button>
+              <Button
+                size="sm"
+                type="button"
+                disabled={isDataSyncBusy}
+                onClick={() => void handleDownloadFromWebdav()}
+              >
+                {isDownloadingData ? t("settings.dataSync.webdav.downloading") : t("settings.dataSync.webdav.download")}
+              </Button>
+          </div>
+        </div>
+
         <div className={GROUP_CARD_CLASS}>
           <ToggleRow
             label={t("settings.advancedSection.title")}
@@ -962,7 +1492,7 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      <div ref={contentScrollRef} className="flex-1 overflow-y-auto px-3 py-3">
         {sectionContent[activeSection]}
       </div>
     </div>

@@ -57,9 +57,39 @@ export interface AppSettings extends PollingSettings {
   updateCheckIntervalHours: number;
   windowOpacity: number;
   theme: ThemeMode;
+  webdavEndpoint: string;
+  webdavUsername: string;
+  webdavRemoteRoot: string;
+  webdavAutoSyncEnabled: boolean;
   windowPosition: { x: number; y: number } | null;
   windowSize: { width: number; height: number } | null;
   providerCardExpanded: Partial<Record<ProviderId, boolean>>;
+}
+
+export interface AppConfigFile {
+  settings: AppSettings;
+  providers: Record<string, unknown>;
+  providerOrder: string[];
+}
+
+export interface AppDataUsageStats {
+  version?: number;
+  providers?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface AppDataSnapshot {
+  config: AppConfigFile;
+  keys: Record<string, string>;
+  usageStats: AppDataUsageStats;
+}
+
+export interface WebDavSyncConfig {
+  endpoint: string;
+  username: string;
+  password: string;
+  remoteRoot: string;
+  autoSyncEnabled: boolean;
 }
 
 /** 默认设置 */
@@ -85,6 +115,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateCheckIntervalHours: 2,
   windowOpacity: 100,
   theme: "system",
+  webdavEndpoint: "",
+  webdavUsername: "",
+  webdavRemoteRoot: "",
+  webdavAutoSyncEnabled: false,
   windowPosition: null,
   windowSize: null,
   providerCardExpanded: createDefaultProviderCardExpanded(),
@@ -162,6 +196,10 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
     updateCheckIntervalHours: Number.isFinite(settings.updateCheckIntervalHours) && settings.updateCheckIntervalHours >= 1
       ? settings.updateCheckIntervalHours
       : DEFAULT_SETTINGS.updateCheckIntervalHours,
+    webdavEndpoint: typeof settings.webdavEndpoint === "string" ? settings.webdavEndpoint : "",
+    webdavUsername: typeof settings.webdavUsername === "string" ? settings.webdavUsername : "",
+    webdavRemoteRoot: typeof settings.webdavRemoteRoot === "string" ? settings.webdavRemoteRoot : "",
+    webdavAutoSyncEnabled: !!settings.webdavAutoSyncEnabled,
   };
 }
 

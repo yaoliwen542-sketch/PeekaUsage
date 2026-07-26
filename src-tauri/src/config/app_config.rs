@@ -46,6 +46,14 @@ pub struct AppSettings {
     pub window_opacity: f64,
     #[serde(default)]
     pub theme: ThemeMode,
+    #[serde(default)]
+    pub webdav_endpoint: String,
+    #[serde(default)]
+    pub webdav_username: String,
+    #[serde(default)]
+    pub webdav_remote_root: String,
+    #[serde(default)]
+    pub webdav_auto_sync_enabled: bool,
     pub window_position: Option<WindowPosition>,
     pub window_size: Option<WindowSize>,
     #[serde(default = "default_provider_card_expanded")]
@@ -139,6 +147,10 @@ impl Default for AppSettings {
             launch_at_startup: false,
             window_opacity: 100.0,
             theme: ThemeMode::default(),
+            webdav_endpoint: String::new(),
+            webdav_username: String::new(),
+            webdav_remote_root: String::new(),
+            webdav_auto_sync_enabled: false,
             window_position: None,
             window_size: None,
             provider_card_expanded: default_provider_card_expanded(),
@@ -345,6 +357,23 @@ impl AppConfig {
             .map_err(|e| format!("写入配置文件失败: {}", e))?;
 
         Ok(())
+    }
+
+    pub async fn get_snapshot(&self) -> ConfigFile {
+        self.config.read().await.clone()
+    }
+
+    pub async fn replace_all(&self, mut snapshot: ConfigFile) -> Result<(), String> {
+        snapshot.settings = snapshot.settings.normalized();
+
+        {
+            let mut config = self.config.write().await;
+            config.settings = snapshot.settings;
+            config.providers = snapshot.providers;
+            config.provider_order = snapshot.provider_order;
+        }
+
+        self.save().await
     }
 
     pub async fn get_settings(&self) -> AppSettings {
