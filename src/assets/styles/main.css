@@ -41,11 +41,21 @@ textarea {
   overflow: hidden;
 }
 
+/* 收起态：#app 背景随内容一起淡出（180ms），保留 1px 边框宽度只淡出颜色，
+   避免 border:none 造成的 1px 布局抖动。
+   transition 声明只放在本规则里——利用 CSS transition 特性：
+   进入 collapsed 时本规则生效，background/border-color 从有色过渡到透明（180ms 淡出），
+   与 app-shell 子元素的 opacity 淡出同步；
+   退出 collapsed 时本规则不再匹配，#app 默认规则无 transition，
+   背景瞬时恢复，避免「内容已淡入、#app 背景还在淡入」的空框割裂。
+   （切勿再加 app-edge-docked 类并挂 transition：preview 态不该带过渡，
+    否则展开时背景会慢淡入，与内容 70ms delay 淡入不同步） */
 #app.app-edge-docked-collapsed {
   background: transparent;
-  border: none;
+  border-color: transparent;
   border-radius: 0;
   overflow: visible;
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .app-shell {
@@ -56,14 +66,16 @@ textarea {
   flex-direction: column;
 }
 
-/* 吸附态下内容统一带透明度过渡：收起时内容先淡出（180ms），
-   展开时延迟 70ms 再淡入，与窗口几何动画（240/260ms）对齐 */
+/* 吸附态下内容统一带透明度过渡：收起时内容淡出（150ms），淡出后窗口才瞬时落定
+   成细条（useEdgeDock 的 EDGE_DOCK_COLLAPSE_SNAP_DELAY_MS=170ms，留 20ms 余量
+   确保切几何时内容已完全透明）；展开时窗口瞬时落回，内容延迟 60ms 再淡入。
+   禁止逐帧几何动画（透明窗口掉帧） */
 .app-shell.is-edge-docked > :not(.edge-dock-handle) {
-  transition: opacity 180ms ease;
+  transition: opacity 150ms ease;
 }
 
 .app-shell.is-edge-docked-preview > :not(.edge-dock-handle) {
-  transition-delay: 70ms;
+  transition-delay: 60ms;
 }
 
 .app-shell.is-edge-docked-collapsed > :not(.edge-dock-handle) {
@@ -71,34 +83,23 @@ textarea {
   pointer-events: none;
 }
 
-/* 细条把手进场：窗口收进边缘后从吸附边长出；退场在展开时快速溶解 */
-.app-shell.is-edge-docked-collapsed .edge-dock-handle {
-  animation: edge-dock-handle-in 180ms ease-out 90ms backwards;
-}
-
-.edge-dock-handle.is-exiting {
-  animation: edge-dock-handle-out 150ms ease-in both;
+/* 细条把手进场：把手只在窗口几何已落定成细条态后才挂载（useEdgeDock 的 snapped=true），
+   所以把手从一开始就在 16x136 窗口里渲染，定位基准稳定，不需要 delay 等几何落定。
+   动画作用在内层 .edge-dock-handle-shell（固定 16x136 尺寸）上，不作用在外层
+   .edge-dock-handle（inset:0 撑满窗口）上 -- 外层尺寸若变化会让 scale 基准跳变。 */
+.app-shell.is-edge-docked-collapsed .edge-dock-handle-shell {
+  animation: edge-dock-handle-in 200ms ease-out;
 }
 
 @keyframes edge-dock-handle-in {
   from {
     opacity: 0;
-    transform: scale(0.55);
+    transform: scale(0.7);
   }
 
   to {
     opacity: 1;
     transform: scale(1);
-  }
-}
-
-@keyframes edge-dock-handle-out {
-  from {
-    opacity: 1;
-  }
-
-  to {
-    opacity: 0;
   }
 }
 
@@ -112,18 +113,15 @@ textarea {
 
 .edge-dock-handle.edge-left {
   justify-content: flex-start;
-  transform-origin: left center;
 }
 
 .edge-dock-handle.edge-right {
   justify-content: flex-end;
-  transform-origin: right center;
 }
 
 .edge-dock-handle.edge-top {
   justify-content: center;
   align-items: flex-start;
-  transform-origin: center top;
 }
 
 .edge-dock-handle-shell {
@@ -134,6 +132,20 @@ textarea {
   background: transparent;
   /* 收起细条只要呼吸发光的核心条，不再给外壳加描边/投影，
      否则桌面上会看到一个透明框套住细条 */
+}
+
+/* scale 进场动画的变换原点：从吸附边长出。
+   shell 是固定尺寸，原点稳定，不受窗口几何落定影响。 */
+.edge-dock-handle.edge-left .edge-dock-handle-shell {
+  transform-origin: left center;
+}
+
+.edge-dock-handle.edge-right .edge-dock-handle-shell {
+  transform-origin: right center;
+}
+
+.edge-dock-handle.edge-top .edge-dock-handle-shell {
+  transform-origin: center top;
 }
 
 .edge-dock-handle.edge-top .edge-dock-handle-shell {

@@ -6,7 +6,6 @@ import {
   getCurrentWindow,
 } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../stores/settingsStore";
-import { animateWindowBounds } from "../utils/ipc";
 import {
   areWindowPositionsEqual,
   areWindowSizesEqual,
@@ -29,9 +28,26 @@ import {
 
 type WindowDockPhase = "collapsed" | "preview";
 
+/** 收起时序（消除几何突变与把手渲染的冲突）：
+ *
+ * 旧方案（v0.2.8）：t=0 切 collapsed 视觉态 + 挂载把手 + 内容淡出，t=190 才切窗口几何。
+ * 问题：把手在【展开态窗口】里渲染（inset:0 撑满 400x600），t=190 几何突变时把手
+ * 因 flex 居中而位置跳变 + scale 动画基准突变 = 多次闪动。
+ *
+ * 新方案：把手推迟到几何落定后才挂载。t=0 只切视觉态让内容淡出（150ms），窗口仍是展开态；
+ * t=SNAP_DELAY(170ms) 切窗口几何 + 标记 snapped=true 让把手在【已是细条态】的窗口上挂载。
+ * 把手从一开始就在 16x136 窗口里渲染，定位基准稳定，全程不跳。
+ * 代价：收起时内容淡出后到把手出现之间有 ~20ms 的短暂空白期（人眼对"消失后
+ * 短暂空白再出现"的容忍度远高于"闪动"）。 */
+const EDGE_DOCK_COLLAPSE_SNAP_DELAY_MS = 170;
+
 export type WindowDockVisualState = {
   edge: WindowDockEdge;
   phase: WindowDockPhase;
+  /** collapsed 态下窗口几何是否已落定成细条。
+   * false：内容淡出中，窗口仍是展开态，把手不应渲染。
+   * true：几何已切到细条，把手可挂载。 */
+  snapped: boolean;
 };
 
 type WindowDockState = {
@@ -78,6 +94,8 @@ export function useEdgeDock() {
   const latestWindowSizeRef = useRef<LogicalWindowSize | null>(null);
   const edgeDockCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const edgeDockEvaluateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 收起淡出后的延迟几何落定定时器（展开/清除时取消，避免半路把窗口收成细条）
+  const edgeDockSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titlebarDragIntentUntilRef = useRef(0);
   const titlebarDraggingRef = useRef(false);
   const dragStartWindowSizeRef = useRef<LogicalWindowSize | null>(null);
@@ -233,12 +251,41 @@ export function useEdgeDock() {
     }
   }
 
-  function updateDockState(nextState: WindowDockState | null) {
+  function clearEdgeDockSnapTimer() {
+    if (edgeDockSnapTimerRef.current) {
+      clearTimeout(edgeDockSnapTimerRef.current);
+      edgeDockSnapTimerRef.current = null;
+    }
+  }
+
+  /** 收起统一入口：先切 collapsed 视觉态（内容淡出、#app 背景淡出），
+   * snapped=false 期间不渲染把手；SNAP_DELAY 后切窗口几何 + snapped=true 让把手
+   * 在已落定的细条窗口上挂载，全程把手定位基准稳定不跳变 */
+  function scheduleCollapseSnap(nextState: WindowDockState) {
+    clearEdgeDockSnapTimer();
+    updateDockState(nextState, false);
+    persistDockExpandedBounds(nextState);
+      edgeDockSnapTimerRef.current = setTimeout(() => {
+        edgeDockSnapTimerRef.current = null;
+        // 内容已淡出不可见，瞬时落定肉眼不可察觉
+        void setProgrammaticWindowBounds(
+          nextState.collapsedBounds.windowPosition,
+          nextState.collapsedBounds.windowSize,
+          { edge: nextState.edge, collapsing: true },
+        ).then(() => {
+          // 几何落定后才让把手挂载：此刻窗口已是细条态，把手定位基准稳定
+          updateDockState(nextState, true);
+        });
+      }, EDGE_DOCK_COLLAPSE_SNAP_DELAY_MS);
+  }
+
+  function updateDockState(nextState: WindowDockState | null, snapped: boolean) {
     dockStateRef.current = nextState;
     setDockVisualState(nextState
       ? {
         edge: nextState.edge,
         phase: nextState.phase,
+        snapped,
       }
       : null);
   }
@@ -253,29 +300,23 @@ export function useEdgeDock() {
   async function setProgrammaticWindowBounds(
     windowPosition: LogicalWindowPosition,
     windowSize: LogicalWindowSize,
-    animateMs = 0,
+    options?: { edge?: WindowDockEdge; collapsing?: boolean },
   ) {
     const currentWindow = getCurrentWindow();
     markProgrammaticWindowMove();
     markProgrammaticWindowResize();
-    if (animateMs > 0) {
-      try {
-        // Rust 侧按 ~125fps 步进缓动；命令立即返回（动画异步执行），
-        // PROGRAMMATIC 保持窗（400ms）覆盖动画全程（≤260ms）
-        await animateWindowBounds(
-          windowPosition.x,
-          windowPosition.y,
-          windowSize.width,
-          windowSize.height,
-          animateMs,
-        );
-        return;
-      } catch {
-        // 动画命令不可用时回退瞬时落定
-      }
+    // 右侧吸附时按方向选择 setSize/setPosition 顺序：让落定过程中窗口右缘
+    // 先越过屏幕右缘（不可见）再回到屏幕右缘，避免把手在落定瞬间出现在屏幕中部。
+    // 收起（expanded→collapsed）：setPosition 先把窗口左移，右缘越屏到不可见，setSize 再收缩到 16；
+    // 展开（collapsed→expanded）：setSize 先把宽度撑开，右缘越屏到不可见，setPosition 再左移贴齐。
+    // 左/上吸附锚定边在左上角，setPosition 通常是 no-op，顺序无影响，走默认即可。
+    if (options?.edge === "right" && options.collapsing) {
+      await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
+      await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
+    } else {
+      await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
+      await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
     }
-    await currentWindow.setSize(new LogicalSize(windowSize.width, windowSize.height));
-    await currentWindow.setPosition(new LogicalPosition(windowPosition.x, windowPosition.y));
   }
 
   async function collapseDockedWindow() {
@@ -288,32 +329,20 @@ export function useEdgeDock() {
       return;
     }
 
-    const dockBounds = await resolveWindowDockBounds(
-      dockState.expandedBounds.windowPosition,
-      dockState.expandedBounds.windowSize,
-    );
-
-    if (!dockBounds || dockBounds.edge !== dockState.edge) {
-      updateDockState(null);
-      return;
-    }
-
+    // 复用 dockState 里已有的 collapsedBounds，不重新调 resolveWindowDockBounds。
+    // 原因：展开后 expandedBounds 可能被 autoFit / onResized 改动（高度/位置微调），
+    // 若每次收起都基于当前 expandedBounds 重算 collapsedBounds，细条位置会随
+    // 展开态边界的微小漂移而累积漂移。collapsedBounds 在首次 activateWindowDock /
+    // evaluateWindowDock 时已确定，展开->收起循环中应保持稳定。
+    // 只有用户手动拖拽/缩放后才会 clearWindowDock 清状态，重新走 evaluateWindowDock。
     const nextState: WindowDockState = {
-      edge: dockBounds.edge,
+      edge: dockState.edge,
       phase: "collapsed",
-      expandedBounds: {
-        windowPosition: dockBounds.expandedPosition,
-        windowSize: dockBounds.expandedSize,
-      },
-      collapsedBounds: {
-        windowPosition: dockBounds.collapsedPosition,
-        windowSize: dockBounds.collapsedSize,
-      },
+      expandedBounds: dockState.expandedBounds,
+      collapsedBounds: dockState.collapsedBounds,
     };
 
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize, 240);
-    updateDockState(nextState);
-    persistDockExpandedBounds(nextState);
+    scheduleCollapseSnap(nextState);
   }
 
   async function expandDockedWindow() {
@@ -322,17 +351,22 @@ export function useEdgeDock() {
       return;
     }
 
-    await setProgrammaticWindowBounds(
-      dockState.expandedBounds.windowPosition,
-      dockState.expandedBounds.windowSize,
-      260,
-    );
-
+    // 取消可能未落地的收起 snap，避免展开途中窗口被收成细条
+    clearEdgeDockSnapTimer();
+    // 展开时窗口瞬时切回展开态几何。此时把手还挂在细条窗口上（snapped=true），
+    // 几何突变会让把手位置跳变 -- 所以必须先把 snapped 设为 false 让把手卸载，
+    // 再切几何，避免把手在展开态窗口里渲染导致闪动。
+    // 内容此时 opacity 仍是 0（collapsed 态下 opacity:0），切几何不可见。
     const nextState: WindowDockState = {
       ...dockState,
       phase: "preview",
     };
-    updateDockState(nextState);
+    updateDockState(nextState, false);
+    await setProgrammaticWindowBounds(
+      nextState.expandedBounds.windowPosition,
+      nextState.expandedBounds.windowSize,
+      { edge: nextState.edge },
+    );
     persistDockExpandedBounds(nextState);
   }
 
@@ -356,9 +390,7 @@ export function useEdgeDock() {
       },
     };
 
-    await setProgrammaticWindowBounds(dockBounds.collapsedPosition, dockBounds.collapsedSize, 240);
-    updateDockState(nextState);
-    persistDockExpandedBounds(nextState);
+    scheduleCollapseSnap(nextState);
   }
 
   function clearWindowDock(bounds?: {
@@ -367,7 +399,8 @@ export function useEdgeDock() {
   }) {
     clearEdgeDockCollapseTimer();
     clearEdgeDockEvaluateTimer();
-    updateDockState(null);
+    clearEdgeDockSnapTimer();
+    updateDockState(null, false);
 
     if (bounds) {
       scheduleWindowBoundsSave(bounds);
@@ -556,6 +589,14 @@ export function useEdgeDock() {
           return;
         }
 
+        // programmatic 的 setSize（如展开时切回展开态几何）会触发 onResized，
+        // 此时不应把实际落定尺寸写回 expandedBounds -- DPI 取整可能让 nextSize
+        // 与原 expandedBounds.windowSize 差 1px，反复展开收起会累积漂移。
+        // 只更新 latestWindowSizeRef 供 onMoved 复用，expandedBounds 保持原值。
+        if (isProgrammaticWindowResize()) {
+          return;
+        }
+
         if (dockState.phase !== "collapsed") {
           dockStateRef.current = {
             ...dockState,
@@ -637,6 +678,7 @@ export function useEdgeDock() {
       clearWindowBoundsSaveTimer();
       clearEdgeDockCollapseTimer();
       clearEdgeDockEvaluateTimer();
+      clearEdgeDockSnapTimer();
     };
   }, []);
 
@@ -673,15 +715,16 @@ export function useEdgeDock() {
     }
 
     void (async () => {
+      clearEdgeDockSnapTimer();
       if (dockState.phase === "collapsed") {
         await setProgrammaticWindowBounds(
           dockState.expandedBounds.windowPosition,
           dockState.expandedBounds.windowSize,
-          260,
+          { edge: dockState.edge },
         );
       }
 
-      updateDockState(null);
+      updateDockState(null, false);
       scheduleWindowBoundsSave({
         windowPosition: dockState.expandedBounds.windowPosition,
         windowSize: dockState.expandedBounds.windowSize,

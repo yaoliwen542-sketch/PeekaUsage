@@ -21,7 +21,7 @@ import {
 } from "./stores/settingsStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { applyTheme, observeSystemTheme } from "./utils/theme";
-import { markProgrammaticWindowResize, type WindowDockEdge } from "./utils/windowBounds";
+import { markProgrammaticWindowResize } from "./utils/windowBounds";
 
 /** 设置页最小舒适尺寸：主浮窗常被内容自适应压到 300x200 左右，
  * 直接渲染设置页会严重挤压换行，进入设置时临时扩大、返回时恢复 */
@@ -46,19 +46,12 @@ export default function App() {
   // 进入设置页前的浮窗尺寸：仅在发生过临时扩窗时有值，返回主界面时恢复
   const preSettingsSizeRef = useRef<{ width: number; height: number } | null>(null);
 
-  // 细条把手退场：collapsed → preview 瞬间保留把手 160ms 播放溶解动画，
-  // 避免窗口展开时发光细条硬消失
-  const prevDockPhaseRef = useRef<string | null>(null);
-  const [exitingHandleEdge, setExitingHandleEdge] = useState<WindowDockEdge | null>(null);
-  useEffect(() => {
-    const prevPhase = prevDockPhaseRef.current;
-    prevDockPhaseRef.current = dockVisualState?.phase ?? null;
-    if (prevPhase === "collapsed" && dockVisualState && dockVisualState.phase !== "collapsed") {
-      setExitingHandleEdge(dockVisualState.edge);
-      const timer = window.setTimeout(() => setExitingHandleEdge(null), 170);
-      return () => window.clearTimeout(timer);
-    }
-  }, [dockVisualState?.phase, dockVisualState?.edge]);
+  // 细条把手渲染：只在 collapsed 且几何已落定（snapped=true）后挂载。
+  // 收起时把手推迟到窗口切到细条态后才出现，避免在展开态窗口里渲染导致
+  // 几何突变时把手位置跳变闪动。展开时 snapped 立即变 false 让把手卸载，
+  // 窗口才切回展开态几何，避免把手在展开态窗口里停留闪动。
+  // 不再需要 exiting 溶解动画：展开时内容延迟 70ms 淡入，把手在这 70ms 内
+  // 消失即可，用户不会察觉硬消失。
 
   /** 进入设置页：窗口小于设置页最小舒适尺寸时临时扩大（越界则平移校正）。
    * 扩窗走 programmatic 标记，不会被误判成用户手动 resize；
@@ -298,14 +291,13 @@ export default function App() {
         <WidgetContainer
           onOpenSettings={openSettings}
           onDragIntentStart={registerTitlebarDragIntent}
-          suppressWindowAutoFit={dockVisualState?.phase === "collapsed"}
+          suppressWindowAutoFit={dockVisualState != null}
         />
       ) : (
         <SettingsPanel onBack={() => void handleBackFromSettings()} />
       )}
-      {dockVisualState?.phase === "collapsed" ? <EdgeDockHandle edge={dockVisualState.edge} /> : null}
-      {dockVisualState?.phase !== "collapsed" && exitingHandleEdge ? (
-        <EdgeDockHandle edge={exitingHandleEdge} exiting />
+      {dockVisualState?.phase === "collapsed" && dockVisualState.snapped ? (
+        <EdgeDockHandle edge={dockVisualState.edge} />
       ) : null}
     </div>
   );

@@ -428,11 +428,23 @@
 - 设置页“通用”里提供该功能开关，持久化字段是 `edgeDockCollapseEnabled`
 - 该开关放在“自动调整窗口高度以适应内容”后；注意通用区其后还有紧凑色标（`compactColorMarkers`）和“显示灵动岛”（`islandVisible`），灵动岛开关固定为通用区最后一个条目
 - 收起细条只保留呼吸发光的核心条；`.edge-dock-handle-shell` 不要加回描边/投影/圆角外壳，否则桌面上会看到一个透明框套住细条（v0.2.8 已按此修正，相关死 token 已清理）
-- 收起/展开的窗口几何变化必须走缓动动画，不要回退成瞬时 `setSize`/`setPosition`：
-  - Rust 侧提供 `animate_window_bounds` 命令（`window_commands.rs`，逻辑像素入参、内部乘 scaleFactor、easeInOutCubic、代次取消、结束精确落定），前端封装在 `utils/ipc.ts` 的 `animateWindowBounds(x, y, width, height, durationMs)`
-  - 时长约定：边缘吸附收起 240ms、展开 260ms；灵动岛展开 240ms、收起 220ms、展开后面板高度自适应 160ms
-  - 内容层 CSS 过渡与几何动画 t=0 对齐：收起时内容先淡出（180ms）、把手延迟 90ms 从边缘长出；展开时把手以 `is-exiting` 类溶解 150ms、内容延迟 70ms 淡入
-  - 灵动岛面板高度自适应（`IslandWidget.tsx`）同样走 `animateWindowBounds`，位置夹取与尺寸变化必须一次性动画到位，不能先 `setPosition` 再 `setSize`（会产生先跳位再变高的割裂）
+- 收起/展开的窗口几何变化**禁止逐帧动画**，不要给边缘吸附重新接回 `animateWindowBounds`：
+  - 透明 WebView2 窗口上逐帧 `setSize`/`setPosition`（即使 Rust 侧 125fps 步进）会强制 Chromium 每帧全量重排/重绘，收起/展开肉眼明显卡顿（v0.2.8 的 240/260ms 几何缓动已因此被移除）
+  - **当前时序是「内容先淡出 → 几何落定后把手才挂载」（v0.2.9 重写）**：
+    - `EDGE_DOCK_COLLAPSE_SNAP_DELAY_MS`（170ms）；内容淡出 150ms、`#app` 背景淡出 150ms
+    - 收起：`scheduleCollapseSnap` t=0 切 collapsed 视觉态（内容/`#app` 背景淡出 150ms、`snapped=false` 不渲染把手），t=170ms 一次性 `setSize`/`setPosition` 落定成细条，`.then()` 里 `snapped=true` 让 `EdgeDockHandle` 才挂载 -- 把手从一开始就在 16x136 细条窗口里渲染，定位基准稳定全程不跳
+    - 展开：`expandDockedWindow` 先 `updateDockState(nextState, false)`（`snapped=false` 让把手卸载）再 `await setProgrammaticWindowBounds` 切回展开态，内容延迟 60ms 淡入；不再有 `is-exiting` 溶解动画（展开时内容 60ms delay 淡入，把手在这 60ms 内消失即可）
+    - 旧方案（v0.2.8）t=0 就挂载把手、t=190 才切几何，把手在展开态窗口（400x600）里渲染，几何突变时因 flex 居中位置跳变 + scale 动画基准突变 = 多次闪动；v0.2.9 把把手推迟到几何落定后才挂载，根除闪动
+  - 展开/清除吸附时必须取消未落地的收起 snap 定时器（`clearEdgeDockSnapTimer`），避免半路把窗口收成细条
+  - **`#app` 背景边框淡出过渡必须只挂在 `app-edge-docked-collapsed` 规则上，不能挂在 `app-edge-docked`（preview 态）上**：`App.tsx` 只 toggle `app-edge-docked-collapsed` 类，`app-edge-docked` 类从未被加，挂在它上面的 transition 是死规则不生效。利用 CSS transition「进入规则生效触发过渡、退出规则失效瞬时恢复」的特性：`collapsed` 规则带 transition 让背景随内容淡出，退出 collapsed 后规则不匹配、默认 `#app` 无 transition 背景瞬时就位，正好匹配内容层「淡出 150ms / 延迟 60ms 淡入」的非对称时序
+  - **右侧吸附的 `setSize`/`setPosition` 顺序必须按方向取反**：`setProgrammaticWindowBounds` 接收 `{ edge, collapsing }` 选项，右侧吸附收起时 `setPosition` 先（窗口左移让右缘越过屏幕右缘到不可见）再 `setSize`；展开时反过来 `setSize` 先再 `setPosition`。固定顺序会让落定过程中窗口右缘短暂出现在屏幕中部可见位置。左/上吸附锚定边在左上角，`setPosition` 通常是 no-op，顺序无影响
+  - **把手动画必须作用在内层 `.edge-dock-handle-shell`（固定 16x136 尺寸）上，不能作用在外层 `.edge-dock-handle`（`inset:0` 撑满窗口）上**：外层尺寸随窗口几何变化，若 `transform:scale` 挂在外层，窗口尺寸突变会让 scale 基准跳变。挪到固定尺寸的 shell 上后，外层只做定位，shell 独立做缩放动画
+  - **`collapseDockedWindow` 必须复用 `dockState.collapsedBounds`，不能重新调 `resolveWindowDockBounds` 重算**：展开后 `expandedBounds` 可能被 autoFit / onResized 微调（DPI 取整差 1px），若每次收起都基于当前 `expandedBounds` 重算 collapsedBounds，细条位置/高度会随展开态边界累积漂移。collapsedBounds 在首次 `activateWindowDock` / `evaluateWindowDock` 时确定，展开→收起循环中保持稳定；只有用户手动拖拽/缩放后 `clearWindowDock` 清状态、重新走 `evaluateWindowDock` 才重算
+  - **`onResized` 里 `isProgrammaticWindowResize()` 为 true 时必须直接 return，不更新 `expandedBounds`**：展开/收起的 `setProgrammaticWindowBounds` 触发的 onResized 报告的尺寸可能因 DPI 取整与目标差 1px，写回会累积漂移
+  - **`suppressWindowAutoFit` 必须在所有吸附态（`dockVisualState != null`）都生效，不能只在 collapsed 态**：preview 态若不抑制 autoFit，展开后 `fitCurrentWindowHeight` 会立即把窗口高度改成内容高度，污染 `expandedBounds`，下次收起细条位置漂移
+- Rust 侧仍保留 `animate_window_bounds` 命令（`window_commands.rs`，逻辑像素入参、内部乘 scaleFactor、easeInOutCubic、代次取消、结束精确落定），前端封装在 `utils/ipc.ts` 的 `animateWindowBounds(x, y, width, height, durationMs)`，目前仅供灵动岛使用：
+  - 时长约定：灵动岛展开 240ms、收起 220ms、展开后面板高度自适应 160ms
+  - 灵动岛面板高度自适应（`IslandWidget.tsx`）走 `animateWindowBounds`，位置夹取与尺寸变化必须一次性动画到位，不能先 `setPosition` 再 `setSize`（会产生先跳位再变高的割裂）
 
 ### 22. Anthropic 已支持更多订阅窗口与 Extra Usage 展示
 
