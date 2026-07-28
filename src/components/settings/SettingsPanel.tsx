@@ -1071,12 +1071,6 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
               checked={settings.compactColorMarkersEnabled}
               onChange={(checked) => void saveSettings({ compactColorMarkersEnabled: checked })}
             />
-            <ToggleRow
-              label={t("settings.islandVisible.label")}
-              hint={t("settings.islandVisible.hint")}
-              checked={settings.islandVisible}
-              onChange={(checked) => void saveSettings({ islandVisible: checked })}
-            />
           </div>
         </div>
       </section>

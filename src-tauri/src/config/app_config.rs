@@ -25,8 +25,6 @@ pub struct AppSettings {
     pub auto_expand_window_to_fit_content: bool,
     #[serde(default = "default_edge_dock_collapse_enabled")]
     pub edge_dock_collapse_enabled: bool,
-    #[serde(default = "default_island_visible")]
-    pub island_visible: bool,
     #[serde(default)]
     pub hide_taskbar_icon: bool,
     #[serde(default)]
@@ -138,7 +136,6 @@ impl Default for AppSettings {
             refresh_on_settings_close: false,
             auto_expand_window_to_fit_content: true,
             edge_dock_collapse_enabled: default_edge_dock_collapse_enabled(),
-            island_visible: default_island_visible(),
             hide_taskbar_icon: false,
             hide_taskbar_icon_hint_shown: false,
             language: AppLanguage::default(),
@@ -162,11 +159,6 @@ impl Default for AppSettings {
 }
 
 fn default_edge_dock_collapse_enabled() -> bool {
-    true
-}
-
-fn default_island_visible() -> bool {
-    // 旧配置缺省时默认显示灵动岛，保证老用户升级后行为不变
     true
 }
 
@@ -381,10 +373,7 @@ impl AppConfig {
     }
 
     pub async fn save_settings(&self, settings: AppSettings) -> Result<(), String> {
-        {
-            let mut config = self.config.write().await;
-            config.settings = settings.normalized();
-        }
+        self.config.write().await.settings = settings.normalized();
         self.save().await
     }
 

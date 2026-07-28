@@ -2,7 +2,7 @@
 
 ## 补充更新
 
-> **2026-07-19 大更新**：供应商架构、灵动岛、UI 重构、稳健性修复的最新状态以 `AGENTS.md` 第 23–27 章为准。要点：内置供应商 12 家 + NewAPI + 自定义向导；灵动岛（island 窗口）可用且支持显隐开关（`islandVisible`）；UI 已迁移 Tailwind 4 + shadcn/ui（设置页/主界面/灵动岛均已重构，旧 CSS 大部分已删，`App.tsx` 边缘吸附逻辑抽至 `useEdgeDock.ts`）；配置/密钥/统计走原子写入；`fetch_all_usage` 已并发化；OpenAI costs 金额单位已修正（美元小数，禁止再 /100）；Anthropic 不再有 rate limit 计费探测；已注册 `tauri-plugin-single-instance` 禁止双开；本地打包必须走 `npm run tauri build`（裸 `cargo build --release` 缺少 `custom-protocol` feature，产出的 exe 会误连 devUrl 显示“无法访问此页面”）。
+> **2026-07-28 更新**：灵动岛功能已移除，当前只维护主窗口、边缘隐藏/展开、供应商监控和设置页。其余架构与稳健性要求以 `AGENTS.md` 为准。要点：内置供应商 12 家 + NewAPI + 自定义向导；UI 已迁移 Tailwind 4 + shadcn/ui；配置/密钥/统计走原子写入；`fetch_all_usage` 已并发化；已注册 `tauri-plugin-single-instance` 禁止双开；本地打包必须走 `npm run tauri build`（裸 `cargo build --release` 缺少 `custom-protocol` feature，产出的 exe 会误连 devUrl 显示“无法访问此页面”）。
 
 - `src/components/settings/SettingsPanel.tsx` 的刷新设置已支持“自动刷新 / 仅手动”切换，自动模式下可自定义数值并选择按秒或按分钟
 - 刷新相关持久化字段现在是 `pollingMode`、`pollingInterval`、`pollingUnit`、`providerPollingOverridesEnabled`、`providerPollingOverrides`、`refreshOnSettingsClose`
@@ -948,5 +948,4 @@ cargo check
 - 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
 - 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
 - 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token，registry 现内置 12 家
-
 

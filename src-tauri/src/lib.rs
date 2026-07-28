@@ -18,7 +18,6 @@ pub fn run() {
         // 单实例插件必须尽量最早注册（官方要求），避免其它插件的初始化在第二实例里白跑。
         // 第二实例启动时回调聚焦已有主窗口，随后插件自动终止第二实例，
         // 防止双开并发写 config.json / keys.dat / usage_stats.json 互相覆盖。
-        // 灵动岛窗口随主窗口同属一个进程，无需单独处理。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 if window.is_minimized().unwrap_or(false) {
@@ -55,17 +54,10 @@ pub fn run() {
             app.manage(provider_manager);
             app.manage(usage_stats_store);
 
-            // 初始化系统托盘（菜单文案与灵动岛勾选态按初始设置生成）
+            // 初始化系统托盘。
             let handle = app.handle().clone();
             commands::data_commands::start_webdav_auto_sync(handle.clone());
             tray::setup_tray(&handle, &initial_settings)?;
-
-            // 启动时按配置恢复灵动岛显隐（默认显示；用户关闭后重启保持隐藏，避免先闪一下再隐藏）
-            if !initial_settings.island_visible {
-                if let Some(island) = app.get_webview_window("island") {
-                    let _ = island.hide();
-                }
-            }
 
             // 窗口关闭事件：隐藏到托盘而非退出
             let window = app.get_webview_window("main").unwrap();
@@ -102,7 +94,6 @@ pub fn run() {
             commands::stats_commands::get_usage_stats_snapshot,
             commands::taskbar_commands::set_window_skip_taskbar,
             commands::window_commands::detect_oauth_tokens,
-            commands::window_commands::animate_window_bounds,
             commands::data_commands::export_app_data,
             commands::data_commands::export_app_data_to_downloads,
             commands::data_commands::import_app_data,

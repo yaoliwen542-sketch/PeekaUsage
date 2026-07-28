@@ -303,7 +303,7 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 
-/* 透明度滑杆（通用类，设置页与灵动岛共用）。
+/* 透明度滑杆（设置页与主界面共用）。
    appearance-none 后 WebView2 不绘制原生滑块，必须显式补齐 thumb 样式；
    视觉对齐旧 settings.css 的 .opacity-range。 */
 .opacity-slider {

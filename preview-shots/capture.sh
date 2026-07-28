@@ -63,11 +63,7 @@ if [ "$which" = "all" ] || [ "$which" = "widget" ]; then
   shot stats-light            stats             light 400 800 400
 fi
 
-if [ "$which" = "all" ] || [ "$which" = "island" ]; then
-  shot island-dark            island            dark  200 40  200
-  shot island-light           island            light 200 40  200
-  shot island-expanded-dark   island-expanded   dark  300 400 300
-  shot island-expanded-light  island-expanded   light 300 400 300
+if [ "$which" = "all" ] || [ "$which" = "dock" ]; then
   shot dock-left-dark         dock-left         dark  24  136 24
   shot dock-top-dark          dock-top          dark  132 24  132
 fi

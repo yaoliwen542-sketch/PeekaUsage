@@ -42,14 +42,6 @@ PeekaUsage 干的事情很简单：**把这些数字钉在桌面上，变成不�
 </p>
 
 <p align="center">
-  <img src="./docs/screenshots/island.png" alt="灵动岛：屏幕顶部的迷你状态条" width="360" />
-</p>
-
-<p align="center">
-  <em>灵动岛：悬浮在屏幕顶部的迷你状态条，鼠标移入展开详情与快捷设置</em>
-</p>
-
-<p align="center">
   <img src="./docs/screenshots/settings-providers.png" alt="设置页：供应商管理" width="360" />
 </p>
 
@@ -82,11 +74,6 @@ PeekaUsage 干的事情很简单：**把这些数字钉在桌面上，变成不�
 - 详细 / 精简两种显示模式，精简模式保留全部分窗口进度条
 - 卡片拖拽排序，顺序持久化
 - 使用统计面板，回顾历史消耗
-
-**灵动岛**
-
-- 屏幕顶部常驻迷你状态条，轮播各供应商当前利用率
-- 鼠标移入展开详情面板与快捷设置，移出自动收起
 
 **刷新策略**
 
@@ -164,7 +151,6 @@ npm run tauri:build:macos   # macOS（目标见 src-tauri/tauri.macos.conf.json�
 ```text
 src/                    # React 前端
   components/widget/    # 主浮窗卡片、拖拽排序
-  components/island/    # 灵动岛
   components/settings/  # 设置页（供应商、通用、高级、更新）
   i18n/                 # 多语言文案与窗口标签映射
   stores/               # provider / settings / update 状态

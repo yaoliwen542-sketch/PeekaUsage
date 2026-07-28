@@ -19,9 +19,8 @@ pub async fn save_settings(
     app_config.save_settings(settings).await?;
     let next = app_config.get_settings().await;
 
-    // 托盘菜单文案和灵动岛勾选态来自配置：
-    // 语言或灵动岛可见性变化时重建托盘菜单，保持与设置页一致
-    if previous.language != next.language || previous.island_visible != next.island_visible {
+    // 语言变化时重建托盘菜单，保持托盘文案与设置页一致。
+    if previous.language != next.language {
         crate::tray::refresh_tray_menu(&app_handle, &next);
     }
 

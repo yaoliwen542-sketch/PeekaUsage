@@ -426,7 +426,7 @@
 - 收起态不能覆盖正常窗口的 `windowSize` / `windowPosition` 持久化；持久化应继续保存展开态边界
 - 收起态要暂停主界面按内容自动调高/调低窗口高度，避免和边缘细条状态打架
 - 设置页“通用”里提供该功能开关，持久化字段是 `edgeDockCollapseEnabled`
-- 该开关放在“自动调整窗口高度以适应内容”后；注意通用区其后还有紧凑色标（`compactColorMarkers`）和“显示灵动岛”（`islandVisible`），灵动岛开关固定为通用区最后一个条目
+- 该开关放在“自动调整窗口高度以适应内容”后，后面继续是紧凑色标设置
 - 收起细条只保留呼吸发光的核心条；`.edge-dock-handle-shell` 不要加回描边/投影/圆角外壳，否则桌面上会看到一个透明框套住细条（v0.2.8 已按此修正，相关死 token 已清理）
 - 收起/展开的窗口几何变化**禁止逐帧动画**，不要给边缘吸附重新接回 `animateWindowBounds`：
   - 透明 WebView2 窗口上逐帧 `setSize`/`setPosition`（即使 Rust 侧 125fps 步进）会强制 Chromium 每帧全量重排/重绘，收起/展开肉眼明显卡顿（v0.2.8 的 240/260ms 几何缓动已因此被移除）
@@ -442,9 +442,7 @@
   - **`collapseDockedWindow` 必须复用 `dockState.collapsedBounds`，不能重新调 `resolveWindowDockBounds` 重算**：展开后 `expandedBounds` 可能被 autoFit / onResized 微调（DPI 取整差 1px），若每次收起都基于当前 `expandedBounds` 重算 collapsedBounds，细条位置/高度会随展开态边界累积漂移。collapsedBounds 在首次 `activateWindowDock` / `evaluateWindowDock` 时确定，展开→收起循环中保持稳定；只有用户手动拖拽/缩放后 `clearWindowDock` 清状态、重新走 `evaluateWindowDock` 才重算
   - **`onResized` 里 `isProgrammaticWindowResize()` 为 true 时必须直接 return，不更新 `expandedBounds`**：展开/收起的 `setProgrammaticWindowBounds` 触发的 onResized 报告的尺寸可能因 DPI 取整与目标差 1px，写回会累积漂移
   - **`suppressWindowAutoFit` 必须在所有吸附态（`dockVisualState != null`）都生效，不能只在 collapsed 态**：preview 态若不抑制 autoFit，展开后 `fitCurrentWindowHeight` 会立即把窗口高度改成内容高度，污染 `expandedBounds`，下次收起细条位置漂移
-- Rust 侧仍保留 `animate_window_bounds` 命令（`window_commands.rs`，逻辑像素入参、内部乘 scaleFactor、easeInOutCubic、代次取消、结束精确落定），前端封装在 `utils/ipc.ts` 的 `animateWindowBounds(x, y, width, height, durationMs)`，目前仅供灵动岛使用：
-  - 时长约定：灵动岛展开 240ms、收起 220ms、展开后面板高度自适应 160ms
-  - 灵动岛面板高度自适应（`IslandWidget.tsx`）走 `animateWindowBounds`，位置夹取与尺寸变化必须一次性动画到位，不能先 `setPosition` 再 `setSize`（会产生先跳位再变高的割裂）
+- 灵动岛功能已移除，不再创建第二个 Tauri 窗口，也不再维护灵动岛配置、托盘入口或专用样式
 
 ### 22. Anthropic 已支持更多订阅窗口与 Extra Usage 展示
 
@@ -469,10 +467,9 @@
 文件：
 
 - `src/index.css`
-- `src/assets/styles/common.css`、`src/assets/styles/island.css`
+- `src/assets/styles/common.css`
 - `src/components/widget/WidgetContainer.tsx`、`ProviderCard.tsx`、`SubscriptionBadge.tsx`、`UsageStatsPanel.tsx`、`RateLimitBadge.tsx`
 - `src/components/common/TitleBar.tsx`
-- `src/components/island/IslandWidget.tsx`
 - `preview.html`、`src/preview/`、`preview-shots/`
 
 当前要求：
@@ -755,7 +752,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - `totalQuota` 在部分套餐（如 LEVEL_INTERMEDIATE）是空对象 `{}`，此时不展示月度窗口；返回有效额度时才渲染 `monthly` 窗口
 - 用量查询链路始终使用应用内已保存的 Key 直接请求官方接口，不读系统环境变量；“切换环境”只是把 Key 写入系统环境变量供终端工具使用，不要给查询链路加环境变量依赖
 - Coding Plan 类供应商（Kimi / GLM / MiniMax）的多窗口利用率放在 `UsageData.windows`（`five_hour` / `weekly_limit` / `monthly`），前端逐窗口渲染；不要把多窗口再压回单一 `total_used`（`total_used` 仅保留最高值用于兼容旧展示）
-- 百分比型（`currency == "%"`）多 Key 聚合绝不能求和：两个 Key 各 70% 不等于合计 140%。`aggregate_usage_data` 对百分比型取各 Key 最高利用率（预算恒 100），金额型保持求和；卡片 hero 大数字与灵动岛统一按"five_hour 窗口优先、否则第一个窗口"取值，多 Key 时聚合 windows 已按标签取最高利用率
+- 百分比型（`currency == "%"`）多 Key 聚合绝不能求和：两个 Key 各 70% 不等于合计 140%。`aggregate_usage_data` 对百分比型取各 Key 最高利用率（预算恒 100），金额型保持求和；卡片 hero 大数字按"five_hour 窗口优先、否则第一个窗口"取值，多 Key 时聚合 windows 已按标签取最高利用率
 - 百分比型供应商卡片不显示"合计"行、不要用"按量 API"做标题（配额不是按量计费）
 
 ### 火山方舟查询异常
@@ -1080,43 +1077,12 @@ cargo check
 - `src/components/ui/` 里 dialog / button / input / switch 在用，其余 shadcn 组件（select/tabs/slider/scroll-area/tooltip/badge/card/separator）暂为死代码，清理前不要新增对它们的引用
 - 旧 CSS 四个文件仍在承担大量样式：新代码一律用 Tailwind，改到哪个组件就顺手迁移对应样式，最终目标是删除旧 CSS
 - 透明度滑杆统一用 `index.css` 末尾的 `.opacity-slider` 类（webkit/moz 双伪元素，含可见滑块），不要再写裸 `appearance-none` range
-- 订阅窗口 label 的 i18n 映射统一走 `src/i18n/windowLabels.ts` 的 `getWindowLabel(label, language)`，ProviderCard / SubscriptionBadge / UsageStatsPanel / IslandWidget 共用，禁止在组件里重复实现
-- `main.tsx` 按窗口 label 动态导入样式：主窗口加载 `main.css`，灵动岛只加载 `index.css` + `island.css`
+- 订阅窗口 label 的 i18n 映射统一走 `src/i18n/windowLabels.ts` 的 `getWindowLabel(label, language)`，ProviderCard / SubscriptionBadge / UsageStatsPanel 共用，禁止在组件里重复实现
+- `main.tsx` 只加载主窗口所需的 `main.css`
 
-### 26. 灵动岛（island 窗口）已可用
+### 26. 灵动岛功能已移除
 
-文件：
-
-- `src-tauri/tauri.conf.json`
-- `src-tauri/capabilities/island.json`
-- `src/components/island/IslandWidget.tsx`
-- `src/assets/styles/island.css`
-- `src/stores/settingsStore.ts`
-- `src-tauri/src/tray/mod.rs`
-- `src-tauri/src/commands/settings_commands.rs`
-- `src-tauri/src/lib.rs`
-- `src/App.tsx`
-- `src/i18n/messages.ts`
-
-当前要求：
-
-- 灵动岛是第二个 Tauri 窗口（label `island`，200×40、alwaysOnTop、skipTaskbar）；权限走独立的 `capabilities/island.json`，**island 窗口调用任何新 Tauri API 前必须确认该 capability 已覆盖**，否则 ACL 静默拒绝
-- 两个窗口都已配置 `shadow: false`：**transparent + 无边框窗口必须禁用 DWM 阴影**，否则 Windows 会在窗口矩形边缘画一圈白色边框（岛条这类小窗口上尤其明显），新增窗口时保持该配置
-- 拖动只走 `mousedown → getCurrentWindow().startDragging()`，禁止再混用 `data-tauri-drag-region` / `WebkitAppRegion` / 手写 mousemove（历史三套叠加 + 物理/逻辑像素混用已修掉）
-- **startDragging 必须在 mousemove 超过阈值后再调用**，不能在 mousedown 里立即调：Windows 上 startDragging 进入 OS 模态移动循环，纯点击时可能吞掉 mouseup 导致 click 不合成（表现为「岛有时点不开」的时序竞争）；当前阈值 5px
-- 展开时先 `setSize` 到 300×400（过渡初始值），渲染后**窗口高度跟随面板内容**（下限 120、上限 420，超出后面板内列表滚动）；不要回退成固定 400 高——供应商少时面板底部会留大片空白；面板尺寸与窗口尺寸必须同步改，只改一边会被裁切
-- **高度同步不能用 ResizeObserver 观察面板自身**：面板是 `max-h-full`，内容超出当前窗口高度后就被夹住、高度不再变化，回调永不触发，形成「窗口等面板变高、面板等窗口变高」的死锁（快捷设置曾被整个截断）。当前实现是显式跟踪内容状态（`summaries / expandedProvider / showQuickSettings / settingsLoaded / language`），用「固定头部 40 + 列表 `scrollHeight` + 快捷设置 `offsetHeight` + 边框 2」直接计算期望高度；列表是 `overflow-y-auto`，其 `scrollHeight` 恒等于内容全高，不受 flex 夹取影响
-- 展开面板容器是 `max-h-full` + 内容自然撑开（不是 `h-full`），列表区不加 `flex-1`；`#app` 内容贴窗口顶部对齐，展开时面板从岛条位置向下生长
-- **岛内一切颜色必须走主题变量**（`bg-ghost` / `bg-surface-elevated` / `border-border` / `text-*`）：`bg-white/N`、`border-white/N` 这类深色残留类在浅色主题下完全隐形（分段控件曾因此看起来像纯文本），新增岛内 UI 不要用 `white/N` 色阶
-- 展开后要做**工作区越界校正**（岛贴屏幕右缘时展开面板会把收起按钮画到屏外）；若发生校正平移，**收起时必须恢复校正前位置**（`expandOriginRef`），否则「展开-收起」循环会把岛条逐步推离用户拖放的位置
-- 展开面板的关闭入口有三：**点击岛外失焦自动收起**（展开后 400ms 内的 blur 视为 setSize/setFocus 竞争抖动忽略）、**Esc**、**头部收起按钮**；展开时要 `setFocus()` 让岛真正持有焦点（快捷设置输入和失焦收起的完整焦点转换都依赖它），capability 需含 `core:window:allow-set-focus`
-- 位置持久化在 localStorage（逻辑像素），恢复时基于 monitor workArea 做离屏校验，不足一半可见则回退工作区顶部居中
-- 显隐开关：设置页「通用」最后一项 + 托盘勾选菜单项；持久化字段 `islandVisible`，默认 `true`，旧配置缺省兼容为 true；启动时 Rust 侧按配置恢复显隐，避免「先闪一下再隐藏」
-- 岛内必须先 `loadSettings()` 完成（`loaded` 门）再渲染快捷设置，否则 `saveSettings` 会基于 `DEFAULT_SETTINGS` 把用户配置整体洗成默认值
-- 设置跨窗口同步：`saveSettings` IPC 成功后 `emit("settings-changed", { source, settings })`；对端 `applySyncedSettings` 只更新内存、不落盘、不再广播，防回环
-- 快捷设置保存与主窗口同约定：滑杆拖动中只预览不保存，松手才落盘；数字输入防抖
-- 托盘菜单文本已 i18n：`tray/mod.rs` 的 `TrayTexts` 按 `config.language` 三选一；`save_settings` 检测到 `language` 或 `island_visible` 变化会重建托盘菜单
-- 岛内文案全部走 `messages.ts` 的 `island.*`，禁止硬编码
+项目当前只维护主窗口。不要重新添加第二个 island 窗口、灵动岛配置字段、托盘显隐入口或专用样式；桌面边缘隐藏/展开统一使用 `useEdgeDock.ts`。
 
 ### 27. 后端稳健性修复批次（2026-07-19）
 

@@ -1,7 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { createElement, type ReactNode } from "react";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import { emit } from "@tauri-apps/api/event";
 import { MOCK_STATS_SNAPSHOT, MOCK_SUMMARIES, buildMockSettings } from "./mockData";
 import type { AppSettings } from "../types/settings";
 import type { WindowDockEdge } from "../utils/windowBounds";
@@ -10,7 +9,7 @@ import "../index.css";
 /**
  * UI 预览入口（仅供本地截图审查，不进入正式包）：
  * - 用 @tauri-apps/api/mocks 接管全部 IPC 与事件
- * - 通过 ?scene= 渲染指定界面：widget / widget-compact / stats / island / island-expanded / dock-*
+ * - 通过 ?scene= 渲染指定界面：widget / widget-compact / stats / dock-*
  * - 通过 ?theme=light|dark 控制主题
  */
 
@@ -49,7 +48,7 @@ mockIPC((cmd) => {
     case "get_usage_stats_snapshot":
       return MOCK_STATS_SNAPSHOT;
     case "get_current_version":
-      return "0.2.8";
+      return "0.3.0";
     case "get_provider_configs":
       return [];
     case "get_provider_templates":
@@ -88,26 +87,8 @@ function render(node: ReactNode) {
 async function main() {
   const { I18nProvider } = await import("../i18n");
   const { applyTheme } = await import("../utils/theme");
-  // 独立场景（stats/island/dock）不经过 App.tsx，主题需要在预览入口统一应用
+  // 独立场景（stats/dock）不经过 App.tsx，主题需要在预览入口统一应用
   applyTheme(themeParam);
-
-  if (scene === "island" || scene === "island-expanded") {
-    await import("../assets/styles/island.css");
-    const { default: IslandWidget } = await import("../components/island/IslandWidget");
-    render(createElement(I18nProvider, null, createElement(IslandWidget)));
-    // 等岛组件完成监听注册后推送用量数据
-    window.setTimeout(() => {
-      void emit("island-usage-update", MOCK_SUMMARIES);
-    }, 500);
-    // 展开场景：模拟点击胶囊
-    if (scene === "island-expanded") {
-      window.setTimeout(() => {
-        const pill = document.querySelector<HTMLElement>("#app > div");
-        pill?.click();
-      }, 1100);
-    }
-    return;
-  }
 
   if (scene.startsWith("dock-")) {
     await import("../assets/styles/main.css");

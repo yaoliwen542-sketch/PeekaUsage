@@ -45,7 +45,6 @@ export interface AppSettings extends PollingSettings {
   refreshOnSettingsClose: boolean;
   autoExpandWindowToFitContent: boolean;
   edgeDockCollapseEnabled: boolean;
-  islandVisible: boolean;
   hideTaskbarIcon: boolean;
   hideTaskbarIconHintShown: boolean;
   language: AppLanguage;
@@ -103,7 +102,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   refreshOnSettingsClose: false,
   autoExpandWindowToFitContent: true,
   edgeDockCollapseEnabled: true,
-  islandVisible: true,
   hideTaskbarIcon: false,
   hideTaskbarIconHintShown: false,
   language: "zh-Hans",
@@ -186,7 +184,6 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
     refreshOnSettingsClose: !!settings.refreshOnSettingsClose,
     autoExpandWindowToFitContent: !!settings.autoExpandWindowToFitContent,
     edgeDockCollapseEnabled: settings.edgeDockCollapseEnabled !== false,
-    islandVisible: settings.islandVisible !== false,
     hideTaskbarIcon: !!settings.hideTaskbarIcon,
     hideTaskbarIconHintShown: !!settings.hideTaskbarIconHintShown,
     language: normalizeAppLanguage(settings.language),

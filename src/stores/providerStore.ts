@@ -2,16 +2,6 @@ import { create } from "zustand";
 import type { ProviderId, UsageSummary } from "../types/provider";
 import { fetchAllUsage, fetchProviderUsage } from "../utils/ipc";
 
-/** 把用量数据同步给灵动岛窗口（如果存在） */
-async function syncToIsland(providers: UsageSummary[]) {
-  try {
-    const { emit } = await import("@tauri-apps/api/event");
-    await emit("island-usage-update", providers);
-  } catch {
-    // 灵动岛窗口可能不存在，忽略错误
-  }
-}
-
 type ProviderStoreState = {
   providers: UsageSummary[];
   isRefreshing: boolean;
@@ -50,7 +40,6 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
         providers,
         isRefreshing: false,
       });
-      void syncToIsland(providers);
     } catch (error: unknown) {
       set({
         isRefreshing: false,
@@ -97,7 +86,6 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
       set({
         providers: nextProviders,
       });
-      void syncToIsland(nextProviders);
     } catch (error: unknown) {
       set({
         lastError: error instanceof Error ? error.toString() : "未知错误",
