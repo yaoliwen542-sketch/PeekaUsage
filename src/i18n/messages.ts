@@ -301,6 +301,12 @@ export const messages = {
         saveSuccess: "保存成功，主界面已同步刷新。",
         saveFailed: "保存失败：{message}",
         removeFailed: "移除失败：{message}",
+        disable: "停用",
+        enable: "启用",
+        disableHint: "停用后主界面不显示该供应商、轮询不拉取，密钥保留",
+        enableHint: "重新启用该供应商，主界面恢复显示",
+        disableSuccess: "已停用，主界面不再显示该供应商。",
+        enableSuccess: "已启用，主界面已恢复显示。",
         detectedToken: "已从 {source} 检测到 Token{subscriptionType}",
         detectedTokenType: "（{subscriptionType}）",
         detectedMultipleNeedChoice: "检测到了多个订阅来源，请选择如何填充当前订阅栏位。",
@@ -326,6 +332,7 @@ export const messages = {
       },
     },
     widget: {
+      loading: "正在加载用量数据…",
       emptyState: {
         title: "暂无已启用的供应商",
         action: "前往设置",
@@ -716,6 +723,12 @@ export const messages = {
         saveSuccess: "保存成功，主介面已同步刷新。",
         saveFailed: "保存失敗：{message}",
         removeFailed: "移除失敗：{message}",
+        disable: "停用",
+        enable: "啟用",
+        disableHint: "停用後主介面不顯示該供應商、輪詢不拉取，密鑰保留",
+        enableHint: "重新啟用該供應商，主介面恢復顯示",
+        disableSuccess: "已停用，主介面不再顯示該供應商。",
+        enableSuccess: "已啟用，主介面已恢復顯示。",
         detectedToken: "已從 {source} 偵測到 Token{subscriptionType}",
         detectedTokenType: "（{subscriptionType}）",
         detectedMultipleNeedChoice: "偵測到多個訂閱來源，請選擇如何填入目前的訂閱欄位。",
@@ -741,6 +754,7 @@ export const messages = {
       },
     },
     widget: {
+      loading: "正在載入用量資料…",
       emptyState: {
         title: "暫無已啟用的供應商",
         action: "前往設定",
@@ -1131,6 +1145,12 @@ export const messages = {
         saveSuccess: "Saved successfully. The widget has been refreshed.",
         saveFailed: "Save failed: {message}",
         removeFailed: "Remove failed: {message}",
+        disable: "Disable",
+        enable: "Enable",
+        disableHint: "Hide from widget and stop polling; credentials are kept",
+        enableHint: "Re-enable this provider and show it in the widget",
+        disableSuccess: "Disabled. This provider is hidden from the widget.",
+        enableSuccess: "Enabled. This provider is back in the widget.",
         detectedToken: "Detected a token from {source}{subscriptionType}",
         detectedTokenType: " ({subscriptionType})",
         detectedMultipleNeedChoice: "Multiple subscription sources were detected. Choose how to fill the current slot.",
@@ -1156,6 +1176,7 @@ export const messages = {
       },
     },
     widget: {
+      loading: "Loading usage data…",
       emptyState: {
         title: "No enabled providers",
         action: "Open settings",

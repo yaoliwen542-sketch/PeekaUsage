@@ -97,7 +97,9 @@
   --color-dark-control-bg: rgba(20, 20, 20, 0.42);
   --color-dark-text: #f0f0f0;
   --color-dark-text-secondary: #a0a0a0;
-  --color-dark-text-muted: #666666;
+  /* 暗色 muted 从 #666 提到 #8a8a8a：#666 在暗色半透明背景上对比度仅约 2.2-3.4:1，
+     远低于 WCAG AA 小字要求的 4.5:1（9-12px 文字大量用 muted：重置时间/caption/计划名等） */
+  --color-dark-text-muted: #8a8a8a;
   --color-dark-text-tertiary: #666666;
   --color-dark-error: #ef4444;
   --color-dark-border: rgba(255, 255, 255, 0.08);

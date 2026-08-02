@@ -358,20 +358,33 @@ export default function ProviderCard({
       ));
 
       if (useApiColorMarkers) {
+        // 彩色标记模式下在容器顶部加 keyName 小标签，否则多 Key 时两组相同窗口行无法区分
         return (
-          <div key={item.keyId} className="flex items-stretch gap-1.5">
-            <span
-              className="w-1 shrink-0 rounded-full bg-(--compact-marker-color)"
-              style={{ "--compact-marker-color": item.color } as CSSProperties}
-              aria-hidden="true"
-            />
-            <div className="flex min-w-0 flex-1 flex-col gap-1">{windowRows}</div>
+          <div
+            key={item.keyId}
+            className={cn(
+              "flex flex-col gap-1 rounded-md border border-border bg-usage-item px-2 py-1.5",
+              "relative pl-3",
+              "before:absolute before:top-1.5 before:bottom-1.5 before:left-1.5 before:w-0.5 before:rounded-full",
+              "before:bg-(--compact-marker-color) before:content-['']",
+            )}
+            style={{ "--compact-marker-color": item.color } as CSSProperties}
+          >
+            <div className="truncate text-[10px] leading-[1.2] font-semibold text-text-secondary" title={item.keyName}>
+              {item.keyName.trim() || t("widget.providerCard.apiShort")}
+            </div>
+            {windowRows}
           </div>
         );
       }
 
       return (
-        <div key={item.keyId} className="flex flex-col gap-1">{windowRows}</div>
+        <div
+          key={item.keyId}
+          className="flex flex-col gap-1 rounded-md border border-border bg-usage-item px-2 py-1.5"
+        >
+          {windowRows}
+        </div>
       );
     }
 
@@ -394,19 +407,27 @@ export default function ProviderCard({
 
     if (useApiColorMarkers) {
       return (
-        <div key={item.keyId} className="flex items-center gap-1.5">
-          <span
-            className="h-[18px] w-1 shrink-0 rounded-full bg-(--compact-marker-color)"
-            style={{ "--compact-marker-color": item.color } as CSSProperties}
-            aria-hidden="true"
-          />
+        <div
+          key={item.keyId}
+          className={cn(
+            "flex items-center gap-2 rounded-md border border-border bg-usage-item px-2 py-1.5",
+            "relative pl-3",
+            "before:absolute before:top-1.5 before:bottom-1.5 before:left-1.5 before:w-0.5 before:rounded-full",
+            "before:bg-(--compact-marker-color) before:content-['']",
+          )}
+          style={{ "--compact-marker-color": item.color } as CSSProperties}
+          title={item.keyName}
+        >
           {content}
         </div>
       );
     }
 
     return (
-      <div key={item.keyId} className="flex items-center gap-2">
+      <div
+        key={item.keyId}
+        className="flex items-center gap-2 rounded-md border border-border bg-usage-item px-2 py-1.5"
+      >
         {label}
         {content}
       </div>

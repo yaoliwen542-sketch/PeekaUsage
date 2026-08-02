@@ -4,6 +4,10 @@ import { fetchAllUsage, fetchProviderUsage } from "../utils/ipc";
 
 type ProviderStoreState = {
   providers: UsageSummary[];
+  /** 首次 refreshAll 是否已完成。启动时为 false，WidgetContainer 据此显示加载态
+   *  而非"无供应商"空态，避免启动时闪现错误空态（fetchAllUsage 要等所有供应商
+   *  网络请求返回，通常 1-3 秒） */
+  hasLoaded: boolean;
   isRefreshing: boolean;
   refreshingProviders: Partial<Record<ProviderId, boolean>>;
   lastError: string | null;
@@ -19,6 +23,7 @@ let globalFetchSeq = 0;
 
 export const useProviderStore = create<ProviderStoreState>((set, get) => ({
   providers: [],
+  hasLoaded: false,
   isRefreshing: false,
   refreshingProviders: {},
   lastError: null,
@@ -38,10 +43,12 @@ export const useProviderStore = create<ProviderStoreState>((set, get) => ({
       const providers = await fetchAllUsage();
       set({
         providers,
+        hasLoaded: true,
         isRefreshing: false,
       });
     } catch (error: unknown) {
       set({
+        hasLoaded: true,
         isRefreshing: false,
         lastError: error instanceof Error ? error.toString() : "未知错误",
       });

@@ -113,15 +113,17 @@ export default function SubscriptionBadge({ subscription, hidePlanLabel = false 
     const usedStr = extra.usedUsd != null ? extra.usedUsd.toFixed(2) : "0.00";
     const limitStr = extra.monthlyLimitUsd.toFixed(2);
     const resetText = extra.resetsAt ? formatResetTimeExact(extra.resetsAt, t, language) : t("widget.subscription.extraUsageResetsMonthly");
-    // extraUsage 花费信息与重置时间混合显示在标签列第二行（独立下行容纳不下两行信息）
+    const fullText = `${t("widget.subscription.extraUsageSpent", { used: usedStr, limit: limitStr })} · ${resetText}`;
+    // extraUsage 花费信息与重置时间混合显示在标签列第二行；
+    // title 显示完整组合文案（截断时用户可通过悬停看到全部内容，而不是原始 ISO 时间戳）
     return (
       <div key="extra-usage" className="flex items-center gap-2">
         <div className="flex w-[92px] shrink-0 flex-col">
           <span className="truncate text-[12px] leading-[1.35] text-text-secondary" title={label}>
             {label}
           </span>
-          <span className="truncate text-[10px] leading-[1.35] text-text-muted" title={extra.resetsAt ?? undefined}>
-            {t("widget.subscription.extraUsageSpent", { used: usedStr, limit: limitStr })} · {resetText}
+          <span className="truncate text-[10px] leading-[1.35] text-text-muted" title={fullText}>
+            {fullText}
           </span>
         </div>
         <UsageBar percent={utilization} size="sm" />

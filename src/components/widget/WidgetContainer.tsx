@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEve
 import { useI18n } from "../../i18n";
 import { THEME_OPTION_ORDER } from "../../i18n/messages";
 import { useProviders } from "../../composables/useProviders";
+import { useProviderStore } from "../../stores/providerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useUpdateStore } from "../../stores/updateStore";
 import type { ProviderId, UsageSummary } from "../../types/provider";
@@ -71,6 +72,8 @@ export default function WidgetContainer({
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const saveSettings = useSettingsStore((state) => state.saveSettings);
   const { providers, isRefreshing, refreshingProviders, manualRefresh, manualRefreshProvider } = useProviders();
+  // 首次 refreshAll 完成前显示加载态而非"无供应商"空态，避免启动闪现错误空态
+  const hasLoaded = useProviderStore((state) => state.hasLoaded);
   const [orderedProviders, setOrderedProviders] = useState<UsageSummary[]>([]);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layoutSaveState, setLayoutSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -580,6 +583,15 @@ export default function WidgetContainer({
                   />
                 </div>
               ))
+            ) : !hasLoaded ? (
+              // 首次 refreshAll 未完成：显示加载态，避免闪现错误的"无供应商"空态
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10">
+                <svg className="animate-spin text-text-muted" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" opacity="0.25" />
+                  <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+                <p className="text-xs text-text-muted">{t("widget.loading")}</p>
+              </div>
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 py-10">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-ghost text-text-tertiary">

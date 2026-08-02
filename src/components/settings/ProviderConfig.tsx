@@ -11,6 +11,7 @@ import {
   type ProviderSubscriptionItem,
 } from "../../types/provider";
 import { activateProviderApiKey, detectOAuthTokens, type DetectedToken, removeProviderConfig, saveProviderConfig, validateApiKey } from "../../utils/ipc";
+import { cn } from "@/lib/utils";
 import AppSelect, { type SelectOption } from "../common/AppSelect";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ProviderIcon from "../common/ProviderIcon";
@@ -69,6 +70,8 @@ export default function ProviderConfig(props: ProviderConfigProps) {
   const { t } = useI18n();
   const [apiKeys, setApiKeys] = useState<ProviderApiKeyItem[]>([]);
   const [subscriptions, setSubscriptions] = useState<ProviderSubscriptionItem[]>([]);
+  // 供应商启用状态：停用后 fetch_all_usage 不拉取、主界面不显示，但密钥保留
+  const [enabled, setEnabled] = useState(true);
   const [activeView, setActiveView] = useState<ProviderConfigView>("apiKeys");
   const [validatingKeyId, setValidatingKeyId] = useState<string | null>(null);
   const [activatingKeyId, setActivatingKeyId] = useState<string | null>(null);
@@ -137,6 +140,7 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     syncingFromPropsRef.current = true;
     setApiKeys(cloneApiKeys(config.apiKeys));
     setSubscriptions(cloneSubscriptions(config.subscriptions));
+    setEnabled(config.enabled !== false);
     syncingFromPropsRef.current = false;
     clearTransientState();
 
@@ -306,7 +310,7 @@ export default function ProviderConfig(props: ProviderConfigProps) {
         providerId: config.providerId,
         apiKeys: sanitizedApiKeys(apiKeys),
         subscriptions: sanitizedSubscriptions(subscriptions),
-        enabled: true,
+        enabled,
         // 透传模板 ID 与自定义配置（后端按需读取）
         providerTemplateId: config.providerTemplateId ?? null,
         customConfig: config.customConfig ?? null,
@@ -359,6 +363,39 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     }
   }
 
+  /** 停用/启用切换：只改 enabled 保存，密钥保留。停用后 fetch_all_usage 不拉取、主界面不显示 */
+  async function handleToggleEnabled() {
+    if (isCreateMode || saving || removing) return;
+    const nextEnabled = !enabled;
+    setEnabled(nextEnabled);
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      await saveProviderConfig({
+        providerId: config.providerId,
+        apiKeys: sanitizedApiKeys(apiKeys),
+        subscriptions: sanitizedSubscriptions(subscriptions),
+        enabled: nextEnabled,
+        providerTemplateId: config.providerTemplateId ?? null,
+        customConfig: config.customConfig ?? null,
+      });
+      setSaveResult({
+        type: "success",
+        message: nextEnabled
+          ? t("settings.providerConfig.enableSuccess")
+          : t("settings.providerConfig.disableSuccess"),
+      });
+      onSaved?.();
+    } catch (error: unknown) {
+      // 失败时回滚 state
+      setEnabled(!nextEnabled);
+      const message = error instanceof Error ? error.message : String(error);
+      setSaveResult({ type: "error", message: t("settings.providerConfig.saveFailed", { message }) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className={`overflow-hidden rounded-xl border bg-card transition-colors duration-150 ${
       isCreateMode
@@ -401,22 +438,41 @@ export default function ProviderConfig(props: ProviderConfigProps) {
             <ProviderIcon providerId={config.providerId} size={18} />
             <span className="truncate text-[13px] font-medium text-text">{config.displayName}</span>
           </div>
-          <button
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors duration-150 hover:bg-ghost-hover hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
-            type="button"
-            aria-expanded={expanded}
-            aria-label={expanded ? t("settings.providerConfig.collapse") : t("settings.providerConfig.expand")}
-            onClick={() => onExpandedChange?.(!expanded)}
-          >
-            <svg
-              className={`h-3 w-3 transition-transform duration-150 ${expanded ? "rotate-180" : ""}`}
-              viewBox="0 0 12 12"
-              fill="none"
-              aria-hidden="true"
+          <div className="flex shrink-0 items-center gap-1">
+            {/* 停用/启用开关：停用后主界面不显示、轮询不拉取，密钥保留 */}
+            <button
+              className={cn(
+                "flex h-7 shrink-0 items-center justify-center rounded-lg px-2 text-[11px] font-medium transition-colors duration-150",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50",
+                enabled
+                  ? "text-text-secondary hover:bg-ghost-hover hover:text-text"
+                  : "bg-warning/15 text-warning hover:bg-warning/25",
+              )}
+              type="button"
+              disabled={saving || removing}
+              aria-label={enabled ? t("settings.providerConfig.disable") : t("settings.providerConfig.enable")}
+              title={enabled ? t("settings.providerConfig.disableHint") : t("settings.providerConfig.enableHint")}
+              onClick={() => void handleToggleEnabled()}
             >
-              <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+              {enabled ? t("settings.providerConfig.disable") : t("settings.providerConfig.enable")}
+            </button>
+            <button
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors duration-150 hover:bg-ghost-hover hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
+              type="button"
+              aria-expanded={expanded}
+              aria-label={expanded ? t("settings.providerConfig.collapse") : t("settings.providerConfig.expand")}
+              onClick={() => onExpandedChange?.(!expanded)}
+            >
+              <svg
+                className={`h-3 w-3 transition-transform duration-150 ${expanded ? "rotate-180" : ""}`}
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
