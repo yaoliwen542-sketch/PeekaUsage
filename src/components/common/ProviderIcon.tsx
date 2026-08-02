@@ -4,16 +4,16 @@ import type { ProviderId } from "../../types/provider";
 import openaiIcon from "../../assets/provider-icons/openai.svg";
 import anthropicIcon from "../../assets/provider-icons/anthropic.png";
 import openrouterIcon from "../../assets/provider-icons/openrouter.jpeg";
-import deepseekIcon from "../../assets/provider-icons/deepseek.svg";
-import newapiIcon from "../../assets/provider-icons/newapi.svg";
-import kimiIcon from "../../assets/provider-icons/kimi.svg";
-import glmIcon from "../../assets/provider-icons/glm.svg";
-import minimaxIcon from "../../assets/provider-icons/minimax.svg";
-import siliconflowIcon from "../../assets/provider-icons/siliconflow.svg";
-import stepfunIcon from "../../assets/provider-icons/stepfun.svg";
-import novitaIcon from "../../assets/provider-icons/novita.svg";
-import volcengineIcon from "../../assets/provider-icons/volcengine.svg";
-import geminiIcon from "../../assets/provider-icons/gemini.svg";
+import deepseekIcon from "../../assets/provider-icons/deepseek.png";
+import newapiIcon from "../../assets/provider-icons/newapi.png";
+import kimiIcon from "../../assets/provider-icons/kimi.png";
+import glmIcon from "../../assets/provider-icons/glm.png";
+import minimaxIcon from "../../assets/provider-icons/minimax.png";
+import siliconflowIcon from "../../assets/provider-icons/siliconflow.png";
+import stepfunIcon from "../../assets/provider-icons/stepfun.png";
+import novitaIcon from "../../assets/provider-icons/novita.png";
+import volcengineIcon from "../../assets/provider-icons/volcengine.png";
+import geminiIcon from "../../assets/provider-icons/gemini-official.svg";
 import customIcon from "../../assets/provider-icons/custom.svg";
 
 type ProviderIconProps = {

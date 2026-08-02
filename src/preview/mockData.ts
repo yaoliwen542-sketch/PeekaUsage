@@ -120,8 +120,8 @@ export const MOCK_SUMMARIES: UsageSummary[] = [
       periodEnd: null,
       planName: "LEVEL_INTERMEDIATE",
       windows: [
-        { label: "five_hour", utilization: 57, resetsAt: null },
-        { label: "monthly", utilization: 23, resetsAt: null },
+        { label: "five_hour", utilization: 57, resetsAt: new Date(Date.now() + 2 * 3600_000).toISOString() },
+        { label: "monthly", utilization: 23, resetsAt: new Date(Date.now() + 12 * 24 * 3600_000).toISOString() },
       ],
     },
     apiKeyUsages: [
@@ -139,8 +139,8 @@ export const MOCK_SUMMARIES: UsageSummary[] = [
           periodEnd: null,
           planName: "LEVEL_INTERMEDIATE",
           windows: [
-            { label: "five_hour", utilization: 57, resetsAt: null },
-            { label: "monthly", utilization: 23, resetsAt: null },
+            { label: "five_hour", utilization: 57, resetsAt: new Date(Date.now() + 2 * 3600_000).toISOString() },
+            { label: "monthly", utilization: 23, resetsAt: new Date(Date.now() + 12 * 24 * 3600_000).toISOString() },
           ],
         },
         rateLimit: null,

@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n";
 import { getWindowLabel } from "../../i18n/windowLabels";
 import type { ApiKeyUsageSummary, UsageSummary } from "../../types/provider";
 import type { WidgetDisplayMode } from "../../types/settings";
-import { calcUsagePercent, formatCurrency } from "../../utils/formatters";
+import { calcUsagePercent, formatCurrency, formatResetTimeExact } from "../../utils/formatters";
 import { cn } from "@/lib/utils";
 import ProviderIcon from "../common/ProviderIcon";
 import RateLimitBadge from "./RateLimitBadge";
@@ -219,18 +219,28 @@ export default function ProviderCard({
         )}
 
         {/* 有分窗口数据（如 Kimi 的 5 小时 / 周限额）时逐窗口渲染进度条，
-            否则回退到单条总进度条 */}
+            否则回退到单条总进度条。重置时间放进度条下方独立行，完整显示不截断 */}
         {windows.length > 0 ? (
-          <div className="flex flex-col gap-1 pl-3.5">
+          <div className="flex flex-col gap-1.5 pl-3.5">
             {windows.map((window, index) => (
-              <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex items-center gap-2">
-                <span
-                  className="w-[72px] shrink-0 truncate text-[11px] text-text-secondary"
-                  title={getWindowLabel(window.label, language)}
-                >
-                  {getWindowLabel(window.label, language)}
-                </span>
-                <UsageBar percent={window.utilization} size="sm" />
+              <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-[72px] shrink-0 truncate text-[11px] text-text-secondary"
+                    title={getWindowLabel(window.label, language)}
+                  >
+                    {getWindowLabel(window.label, language)}
+                  </span>
+                  <UsageBar percent={window.utilization} size="sm" />
+                </div>
+                {window.resetsAt && (
+                  <div
+                    className="truncate text-[10px] leading-[1.3] text-text-muted"
+                    title={window.resetsAt}
+                  >
+                    {formatResetTimeExact(window.resetsAt, t, language)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -287,17 +297,27 @@ export default function ProviderCard({
     );
   }
 
-  /** 精简模式：订阅窗口摘要行（标签 + 细进度条 + 百分比） */
-  function renderCompactWindowRow(key: string, label: string, percent: number) {
+  /** 精简模式：订阅窗口摘要行（标签 + 细进度条 + 百分比，重置时间独立下行完整显示） */
+  function renderCompactWindowRow(key: string, label: string, percent: number, resetsAt: string | null) {
     return (
-      <div key={key} className="flex items-center gap-2">
-        <span
-          className="w-[72px] shrink-0 truncate text-[10px] font-semibold text-text-secondary"
-          title={label}
-        >
-          {label || t("widget.providerCard.subscriptionShort")}
-        </span>
-        <UsageBar percent={percent} size="sm" labelClassName="w-7 text-[10px]" />
+      <div key={key} className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-[72px] shrink-0 truncate text-[10px] font-semibold text-text-secondary"
+            title={label}
+          >
+            {label || t("widget.providerCard.subscriptionShort")}
+          </span>
+          <UsageBar percent={percent} size="sm" labelClassName="w-7 text-[10px]" />
+        </div>
+        {resetsAt && (
+          <div
+            className="truncate text-[9px] leading-[1.25] text-text-muted"
+            title={resetsAt}
+          >
+            {formatResetTimeExact(resetsAt, t, language)}
+          </div>
+        )}
       </div>
     );
   }
@@ -313,17 +333,27 @@ export default function ProviderCard({
       : formatCurrency(usage.remaining ?? usage.totalUsed, usage.currency);
     const windows = usage.windows ?? [];
 
-    // 有分窗口数据时逐窗口渲染摘要行（如 Kimi 的 5 小时 / 周限额）
+    // 有分窗口数据时逐窗口渲染摘要行（如 Kimi 的 5 小时 / 周限额），重置时间独立下行完整显示
     if (windows.length > 0) {
       const windowRows = windows.map((window, index) => (
-        <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex items-center gap-2">
-          <span
-            className="w-[72px] shrink-0 truncate text-[10px] font-semibold text-text-secondary"
-            title={getWindowLabel(window.label, language)}
-          >
-            {getWindowLabel(window.label, language)}
-          </span>
-          <UsageBar percent={window.utilization} size="sm" labelClassName="w-7 text-[10px]" />
+        <div key={`${item.keyId}-win-${window.label}-${index}`} className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <span
+              className="w-[72px] shrink-0 truncate text-[10px] font-semibold text-text-secondary"
+              title={getWindowLabel(window.label, language)}
+            >
+              {getWindowLabel(window.label, language)}
+            </span>
+            <UsageBar percent={window.utilization} size="sm" labelClassName="w-7 text-[10px]" />
+          </div>
+          {window.resetsAt && (
+            <div
+              className="truncate text-[9px] leading-[1.25] text-text-muted"
+              title={window.resetsAt}
+            >
+              {formatResetTimeExact(window.resetsAt, t, language)}
+            </div>
+          )}
         </div>
       ));
 
@@ -491,11 +521,13 @@ export default function ProviderCard({
                       `${subscription.subscriptionId}-${window.label}-${index}`,
                       getWindowLabel(window.label, language),
                       window.utilization,
+                      window.resetsAt,
                     ))}
                     {hasExtra && renderCompactWindowRow(
                       `${subscription.subscriptionId}-extra`,
                       t("widget.subscription.extraUsageLabel"),
                       extra!.utilization!,
+                      extra!.resetsAt,
                     )}
                   </div>
                 );

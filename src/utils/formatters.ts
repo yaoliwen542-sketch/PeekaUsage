@@ -52,3 +52,59 @@ export function formatRelativeTime(isoString: string, t: TranslateFn): string {
   if (hours < 24) return t("common.time.hoursAgo", { count: hours });
   return t("common.time.daysAgo", { count: Math.floor(hours / 24) });
 }
+
+/**
+ * 格式化限额重置时间（相对未来的时间）。
+ * 文案走 i18n 的 widget.subscription.reset* keys，调用方传入 useI18n() 的 t。
+ * 供 SubscriptionBadge / ProviderCard 的窗口行共用，不要在组件里重复实现。
+ */
+export function formatResetTime(isoStr: string, t: TranslateFn): string {
+  const reset = new Date(isoStr);
+  const diffMs = reset.getTime() - Date.now();
+  if (diffMs <= 0) return t("widget.subscription.resetSoon");
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 60) return t("widget.subscription.resetInMinutes", { count: diffMin });
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return t("widget.subscription.resetInHours", { count: diffHr });
+  return t("widget.subscription.resetInDays", { count: Math.floor(diffHr / 24) });
+}
+
+/**
+ * 格式化限额重置时间（精确到分的具体时间点）。
+ * - 今天内重置：「14:32 重置」
+ * - 明天重置：「明天 08:00 重置」
+ * - 后天及以后：「8月5日 00:00 重置」（英文「Aug 5 00:00」）
+ * 时间格式按语言区分：中文 24 小时制，英文 12 小时制（AM/PM）。
+ * 供窗口行紧凑展示；悬停 title 可继续用 formatResetTime 的相对时间。
+ */
+export function formatResetTimeExact(isoStr: string, t: TranslateFn, language: string): string {
+  const reset = new Date(isoStr);
+  const diffMs = reset.getTime() - Date.now();
+  if (diffMs <= 0) return t("widget.subscription.resetSoon");
+
+  const now = new Date();
+  const isEn = language === "en";
+  const timeStr = isEn
+    ? reset.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    : `${String(reset.getHours()).padStart(2, "0")}:${String(reset.getMinutes()).padStart(2, "0")}`;
+
+  const isToday = reset.getFullYear() === now.getFullYear()
+    && reset.getMonth() === now.getMonth()
+    && reset.getDate() === now.getDate();
+  if (isToday) {
+    return t("widget.subscription.resetAtTime", { time: timeStr });
+  }
+
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const isTomorrow = reset.getFullYear() === tomorrow.getFullYear()
+    && reset.getMonth() === tomorrow.getMonth()
+    && reset.getDate() === tomorrow.getDate();
+  if (isTomorrow) {
+    return t("widget.subscription.resetAtTomorrow", { time: timeStr });
+  }
+
+  const dateStr = isEn
+    ? reset.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : `${reset.getMonth() + 1}月${reset.getDate()}日`;
+  return t("widget.subscription.resetAtDate", { date: dateStr, time: timeStr });
+}

@@ -1,6 +1,7 @@
 import { useI18n } from "../../i18n";
 import { getWindowLabel } from "../../i18n/windowLabels";
 import type { ExtraUsage, SubscriptionUsageSummary } from "../../types/provider";
+import { formatResetTimeExact } from "../../utils/formatters";
 import { cn } from "@/lib/utils";
 
 /** 用量状态色阈值：与 utils/formatters 的 getUsageColor 保持一致（<60 正常 / 60-85 警告 / >85 危险） */
@@ -61,38 +62,33 @@ export default function SubscriptionBadge({ subscription, hidePlanLabel = false 
   const usage = subscription.usage;
   const planLabel = usage.planName ?? t("widget.subscription.fallbackPlan");
 
-  function formatResetTime(isoStr: string): string {
-    const reset = new Date(isoStr);
-    const diffMs = reset.getTime() - Date.now();
-    if (diffMs <= 0) return t("widget.subscription.resetSoon");
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 60) return t("widget.subscription.resetInMinutes", { count: diffMin });
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return t("widget.subscription.resetInHours", { count: diffHr });
-    return t("widget.subscription.resetInDays", { count: Math.floor(diffHr / 24) });
-  }
-
-  /** 订阅窗口明细行：左侧固定宽标签（标签 + 第二行小字），右侧 4px 细进度条 + 百分比 */
+  /** 订阅窗口明细行：标签 + 4px 细进度条 + 百分比一行，重置时间独立下行完整显示 */
   function renderWindowRow(
     key: string,
     label: string,
     percent: number,
-    secondaryText: string | null,
-    secondaryTitle?: string,
+    resetText: string | null,
+    resetTitle?: string,
   ) {
     return (
-      <div key={key} className="flex items-center gap-2">
-        <div className="flex w-[92px] shrink-0 flex-col">
-          <span className="truncate text-[12px] leading-[1.35] text-text-secondary" title={label}>
+      <div key={key} className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-[92px] shrink-0 truncate text-[12px] leading-[1.35] text-text-secondary"
+            title={label}
+          >
             {label}
           </span>
-          {secondaryText && (
-            <span className="truncate text-[10px] leading-[1.35] text-text-muted" title={secondaryTitle}>
-              {secondaryText}
-            </span>
-          )}
+          <UsageBar percent={percent} size="sm" />
         </div>
-        <UsageBar percent={percent} size="sm" />
+        {resetText && (
+          <div
+            className="truncate text-[10px] leading-[1.35] text-text-muted"
+            title={resetTitle}
+          >
+            {resetText}
+          </div>
+        )}
       </div>
     );
   }
@@ -116,13 +112,20 @@ export default function SubscriptionBadge({ subscription, hidePlanLabel = false 
     const utilization = extra.utilization ?? 0;
     const usedStr = extra.usedUsd != null ? extra.usedUsd.toFixed(2) : "0.00";
     const limitStr = extra.monthlyLimitUsd.toFixed(2);
-    const resetText = extra.resetsAt ? formatResetTime(extra.resetsAt) : t("widget.subscription.extraUsageResetsMonthly");
-    return renderWindowRow(
-      "extra-usage",
-      label,
-      utilization,
-      `${t("widget.subscription.extraUsageSpent", { used: usedStr, limit: limitStr })} · ${resetText}`,
-      extra.resetsAt ?? undefined,
+    const resetText = extra.resetsAt ? formatResetTimeExact(extra.resetsAt, t, language) : t("widget.subscription.extraUsageResetsMonthly");
+    // extraUsage 花费信息与重置时间混合显示在标签列第二行（独立下行容纳不下两行信息）
+    return (
+      <div key="extra-usage" className="flex items-center gap-2">
+        <div className="flex w-[92px] shrink-0 flex-col">
+          <span className="truncate text-[12px] leading-[1.35] text-text-secondary" title={label}>
+            {label}
+          </span>
+          <span className="truncate text-[10px] leading-[1.35] text-text-muted" title={extra.resetsAt ?? undefined}>
+            {t("widget.subscription.extraUsageSpent", { used: usedStr, limit: limitStr })} · {resetText}
+          </span>
+        </div>
+        <UsageBar percent={utilization} size="sm" />
+      </div>
     );
   }
 
@@ -147,7 +150,7 @@ export default function SubscriptionBadge({ subscription, hidePlanLabel = false 
             `${subscription.subscriptionId}-${win.label}-${index}`,
             getWindowLabel(win.label, language),
             win.utilization,
-            win.resetsAt ? formatResetTime(win.resetsAt) : null,
+            win.resetsAt ? formatResetTimeExact(win.resetsAt, t, language) : null,
             win.resetsAt ?? undefined,
           ))}
           {usage.extraUsage && renderExtraUsage(usage.extraUsage)}
