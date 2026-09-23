@@ -909,6 +909,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - macOS job 是否仍然分别产出 `x86_64` / `arm64` 包
 - 如果启用了签名或 notarization，相关密钥和证书配置是否完整
 - `src-tauri/tauri.conf.json` 的 `identifier` 是否和迁移逻辑中的新旧标识保持一致
+- `生成并校验 latest.json` 任务若报"资产匹配失败/资产未就绪"，优先怀疑 GitHub Release 资产 API 索引在 build 完成后的同步延迟（v0.4.1 实测：查询到 0 个资产但产物实际可下载）；verify 步骤已带 10 分钟轮询等待，不要删掉该等待逻辑；GitHub `releases` 列表 API 的 assets 计数有顽固缓存，以按 tag 查询（`releases/tags/vX.Y.Z`）和实际下载为准
 
 ## 修改流程
 

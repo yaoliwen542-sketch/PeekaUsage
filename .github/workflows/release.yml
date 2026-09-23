@@ -129,7 +129,41 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPO/releases/tags/$TAG" > .release-assets.json
+          # 资产索引就绪等待（v0.4.1 教训）：build 任务 success 后 GitHub 的
+          # Release 资产 API 索引可能仍未同步（v0.4.1 实测查询到 0 个资产，
+          # 而资产实际可下载），立即查询会让 find_bundle 报"资产匹配失败"。
+          # 这里轮询等待 5 个安装包后缀及其 .sig 全部可见，最多 10 分钟。
+          EXPECTED_SUFFIXES="x64-setup.exe .AppImage .deb _x64.app.tar.gz _aarch64.app.tar.gz"
+          ready=0
+          for i in $(seq 1 20); do
+            gh api "repos/$REPO/releases/tags/$TAG" > .release-assets.json || true
+            if EXPECTED="$EXPECTED_SUFFIXES" python3 - <<'PYREADY'
+          import json, os, sys
+          try:
+              rel = json.load(open(".release-assets.json", encoding="utf-8"))
+          except Exception:
+              sys.exit(1)
+          names = [a["name"] for a in rel.get("assets", [])]
+          for suffix in os.environ["EXPECTED"].split():
+              if sum(1 for n in names if n.endswith(suffix)) != 1:
+                  print(f"资产未就绪 suffix={suffix}（现有 {len(names)} 个资产）", flush=True)
+                  sys.exit(1)
+              if suffix + ".sig" not in names:
+                  print(f"签名未就绪 {suffix}.sig（现有 {len(names)} 个资产）", flush=True)
+                  sys.exit(1)
+          print(f"资产就绪：{len(names)} 个")
+          PYREADY
+            then
+              ready=1
+              break
+            fi
+            echo "等待 Release 资产索引就绪（$i/20）..."
+            sleep 30
+          done
+          if [ "$ready" != "1" ]; then
+            echo "::error::Release 资产在 10 分钟内未就绪（安装包或 .sig 缺失），请检查 build 任务产物上传日志。"
+            exit 1
+          fi
           VER="${TAG#v}" python3 - <<'PYEOF'
           import json, os, subprocess, datetime
 
