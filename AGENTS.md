@@ -755,6 +755,18 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 百分比型（`currency == "%"`）多 Key 聚合绝不能求和：两个 Key 各 70% 不等于合计 140%。`aggregate_usage_data` 对百分比型取各 Key 最高利用率（预算恒 100），金额型保持求和；卡片 hero 大数字按"five_hour 窗口优先、否则第一个窗口"取值，多 Key 时聚合 windows 已按标签取最高利用率
 - 百分比型供应商卡片不显示"合计"行、不要用"按量 API"做标题（配额不是按量计费）
 
+### MiMo / Moonshot / Together 用量解析异常
+
+检查：
+
+- MiMo 主链路是 `GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage` + `/tokenPlan/detail`，响应是 `{code, message, data}` 包裹；`code != 0` 或无 `monthUsage` 数据时回退 `GET /api/v1/balance`
+- MiMo 认证失败（HTTP 401/403 或业务 code 401/403）直接透出 AuthError，不做余额回退（Key 无效时余额接口同样会失败）
+- MiMo `monthUsage.items[0].percent` 优先，兜底 `monthUsage.percent`；`currentPeriodEnd` 是 "yyyy-MM-dd HH:mm:ss" 形式的 UTC 时间，格式异常时 resets_at 为 None；余额回退的 `data.currency` 是动态币种，缺失时兜底 CNY
+- MiMo（platform.xiaomimimo.com）、kimi（api.kimi.com Coding Plan）、moonshot（Kimi 开放平台按量）是三条独立产品线，Key 互不通用
+- Moonshot 国内站（api.moonshot.cn，CNY）与国际站（api.moonshot.ai，USD）的 Key 也互不通用（混用 401）；国内站主链路失败自动回退国际站，余额字段是 `data.available_balance`（含现金 + 代金券）
+- Together AI 走 `GET https://api.together.xyz/v1/getBalance`，响应仅 `$.balance` 一个字段（USD）；该端点未收录在官方文档首页，字段变更会以解析错误透出
+- 302.AI / xAI 等的余额端点响应结构未经真实 Key 验证，不要凭猜测接入
+
 ### 火山方舟查询异常
 
 检查：
@@ -1031,7 +1043,7 @@ cargo check
 - 阶段 2-A 已实现：Kimi / GLM / MiniMax（CodingPlan）接入 registry
 - 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
 - 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
-- 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token，registry 现内置 12 家
+- 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token
 - Gemini 刷新后的 access_token / 新 refresh_token 缓存进 KeyStore（键 `gemini_access_token_cache`），禁止回写用户 `~/.gemini/oauth_creds.json`；查询按「文件 token → 缓存 token → refresh」解析，过期判定留 60 秒余量
 
 ### 24. OAuth 凭据自动检测 + ChatGPT-Account-Id + Claude seven_day_opus 已接入
