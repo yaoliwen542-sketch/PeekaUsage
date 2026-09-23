@@ -409,6 +409,123 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
+        // === 小米 MiMo（CodingPlan：Token Plan 套餐 + 按量余额回退）===
+        // 主链路 GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
+        //   Bearer 认证。响应 code/data 包裹：data.monthUsage.items[0] 的
+        //   percent -> monthly 窗口（utilization = percent）。
+        //   辅助 GET /api/v1/tokenPlan/detail 提供套餐名（planCode）与
+        //   月度重置时间（currentPeriodEnd，"yyyy-MM-dd HH:mm:ss" UTC）。
+        //   Token Plan 不可用（未购买套餐等）时回退 GET /api/v1/balance
+        //   （data.balance + data.currency 动态币种的按量余额）。
+        // 由 coding_plan::fetch_mimo 处理（响应结构与 CodexBar 开源实现一致）。
+        ProviderTemplate {
+            id: "mimo".to_string(),
+            display_name: "小米 MiMo".to_string(),
+            env_key_name: "MIMO_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "mimo".to_string(),
+            docs_url: Some("https://platform.xiaomimimo.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "mimo".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === Kimi 开放平台（Moonshot 按量，Balance × 2，国内/国际回退链路）===
+        // GET https://api.moonshot.cn/v1/users/me/balance（国内站，CNY）
+        //   Bearer 认证。响应 code/data 包裹：data.available_balance
+        //   （可用余额 = 现金 + 代金券，≤0 时无法调用推理 API）。
+        // 回退链路 GET https://api.moonshot.ai/v1/users/me/balance（国际站，USD）。
+        // 注意：与 kimi（api.kimi.com Coding Plan 订阅）是两条独立产品线、
+        // 两套独立 Key，国内站与国际站的 Key 也互不通用（混用 401）。
+        // 字段来自官方文档《查询账户余额》，数值可能为数字或字符串，extract_field 已兼容。
+        ProviderTemplate {
+            id: "moonshot".to_string(),
+            display_name: "Kimi 开放平台".to_string(),
+            env_key_name: "MOONSHOT_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "moonshot".to_string(),
+            docs_url: Some("https://platform.kimi.com/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![
+                QuerySpec {
+                    query_type: QueryType::Balance {
+                        url: "https://api.moonshot.cn/v1/users/me/balance".to_string(),
+                        auth: AuthScheme::Bearer,
+                        field_map: BalanceFieldMap {
+                            total: "$.data.available_balance".to_string(),
+                            used: None,
+                            remaining: Some("$.data.available_balance".to_string()),
+                            currency: "CNY".to_string(),
+                            scale: None,
+                        },
+                    },
+                    base_url: None,
+                },
+                QuerySpec {
+                    query_type: QueryType::Balance {
+                        url: "https://api.moonshot.ai/v1/users/me/balance".to_string(),
+                        auth: AuthScheme::Bearer,
+                        field_map: BalanceFieldMap {
+                            total: "$.data.available_balance".to_string(),
+                            used: None,
+                            remaining: Some("$.data.available_balance".to_string()),
+                            currency: "USD".to_string(),
+                            scale: None,
+                        },
+                    },
+                    base_url: None,
+                },
+            ],
+            oauth_detect: None,
+        },
+        // === Together AI（Balance × 1）===
+        // GET https://api.together.xyz/v1/getBalance
+        // Bearer 认证。响应 { "balance": 123.45 }（USD）。
+        // 该端点未收录在官方文档首页，但被社区广泛使用且字段单一；
+        // 若官方改字段只会导致解析失败并透出错误，不会静默错值。
+        ProviderTemplate {
+            id: "together".to_string(),
+            display_name: "Together AI".to_string(),
+            env_key_name: "TOGETHER_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "together".to_string(),
+            docs_url: Some("https://api.together.xyz/settings/api-keys".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.together.xyz/v1/getBalance".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.balance".to_string(),
+                        used: None,
+                        remaining: Some("$.balance".to_string()),
+                        currency: "USD".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
     ]
 }
 

@@ -34,6 +34,9 @@ export const providerNames: Record<string, Partial<Record<AppLanguage, string>>>
   novita: { "zh-Hans": "Novita AI", "zh-Hant": "Novita AI", en: "Novita AI" },
   volcengine: { "zh-Hans": "火山方舟", "zh-Hant": "火山方舟", en: "Volcengine" },
   gemini: { "zh-Hans": "Gemini", "zh-Hant": "Gemini", en: "Gemini" },
+  mimo: { "zh-Hans": "小米 MiMo", "zh-Hant": "小米 MiMo", en: "Xiaomi MiMo" },
+  moonshot: { "zh-Hans": "Kimi 开放平台", "zh-Hant": "Kimi 開放平台", en: "Kimi Platform" },
+  together: { "zh-Hans": "Together AI", "zh-Hant": "Together AI", en: "Together AI" },
 };
 
 export const messages = {

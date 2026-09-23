@@ -14,6 +14,9 @@ import stepfunIcon from "../../assets/provider-icons/stepfun.png";
 import novitaIcon from "../../assets/provider-icons/novita.png";
 import volcengineIcon from "../../assets/provider-icons/volcengine.png";
 import geminiIcon from "../../assets/provider-icons/gemini-official.svg";
+import mimoIcon from "../../assets/provider-icons/mimo.svg";
+import moonshotIcon from "../../assets/provider-icons/moonshot.png";
+import togetherIcon from "../../assets/provider-icons/together.png";
 import customIcon from "../../assets/provider-icons/custom.svg";
 
 type ProviderIconProps = {
@@ -37,6 +40,9 @@ const iconSrcMap: Record<string, string> = {
   novita: novitaIcon,
   volcengine: volcengineIcon,
   gemini: geminiIcon,
+  mimo: mimoIcon,
+  moonshot: moonshotIcon,
+  together: togetherIcon,
   custom: customIcon,
 };
 
@@ -56,6 +62,9 @@ const iconAltMap: Record<string, string> = {
   novita: "Novita AI",
   volcengine: "Volcengine",
   gemini: "Gemini",
+  mimo: "Xiaomi MiMo",
+  moonshot: "Moonshot AI",
+  together: "Together AI",
   custom: "Custom",
 };
 

@@ -10,7 +10,7 @@ use super::types::{window_labels, SubscriptionWindow, UsageData};
 /// 统一转成 UsageData（currency="%"，total_budget=100，total_used=最高窗口 utilization），
 /// 各窗口明细放入 UsageData.windows，供前端逐窗口展示。
 ///
-/// 支持的 provider：kimi / glm / minimax
+/// 支持的 provider：kimi / glm / minimax / mimo / volcengine
 pub async fn execute_coding_plan_query(
     client: &Client,
     provider: &str,
@@ -20,6 +20,7 @@ pub async fn execute_coding_plan_query(
         "kimi" => fetch_kimi(client, api_key).await,
         "glm" => fetch_glm(client, api_key).await,
         "minimax" => fetch_minimax(client, api_key).await,
+        "mimo" => fetch_mimo(client, api_key).await,
         "volcengine" => fetch_volcengine(client, api_key).await,
         _ => Err(ProviderError::RequestError(format!(
             "不支持的 CodingPlan 供应商: {}",
@@ -379,6 +380,194 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
     }
 
     Ok(build_percent_usage_with_windows(windows))
+}
+
+// ===== 小米 MiMo =====
+//
+// 平台 https://platform.xiaomimimo.com/，console API 前缀 /api/v1，Bearer 认证。
+// 响应统一用 { code, message, data } 包裹，code == 0 表示业务成功。
+//
+// 主链路（Token Plan 订阅套餐，月度 Token 额度）：
+// GET /api/v1/tokenPlan/usage
+// { "code": 0, "data": { "monthUsage": { "percent": 42.5,
+//     "items": [ { "name": "...", "used": 123456, "limit": 10000000, "percent": 42.5 } ] } } }
+// GET /api/v1/tokenPlan/detail（可选，失败不阻塞）
+// { "code": 0, "data": { "planCode": "standard",
+//     "currentPeriodEnd": "2026-08-01 00:00:00", "expired": false } }
+//
+// 回退链路（仅按量余额、未购买套餐的账号 Token Plan 无数据）：
+// GET /api/v1/balance
+// { "code": 0, "data": { "balance": "10.00", "currency": "CNY",
+//     "cashBalance": "5.00", "giftBalance": "5.00" } }
+//
+// 响应结构参照 CodexBar（steipete/CodexBar）MiMoProvider 开源实现；
+// currentPeriodEnd 是 "yyyy-MM-dd HH:mm:ss" 形式的 UTC 时间。
+// 认证失败（HTTP 401/403 或业务 code 401/403）直接透出 AuthError，不做余额回退。
+const MIMO_API_BASE: &str = "https://platform.xiaomimimo.com/api/v1";
+
+async fn fetch_mimo(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    match fetch_mimo_token_plan(client, api_key).await {
+        Ok(usage) => Ok(usage),
+        // Key 无效时余额接口同样会失败，直接透出认证错误
+        Err(e @ ProviderError::AuthError(_)) => Err(e),
+        // 未购买套餐 / 无 Token Plan 数据 -> 回退按量余额
+        Err(_) => fetch_mimo_balance(client, api_key).await,
+    }
+}
+
+/// Token Plan 主链路：月度用量窗口 + 套餐标注 + 重置时间
+async fn fetch_mimo_token_plan(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    let usage_req = client
+        .get(format!("{}/tokenPlan/usage", MIMO_API_BASE))
+        .bearer_auth(api_key)
+        .header("Accept", "application/json");
+    let usage_json = fetch_json(usage_req).await?;
+    let utilization = parse_mimo_token_plan_utilization(&usage_json)?;
+
+    // detail 提供套餐名与重置时间；缺失/失败时两者为 None，不影响主展示
+    let detail = fetch_json(
+        client
+            .get(format!("{}/tokenPlan/detail", MIMO_API_BASE))
+            .bearer_auth(api_key)
+            .header("Accept", "application/json"),
+    )
+    .await
+    .ok();
+    let (plan_name, resets_at) = detail
+        .as_ref()
+        .map(parse_mimo_token_plan_detail)
+        .unwrap_or((None, None));
+
+    let mut data = build_percent_usage_with_windows(vec![SubscriptionWindow {
+        label: window_labels::MONTHLY.to_string(),
+        utilization,
+        resets_at,
+    }]);
+    data.plan_name = plan_name;
+    Ok(data)
+}
+
+/// 按量余额回退链路（币种取响应实际值，缺失时兜底 CNY）
+async fn fetch_mimo_balance(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    let req = client
+        .get(format!("{}/balance", MIMO_API_BASE))
+        .bearer_auth(api_key)
+        .header("Accept", "application/json");
+    let json = fetch_json(req).await?;
+    parse_mimo_balance(&json)
+}
+
+/// 解析 MiMo 业务 code：非 0 视为业务错误（401/403 升级为认证错误）
+fn mimo_business_error(json: &Value, action: &str) -> Option<ProviderError> {
+    let code = json.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+    if code == 0 {
+        return None;
+    }
+    let message = json
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("无错误消息");
+    if code == 401 || code == 403 {
+        return Some(ProviderError::AuthError(format!(
+            "MiMo 认证失败 (code {})",
+            code
+        )));
+    }
+    Some(ProviderError::RequestError(format!(
+        "MiMo {} 查询失败 (code {}): {}",
+        action, code, message
+    )))
+}
+
+/// 从 tokenPlan/usage 响应提取月度利用率（纯函数，便于单测）
+///
+/// items[0].percent 优先，兜底 monthUsage.percent；两者都缺失（未购买套餐等）
+/// 返回 RequestError，由 fetch_mimo 回退到按量余额。
+fn parse_mimo_token_plan_utilization(json: &Value) -> Result<f64, ProviderError> {
+    if let Some(err) = mimo_business_error(json, "Token Plan") {
+        return Err(err);
+    }
+    let month_usage = json.get("data").and_then(|d| d.get("monthUsage"));
+    let percent = month_usage
+        .and_then(|m| m.get("items"))
+        .and_then(|v| v.get(0))
+        .and_then(|item| json_number(item.get("percent")))
+        .or_else(|| month_usage.and_then(|m| json_number(m.get("percent"))));
+    percent.map(|p| p.clamp(0.0, 100.0)).ok_or_else(|| {
+        ProviderError::RequestError(
+            "MiMo 响应中无有效 Token Plan 用量数据（可能未购买套餐）".into(),
+        )
+    })
+}
+
+/// 解析 tokenPlan/detail 响应 ->（套餐名, 重置时间 RFC3339）（纯函数，便于单测）
+///
+/// 任何缺失/格式异常都返回 None，不阻塞主展示。
+fn parse_mimo_token_plan_detail(json: &Value) -> (Option<String>, Option<String>) {
+    if mimo_business_error(json, "Token Plan").is_some() {
+        return (None, None);
+    }
+    let data = match json.get("data") {
+        Some(d) if d.is_object() => d,
+        _ => return (None, None),
+    };
+    let plan_name = data
+        .get("planCode")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|raw| {
+            let mut chars = raw.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        });
+    let resets_at = data
+        .get("currentPeriodEnd")
+        .and_then(|v| v.as_str())
+        .and_then(parse_mimo_period_end);
+    (plan_name, resets_at)
+}
+
+/// "yyyy-MM-dd HH:mm:ss"（UTC）-> RFC3339（纯函数，便于单测）
+fn parse_mimo_period_end(raw: &str) -> Option<String> {
+    chrono::NaiveDateTime::parse_from_str(raw.trim(), "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|naive| {
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+                .to_rfc3339()
+        })
+}
+
+/// 解析 balance 响应为货币型 UsageData（纯函数，便于单测）
+fn parse_mimo_balance(json: &Value) -> Result<UsageData, ProviderError> {
+    if let Some(err) = mimo_business_error(json, "余额") {
+        return Err(err);
+    }
+    let data = json
+        .get("data")
+        .filter(|d| d.is_object())
+        .ok_or_else(|| ProviderError::ParseError("MiMo 余额响应缺少 data".into()))?;
+    let balance = json_number(data.get("balance"))
+        .ok_or_else(|| ProviderError::ParseError("MiMo 余额响应缺少 balance 字段".into()))?;
+    let currency = data
+        .get("currency")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("CNY")
+        .to_string();
+    Ok(UsageData {
+        total_used: 0.0,
+        total_budget: Some(balance),
+        remaining: Some(balance),
+        currency,
+        period_start: None,
+        period_end: None,
+        windows: Vec::new(),
+        plan_name: None,
+    })
 }
 
 // ===== 火山方舟（Volcengine）=====
@@ -851,6 +1040,132 @@ mod tests {
         }
         // general: interval=100-70=30, weekly=100-60=40
         assert_eq!(utilizations, vec![30.0, 40.0]);
+    }
+
+    #[test]
+    fn test_mimo_token_plan_utilization_items_first() {
+        // 常规形态：items[0].percent 优先
+        let json = serde_json::json!({
+            "code": 0,
+            "data": {
+                "monthUsage": {
+                    "percent": 42.5,
+                    "items": [
+                        { "name": "all", "used": 4250000, "limit": 10000000, "percent": 42.5 },
+                        { "name": "mimo-v2.5", "used": 100, "limit": 1000, "percent": 10.0 }
+                    ]
+                }
+            }
+        });
+        let u = parse_mimo_token_plan_utilization(&json).unwrap();
+        assert!((u - 42.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mimo_token_plan_utilization_percent_fallback() {
+        // items 缺失时兜底 monthUsage.percent；字符串数字也要兼容
+        let json = serde_json::json!({
+            "code": 0,
+            "data": { "monthUsage": { "percent": "30" } }
+        });
+        let u = parse_mimo_token_plan_utilization(&json).unwrap();
+        assert!((u - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mimo_token_plan_utilization_clamps() {
+        let json = serde_json::json!({
+            "code": 0,
+            "data": { "monthUsage": { "items": [ { "percent": 150.0 } ] } }
+        });
+        assert!((parse_mimo_token_plan_utilization(&json).unwrap() - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mimo_token_plan_business_error() {
+        // code != 0 -> 业务错误，由 fetch_mimo 回退余额
+        let json = serde_json::json!({ "code": 4001, "message": "plan not found", "data": null });
+        assert!(parse_mimo_token_plan_utilization(&json).is_err());
+
+        // code 401 -> 认证错误（不回退）
+        let json = serde_json::json!({ "code": 401, "message": "unauthorized" });
+        match parse_mimo_token_plan_utilization(&json) {
+            Err(ProviderError::AuthError(_)) => {}
+            other => panic!("期望 AuthError，实际 {:?}", other.err()),
+        }
+    }
+
+    #[test]
+    fn test_mimo_token_plan_missing_month_usage_is_error() {
+        // code == 0 但无 monthUsage 数据 -> 视为无有效套餐，回退余额
+        let json = serde_json::json!({ "code": 0, "data": {} });
+        assert!(parse_mimo_token_plan_utilization(&json).is_err());
+    }
+
+    #[test]
+    fn test_mimo_token_plan_detail() {
+        let json = serde_json::json!({
+            "code": 0,
+            "data": { "planCode": "standard", "currentPeriodEnd": "2026-08-01 00:00:00", "expired": false }
+        });
+        let (plan_name, resets_at) = parse_mimo_token_plan_detail(&json);
+        assert_eq!(plan_name.as_deref(), Some("Standard"));
+        assert_eq!(resets_at.as_deref(), Some("2026-08-01T00:00:00+00:00"));
+    }
+
+    #[test]
+    fn test_mimo_token_plan_detail_missing_fields() {
+        // detail 缺失/异常时全部为 None，不阻塞主展示
+        let (plan_name, resets_at) =
+            parse_mimo_token_plan_detail(&serde_json::json!({ "code": 0 }));
+        assert_eq!(plan_name, None);
+        assert_eq!(resets_at, None);
+
+        let (plan_name, resets_at) =
+            parse_mimo_token_plan_detail(&serde_json::json!({ "code": 500, "message": "x" }));
+        assert_eq!(plan_name, None);
+        assert_eq!(resets_at, None);
+
+        // currentPeriodEnd 格式异常时 resets_at 为 None
+        let (plan_name, resets_at) = parse_mimo_token_plan_detail(&serde_json::json!({
+            "code": 0,
+            "data": { "planCode": "pro", "currentPeriodEnd": "not-a-date" }
+        }));
+        assert_eq!(plan_name.as_deref(), Some("Pro"));
+        assert_eq!(resets_at, None);
+    }
+
+    #[test]
+    fn test_mimo_balance_parse() {
+        // 真实形态：balance 是字符串，币种动态
+        let json = serde_json::json!({
+            "code": 0,
+            "data": { "balance": "10.00", "currency": "CNY", "cashBalance": "5.00", "giftBalance": "5.00" }
+        });
+        let usage = parse_mimo_balance(&json).unwrap();
+        assert!((usage.total_budget.unwrap() - 10.0).abs() < 1e-6);
+        assert!((usage.remaining.unwrap() - 10.0).abs() < 1e-6);
+        assert_eq!(usage.currency, "CNY");
+
+        // 数字形态 + 币种缺失兜底 CNY
+        let json = serde_json::json!({ "code": 0, "data": { "balance": 3.5 } });
+        let usage = parse_mimo_balance(&json).unwrap();
+        assert!((usage.total_budget.unwrap() - 3.5).abs() < 1e-6);
+        assert_eq!(usage.currency, "CNY");
+    }
+
+    #[test]
+    fn test_mimo_balance_errors() {
+        // 业务认证错误
+        let json = serde_json::json!({ "code": 403, "message": "forbidden" });
+        match parse_mimo_balance(&json) {
+            Err(ProviderError::AuthError(_)) => {}
+            other => panic!("期望 AuthError，实际 {:?}", other.err()),
+        }
+
+        // balance 缺失 -> 解析错误
+        let json = serde_json::json!({ "code": 0, "data": { "foo": 1 } });
+        assert!(parse_mimo_balance(&json).is_err());
     }
 
     #[test]
