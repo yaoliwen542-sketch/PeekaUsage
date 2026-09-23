@@ -409,22 +409,27 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
-        // === 小米 MiMo（CodingPlan：Token Plan 套餐 + 按量余额回退）===
+        // === 小米 MiMo（CodingPlan：Token Plan 套餐 + 按量余额回退，Cookie 认证）===
         // 主链路 GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage
-        //   Bearer 认证。响应 code/data 包裹：data.monthUsage.items[0] 的
-        //   percent -> monthly 窗口（utilization = percent）。
+        //   响应 code/data 包裹：data.monthUsage.items[0] 的 percent -> monthly 窗口。
         //   辅助 GET /api/v1/tokenPlan/detail 提供套餐名（planCode）与
         //   月度重置时间（currentPeriodEnd，"yyyy-MM-dd HH:mm:ss" UTC）。
         //   Token Plan 不可用（未购买套餐等）时回退 GET /api/v1/balance
         //   （data.balance + data.currency 动态币种的按量余额）。
         // 由 coding_plan::fetch_mimo 处理（响应结构与 CodexBar 开源实现一致）。
+        //
+        // 认证（重要，v0.4.1 修正）：该域名是小米账号 Cookie 认证的控制台内部
+        // 接口，API Key Bearer 实测一律 401；凭据是用户从浏览器复制的整段
+        // Cookie（需含 api-platform_serviceToken 和 userId）。因此
+        // env_key_name 留空（Cookie 不能用于推理，不接管环境变量），
+        // docs_url 直达余额控制台方便用户抓取 Cookie。
         ProviderTemplate {
             id: "mimo".to_string(),
             display_name: "小米 MiMo".to_string(),
-            env_key_name: "MIMO_API_KEY".to_string(),
+            env_key_name: String::new(),
             env_oauth_token_name: None,
             icon: "mimo".to_string(),
-            docs_url: Some("https://platform.xiaomimimo.com/".to_string()),
+            docs_url: Some("https://platform.xiaomimimo.com/#/console/balance".to_string()),
             capabilities: ProviderCapabilities {
                 has_balance: false,
                 has_usage: true,

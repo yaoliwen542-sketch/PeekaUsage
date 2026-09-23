@@ -948,4 +948,11 @@ cargo check
 - 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
 - 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
 - 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token
+- 阶段 4 已实现（2026-09）：小米 MiMo / Kimi 开放平台 / Together AI 接入，registry 现内置 15 家。
+  **MiMo 认证方式重要事实（v0.4.1 修正）**：`platform.xiaomimimo.com/api/v1/*` 是小米账号
+  Cookie 认证的控制台内部接口，API Key Bearer 实测一律 401（返回 account.xiaomi.com 登录跳转），
+  数据面 `api.xiaomimimo.com` 无计费端点。唯一凭据是用户从浏览器复制的整段 Cookie
+  （需含 `api-platform_serviceToken` 和 `userId`），由 coding_plan::fetch_mimo 以
+  `Cookie` 头 + 浏览器 Origin/Referer/UA 发送；MiMo 的 `env_key_name` 留空表示不接管环境变量，
+  且 `resolve_env_key_name` 已统一过滤空值（Gemini 同样受益）。不要给 MiMo 换回 API Key 认证。
 

@@ -48,14 +48,18 @@ pub async fn sync_active_api_key_envs(
 ///
 /// - 内置供应商：从 registry 取 env_key_name
 /// - 自定义供应商：从 entry.custom_config.env_key_name 取（若为 None 则不接管环境变量）
+/// - 空值统一视为不接管（如 MiMo 的 Cookie 凭据、Gemini 无 API Key，
+///   不能把凭据写进空名环境变量）
 fn resolve_env_key_name(provider_id: &str, entry: Option<&ProviderEntry>) -> Option<String> {
-    if let Some(entry) = entry {
-        if let Some(cfg) = entry.custom_config.as_ref() {
-            return cfg.env_key_name.clone();
+    let name = if let Some(entry) = entry {
+        match entry.custom_config.as_ref() {
+            Some(cfg) => cfg.env_key_name.clone(),
+            None => crate::providers::registry::get(provider_id).map(|t| t.env_key_name),
         }
-    }
-    // 内置供应商
-    crate::providers::registry::get(provider_id).map(|t| t.env_key_name)
+    } else {
+        crate::providers::registry::get(provider_id).map(|t| t.env_key_name)
+    };
+    name.filter(|n| !n.trim().is_empty())
 }
 
 fn collect_managed_env_names(provider_entries: &HashMap<String, ProviderEntry>) -> Vec<String> {

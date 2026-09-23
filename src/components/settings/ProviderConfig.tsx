@@ -103,9 +103,15 @@ export default function ProviderConfig(props: ProviderConfigProps) {
     if (providerId === "volcengine") {
       return t("settings.providerConfig.apiKeyPlaceholderVolcengine");
     }
+    if (providerId === "mimo") {
+      return t("settings.providerConfig.apiKeyPlaceholderMimo");
+    }
     return "sk-...";
   })();
   const showVolcengineKeyHint = config.providerId === "volcengine";
+  const showMimoKeyHint = config.providerId === "mimo";
+  // 无环境变量名（如 MiMo 的 Cookie 凭据、Gemini）时不显示"切换环境"控件
+  const hasEnvironmentControl = config.environmentVariableName.trim().length > 0;
 
   function defaultKeyName(index: number) { return t("settings.providerConfig.keyName", { index: index + 1 }); }
   function defaultSubscriptionName(index: number) { return t("settings.providerConfig.subscriptionName", { index: index + 1 }); }
@@ -581,6 +587,9 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                     {showVolcengineKeyHint && index === 0 && (
                       <div className={FIELD_HINT_CLASS}>{t("settings.providerConfig.apiKeyHintVolcengine")}</div>
                     )}
+                    {showMimoKeyHint && index === 0 && (
+                      <div className={FIELD_HINT_CLASS}>{t("settings.providerConfig.apiKeyHintMimo")}</div>
+                    )}
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Button
                         variant="soft"
@@ -593,11 +602,11 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                       </Button>
                       {validationResults[item.id] === true && <span className="text-xs text-success">{t("settings.providerConfig.valid")}</span>}
                       {validationResults[item.id] === false && <span className="text-xs text-danger">{t("settings.providerConfig.invalid")}</span>}
-                      {item.isActiveInEnvironment ? (
+                      {hasEnvironmentControl && item.isActiveInEnvironment ? (
                         <span className="inline-flex items-center rounded-full border border-primary-soft-border bg-primary-soft-bg px-2 py-0.5 text-[10px] font-medium text-primary-soft-text">
                           {t("settings.providerConfig.activeEnvironment")}
                         </span>
-                      ) : (
+                      ) : hasEnvironmentControl ? (
                         <Button
                           variant="softGhost"
                           size="xs"
@@ -607,11 +616,13 @@ export default function ProviderConfig(props: ProviderConfigProps) {
                         >
                           {activatingKeyId === item.id ? t("settings.providerConfig.activatingEnvironment") : t("settings.providerConfig.activateEnvironment")}
                         </Button>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 ))}
-                <div className={FIELD_HINT_CLASS}>{hasChanges ? t("settings.providerConfig.environmentSaveFirstHint") : t("settings.providerConfig.environmentHint", { envVar: config.environmentVariableName })}</div>
+                {hasEnvironmentControl && (
+                  <div className={FIELD_HINT_CLASS}>{hasChanges ? t("settings.providerConfig.environmentSaveFirstHint") : t("settings.providerConfig.environmentHint", { envVar: config.environmentVariableName })}</div>
+                )}
               </div>
             )}
 

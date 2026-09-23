@@ -402,37 +402,62 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
 //
 // 响应结构参照 CodexBar（steipete/CodexBar）MiMoProvider 开源实现；
 // currentPeriodEnd 是 "yyyy-MM-dd HH:mm:ss" 形式的 UTC 时间。
-// 认证失败（HTTP 401/403 或业务 code 401/403）直接透出 AuthError，不做余额回退。
+//
+// 认证方式（重要，v0.4.1 修正）：platform.xiaomimimo.com/api/v1/* 是小米账号
+// Cookie 认证的控制台内部接口，实测 API Key Bearer 一律 401（响应带
+// account.xiaomi.com 登录跳转，sid=api-platform）。唯一可行凭据是浏览器
+// Cookie（必须含 api-platform_serviceToken 和 userId），输入框里粘贴的是
+// 从浏览器 DevTools 复制的整段 Cookie header。认证失败（HTTP 401/403 或
+// 业务 code 401/403）直接透出 AuthError，不做余额回退。
 const MIMO_API_BASE: &str = "https://platform.xiaomimimo.com/api/v1";
 
+/// 构造 MiMo 控制台接口请求（Cookie 认证 + 浏览器同源头）
+///
+/// 控制台接口会校验请求来源，缺 Origin/Referer 可能被拒；
+/// x-timeZone 固定传 UTC+00:00，与 currentPeriodEnd 按 UTC 解析保持自洽。
+fn mimo_console_request(client: &Client, path: &str, cookie: &str) -> reqwest::RequestBuilder {
+    client
+        .get(format!("{}{}", MIMO_API_BASE, path))
+        .header("Cookie", cookie.trim())
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("x-timeZone", "UTC+00:00")
+        .header("Origin", "https://platform.xiaomimimo.com")
+        .header("Referer", "https://platform.xiaomimimo.com/#/console/balance")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        )
+}
+
 async fn fetch_mimo(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
-    match fetch_mimo_token_plan(client, api_key).await {
+    let result = match fetch_mimo_token_plan(client, api_key).await {
         Ok(usage) => Ok(usage),
-        // Key 无效时余额接口同样会失败，直接透出认证错误
+        // Cookie 无效/过期时余额接口同样会失败，直接透出认证错误
         Err(e @ ProviderError::AuthError(_)) => Err(e),
         // 未购买套餐 / 无 Token Plan 数据 -> 回退按量余额
         Err(_) => fetch_mimo_balance(client, api_key).await,
-    }
+    };
+    result.map_err(|e| match e {
+        // 认证失败时附加 Cookie 修复指引（保持"认证失败"前缀，validate_key
+        // 依赖该前缀判定"Key 无效"）
+        ProviderError::AuthError(msg) => ProviderError::AuthError(format!(
+            "{}。MiMo 使用浏览器 Cookie 认证：请重新复制完整 Cookie（需含 api-platform_serviceToken 和 userId）",
+            msg
+        )),
+        other => other,
+    })
 }
 
 /// Token Plan 主链路：月度用量窗口 + 套餐标注 + 重置时间
 async fn fetch_mimo_token_plan(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
-    let usage_req = client
-        .get(format!("{}/tokenPlan/usage", MIMO_API_BASE))
-        .bearer_auth(api_key)
-        .header("Accept", "application/json");
-    let usage_json = fetch_json(usage_req).await?;
+    let usage_json = fetch_json(mimo_console_request(client, "/tokenPlan/usage", api_key)).await?;
     let utilization = parse_mimo_token_plan_utilization(&usage_json)?;
 
     // detail 提供套餐名与重置时间；缺失/失败时两者为 None，不影响主展示
-    let detail = fetch_json(
-        client
-            .get(format!("{}/tokenPlan/detail", MIMO_API_BASE))
-            .bearer_auth(api_key)
-            .header("Accept", "application/json"),
-    )
-    .await
-    .ok();
+    let detail = fetch_json(mimo_console_request(client, "/tokenPlan/detail", api_key))
+        .await
+        .ok();
     let (plan_name, resets_at) = detail
         .as_ref()
         .map(parse_mimo_token_plan_detail)
@@ -449,11 +474,7 @@ async fn fetch_mimo_token_plan(client: &Client, api_key: &str) -> Result<UsageDa
 
 /// 按量余额回退链路（币种取响应实际值，缺失时兜底 CNY）
 async fn fetch_mimo_balance(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
-    let req = client
-        .get(format!("{}/balance", MIMO_API_BASE))
-        .bearer_auth(api_key)
-        .header("Accept", "application/json");
-    let json = fetch_json(req).await?;
+    let json = fetch_json(mimo_console_request(client, "/balance", api_key)).await?;
     parse_mimo_balance(&json)
 }
 

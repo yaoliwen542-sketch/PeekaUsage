@@ -760,6 +760,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 检查：
 
 - MiMo 主链路是 `GET https://platform.xiaomimimo.com/api/v1/tokenPlan/usage` + `/tokenPlan/detail`，响应是 `{code, message, data}` 包裹；`code != 0` 或无 `monthUsage` 数据时回退 `GET /api/v1/balance`
+- **MiMo 凭据是浏览器 Cookie，不是 API Key**（v0.4.1 修正，实测 API Key 一律 401 并返回小米账号登录跳转）：设置页输入框粘贴整段 Cookie header，需含 `api-platform_serviceToken` 和 `userId`；请求需带 Origin/Referer/UA 等浏览器头；"验证无效/查询失败"时优先怀疑 Cookie 过期，让用户重新复制；MiMo 不显示"切换环境"（env_key_name 为空）
 - MiMo 认证失败（HTTP 401/403 或业务 code 401/403）直接透出 AuthError，不做余额回退（Key 无效时余额接口同样会失败）
 - MiMo `monthUsage.items[0].percent` 优先，兜底 `monthUsage.percent`；`currentPeriodEnd` 是 "yyyy-MM-dd HH:mm:ss" 形式的 UTC 时间，格式异常时 resets_at 为 None；余额回退的 `data.currency` 是动态币种，缺失时兜底 CNY
 - MiMo（platform.xiaomimimo.com）、kimi（api.kimi.com Coding Plan）、moonshot（Kimi 开放平台按量）是三条独立产品线，Key 互不通用
@@ -1044,6 +1045,13 @@ cargo check
 - 阶段 2-B 已实现：OAuth 凭据自动检测（`providers/oauth_detect.rs`）+ Claude `seven_day_opus` 窗口 + ChatGPT 请求补 `ChatGPT-Account-Id` header
 - 阶段 2 剩余待实现：ZenMux（CodingPlan，建议走自定义供应商向导）
 - 阶段 3 已实现：3-A SiliconFlow / StepFun / Novita、3-B 火山方舟 SigV4、3-C Gemini OAuth + refresh_token
+- 阶段 4 已实现（2026-09）：小米 MiMo / Kimi 开放平台 / Together AI 接入，registry 现内置 15 家。
+  **MiMo 认证方式重要事实（v0.4.1 修正）**：`platform.xiaomimimo.com/api/v1/*` 是小米账号
+  Cookie 认证的控制台内部接口，API Key Bearer 实测一律 401（返回 account.xiaomi.com 登录跳转），
+  数据面 `api.xiaomimimo.com` 无计费端点。唯一凭据是用户从浏览器复制的整段 Cookie
+  （需含 `api-platform_serviceToken` 和 `userId`），由 coding_plan::fetch_mimo 以
+  `Cookie` 头 + 浏览器 Origin/Referer/UA 发送；MiMo 的 `env_key_name` 留空表示不接管环境变量，
+  且 `resolve_env_key_name` 已统一过滤空值（Gemini 同样受益）。不要给 MiMo 换回 API Key 认证。
 - Gemini 刷新后的 access_token / 新 refresh_token 缓存进 KeyStore（键 `gemini_access_token_cache`），禁止回写用户 `~/.gemini/oauth_creds.json`；查询按「文件 token → 缓存 token → refresh」解析，过期判定留 60 秒余量
 
 ### 24. OAuth 凭据自动检测 + ChatGPT-Account-Id + Claude seven_day_opus 已接入
