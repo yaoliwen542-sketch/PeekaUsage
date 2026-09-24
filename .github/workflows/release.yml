@@ -129,92 +129,86 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # 资产索引就绪等待（v0.4.1 教训）：build 任务 success 后 GitHub 的
-          # Release 资产 API 索引可能仍未同步（v0.4.1 实测查询到 0 个资产，
-          # 而资产实际可下载），立即查询会让 find_bundle 报"资产匹配失败"。
-          # 这里轮询等待 5 个安装包后缀及其 .sig 全部可见，最多 10 分钟。
-          EXPECTED_SUFFIXES="x64-setup.exe .AppImage .deb _x64.app.tar.gz _aarch64.app.tar.gz"
+          # 资产就绪检测（v0.4.1/v0.4.2 教训）：build 任务 success 后，GitHub 的
+          # Release 资产 **API 索引**（releases/tags/... 的 assets 字段）同步延迟
+          # 不可控（实测远超 10 分钟，且对 GITHUB_TOKEN 同样缓存），不可依赖。
+          # 这里改为轮询 HEAD 产物**下载直链**（github.com/releases/download/...，
+          # 资产上传后立即可用），文件名由 productName+version 确定可预测。
+          BASE="https://github.com/$REPO/releases/download/$TAG"
+          VER="${TAG#v}"
+          BUNDLES=(
+            "PeekaUsage_${VER}_x64-setup.exe"
+            "PeekaUsage_${VER}_amd64.AppImage"
+            "PeekaUsage_${VER}_amd64.deb"
+            "PeekaUsage_x64.app.tar.gz"
+            "PeekaUsage_aarch64.app.tar.gz"
+          )
           ready=0
           for i in $(seq 1 20); do
-            gh api "repos/$REPO/releases/tags/$TAG" > .release-assets.json || true
-            if EXPECTED="$EXPECTED_SUFFIXES" python3 - <<'PYREADY'
-          import json, os, sys
-          try:
-              rel = json.load(open(".release-assets.json", encoding="utf-8"))
-          except Exception:
-              sys.exit(1)
-          names = [a["name"] for a in rel.get("assets", [])]
-          for suffix in os.environ["EXPECTED"].split():
-              if sum(1 for n in names if n.endswith(suffix)) != 1:
-                  print(f"资产未就绪 suffix={suffix}（现有 {len(names)} 个资产）", flush=True)
-                  sys.exit(1)
-              if suffix + ".sig" not in names:
-                  print(f"签名未就绪 {suffix}.sig（现有 {len(names)} 个资产）", flush=True)
-                  sys.exit(1)
-          print(f"资产就绪：{len(names)} 个")
-          PYREADY
-            then
+            ok=1
+            for b in "${BUNDLES[@]}"; do
+              for f in "$b" "$b.sig"; do
+                code=$(curl -sIL -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/$f" || true)
+                if [ "$code" != "200" ]; then
+                  echo "资产未就绪: $f (HTTP $code)"
+                  ok=0
+                  break 2
+                fi
+              done
+            done
+            if [ "$ok" = "1" ]; then
               ready=1
               break
             fi
-            echo "等待 Release 资产索引就绪（$i/20）..."
+            echo "等待 Release 资产就绪（$i/20）..."
             sleep 30
           done
           if [ "$ready" != "1" ]; then
             echo "::error::Release 资产在 10 分钟内未就绪（安装包或 .sig 缺失），请检查 build 任务产物上传日志。"
             exit 1
           fi
-          VER="${TAG#v}" python3 - <<'PYEOF'
+          # notes 从 Release body 取；API 偶发缓存/失败时降级为空，不阻塞
+          NOTES="$(gh api "repos/$REPO/releases/tags/$TAG" --jq '.body // ""' 2>/dev/null || true)"
+          VER="$VER" BASE="$BASE" NOTES="$NOTES" BUNDLES="${BUNDLES[*]}" python3 - <<'PYEOF'
           import json, os, subprocess, datetime
 
-          repo = os.environ["REPO"]
           ver = os.environ["VER"]
-          rel = json.load(open(".release-assets.json", encoding="utf-8"))
-          assets = {a["name"]: a for a in rel["assets"]}
+          base = os.environ["BASE"]
+          notes = os.environ["NOTES"]
+          bundles = os.environ["BUNDLES"].split()
 
-          def find_bundle(suffix: str) -> str:
-              matches = [n for n in assets if n.endswith(suffix)]
-              if len(matches) != 1:
-                  raise SystemExit(f"资产匹配失败 suffix={suffix}: {matches}")
-              return matches[0]
+          key_of = [
+              ("x64-setup.exe", ["windows-x86_64", "windows-x86_64-nsis"]),
+              (".AppImage", ["linux-x86_64", "linux-x86_64-appimage"]),
+              (".deb", ["linux-x86_64-deb"]),
+              ("_x64.app.tar.gz", ["darwin-x86_64", "darwin-x86_64-app"]),
+              ("_aarch64.app.tar.gz", ["darwin-aarch64", "darwin-aarch64-app"]),
+          ]
 
-          def signature_of(bundle: str) -> str:
-              sig_name = bundle + ".sig"
-              if sig_name not in assets:
-                  raise SystemExit(f"缺少签名文件 {sig_name}")
-              url = assets[sig_name]["browser_download_url"]
+          platforms = {}
+          for bundle in bundles:
+              sig_url = f"{base}/{bundle}.sig"
               out = subprocess.run(
-                  ["curl", "-fsL", "-H", f"Authorization: Bearer {os.environ['GH_TOKEN']}", url],
+                  ["curl", "-fsL", "--max-time", "30", sig_url],
                   capture_output=True, check=True,
               )
-              return out.stdout.decode().strip()
+              signature = out.stdout.decode().strip()
+              for suffix, keys in key_of:
+                  if bundle.endswith(suffix):
+                      for key in keys:
+                          platforms[key] = {
+                              "signature": signature,
+                              "url": f"{base}/{bundle}",
+                          }
+                      break
 
-          def entry(bundle: str) -> dict:
-              return {
-                  "signature": signature_of(bundle),
-                  "url": assets[bundle]["browser_download_url"],
-              }
+          expected = 9
+          if len(platforms) != expected:
+              raise SystemExit(f"平台条目数不符: {len(platforms)} != {expected}")
 
-          nsis = find_bundle("x64-setup.exe")
-          appimage = find_bundle(".AppImage")
-          deb = find_bundle(".deb")
-          mac_x64 = find_bundle("_x64.app.tar.gz")
-          mac_arm = find_bundle("_aarch64.app.tar.gz")
-
-          platforms = {
-              "windows-x86_64": entry(nsis),
-              "windows-x86_64-nsis": entry(nsis),
-              "linux-x86_64": entry(appimage),
-              "linux-x86_64-appimage": entry(appimage),
-              "linux-x86_64-deb": entry(deb),
-              "darwin-x86_64": entry(mac_x64),
-              "darwin-x86_64-app": entry(mac_x64),
-              "darwin-aarch64": entry(mac_arm),
-              "darwin-aarch64-app": entry(mac_arm),
-          }
           latest = {
               "version": ver,
-              "notes": rel.get("body") or "",
+              "notes": notes,
               "pub_date": datetime.datetime.now(datetime.timezone.utc)
               .isoformat(timespec="milliseconds")
               .replace("+00:00", "Z"),
@@ -224,7 +218,12 @@ jobs:
               json.dump(latest, f, ensure_ascii=False, indent=2)
           print(f"latest.json 生成完成，共 {len(platforms)} 个平台条目")
           PYEOF
-          gh release upload "$TAG" latest.json --clobber --repo "$REPO"
+          # 上传偶发 5xx 时重试一次（文件可能已实际传上，--clobber 幂等）
+          gh release upload "$TAG" latest.json --clobber --repo "$REPO" || {
+            echo "首次上传报错，30 秒后重试..."
+            sleep 30
+            gh release upload "$TAG" latest.json --clobber --repo "$REPO"
+          }
 
       - name: 轮询校验 latest.json
         shell: bash
@@ -233,7 +232,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          URL="https://github.com/$REPO/releases/latest/download/latest.json"
+          URL="https://github.com/$REPO/releases/download/$TAG/latest.json"
           EXPECT="${TAG#v}"
           for i in $(seq 1 20); do
             if BODY=$(curl -fsL "$URL" 2>/dev/null); then
