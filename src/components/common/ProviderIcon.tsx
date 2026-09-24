@@ -17,6 +17,8 @@ import geminiIcon from "../../assets/provider-icons/gemini-official.svg";
 import mimoIcon from "../../assets/provider-icons/mimo.svg";
 import moonshotIcon from "../../assets/provider-icons/moonshot.png";
 import togetherIcon from "../../assets/provider-icons/together.png";
+import zenmuxIcon from "../../assets/provider-icons/zenmux.svg";
+import opencodeIcon from "../../assets/provider-icons/opencode.png";
 import customIcon from "../../assets/provider-icons/custom.svg";
 
 type ProviderIconProps = {
@@ -43,6 +45,12 @@ const iconSrcMap: Record<string, string> = {
   mimo: mimoIcon,
   moonshot: moonshotIcon,
   together: togetherIcon,
+  zenmux: zenmuxIcon,
+  opencode: opencodeIcon,
+  // 国际版供应商与国内版同品牌，直接复用图标
+  glm_en: glmIcon,
+  minimax_en: minimaxIcon,
+  siliconflow_en: siliconflowIcon,
   custom: customIcon,
 };
 
@@ -65,6 +73,11 @@ const iconAltMap: Record<string, string> = {
   mimo: "Xiaomi MiMo",
   moonshot: "Moonshot AI",
   together: "Together AI",
+  zenmux: "ZenMux",
+  opencode: "OpenCode",
+  glm_en: "Z.AI",
+  minimax_en: "MiniMax Global",
+  siliconflow_en: "SiliconFlow Global",
   custom: "Custom",
 };
 

@@ -531,6 +531,138 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
             }],
             oauth_detect: None,
         },
+        // === ZenMux（CodingPlan，Management API 订阅详情）===
+        // GET https://zenmux.ai/api/v1/management/subscription/detail
+        // Bearer 认证，仅接受 ZenMux 控制台创建的 Management API Key
+        // （普通推理 API Key 会 401）。quota_5_hour / quota_7_day 的
+        // usage_percentage 是 0-1 小数。端点来自 ZenMux 官方文档，
+        // 并与 cc-switch 实现交叉验证。
+        ProviderTemplate {
+            id: "zenmux".to_string(),
+            display_name: "ZenMux".to_string(),
+            env_key_name: "ZENMUX_MANAGEMENT_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "zenmux".to_string(),
+            docs_url: Some("https://zenmux.ai/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "zenmux".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === OpenCode Zen Go（CodingPlan，$10/月订阅三时间窗口）===
+        // GET https://opencode.ai/zen/go/v1/usage
+        // Bearer 认证（推理侧 /messages 只认 x-api-key，用量端点只认 Bearer）。
+        // HTTP 403 表示 Key 有效但无 Go 订阅。响应结构来自 cc-switch 实现。
+        ProviderTemplate {
+            id: "opencode_go".to_string(),
+            display_name: "OpenCode Zen Go".to_string(),
+            env_key_name: "OPENCODE_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "opencode".to_string(),
+            docs_url: Some("https://opencode.ai/zen".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "opencode_go".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === GLM 国际版（Z.AI，CodingPlan）===
+        // 与国内版 open.bigmodel.cn 同路径同响应结构，仅域名不同
+        // （api.z.ai，裸 key 认证）。解析复用 fetch_glm_at / parse_glm_response。
+        ProviderTemplate {
+            id: "glm_en".to_string(),
+            display_name: "GLM 国际版".to_string(),
+            env_key_name: "ZAI_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "glm_en".to_string(),
+            docs_url: Some("https://z.ai/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "glm_en".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === MiniMax 国际版（CodingPlan）===
+        // 与国内版 api.minimaxi.com 同路径同响应结构，仅域名不同
+        // （api.minimax.io）。解析复用 fetch_minimax_at。
+        ProviderTemplate {
+            id: "minimax_en".to_string(),
+            display_name: "MiniMax 国际版".to_string(),
+            env_key_name: "MINIMAX_GLOBAL_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "minimax_en".to_string(),
+            docs_url: Some("https://www.minimax.io/".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: false,
+                has_usage: true,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::CodingPlan {
+                    provider: "minimax_en".to_string(),
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
+        // === SiliconFlow 国际版（Balance × 1）===
+        // 与国内版 api.siliconflow.cn 同路径（/v1/user/info），域名
+        // api.siliconflow.com，美元计价。Key 与国内版互不通用。
+        ProviderTemplate {
+            id: "siliconflow_en".to_string(),
+            display_name: "SiliconFlow 国际版".to_string(),
+            env_key_name: "SILICONFLOW_GLOBAL_API_KEY".to_string(),
+            env_oauth_token_name: None,
+            icon: "siliconflow_en".to_string(),
+            docs_url: Some("https://cloud.siliconflow.com/account/ak".to_string()),
+            capabilities: ProviderCapabilities {
+                has_balance: true,
+                has_usage: false,
+                has_rate_limit: false,
+                has_subscription: false,
+            },
+            queries: vec![QuerySpec {
+                query_type: QueryType::Balance {
+                    url: "https://api.siliconflow.com/v1/user/info".to_string(),
+                    auth: AuthScheme::Bearer,
+                    field_map: BalanceFieldMap {
+                        total: "$.data.totalBalance".to_string(),
+                        used: None,
+                        remaining: Some("$.data.totalBalance".to_string()),
+                        currency: "USD".to_string(),
+                        scale: None,
+                    },
+                },
+                base_url: None,
+            }],
+            oauth_detect: None,
+        },
     ]
 }
 

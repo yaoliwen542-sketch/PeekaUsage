@@ -767,6 +767,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - Moonshot 国内站（api.moonshot.cn，CNY）与国际站（api.moonshot.ai，USD）的 Key 也互不通用（混用 401）；国内站主链路失败自动回退国际站，余额字段是 `data.available_balance`（含现金 + 代金券）
 - Together AI 走 `GET https://api.together.xyz/v1/getBalance`，响应仅 `$.balance` 一个字段（USD）；该端点未收录在官方文档首页，字段变更会以解析错误透出
 - 302.AI / xAI 等的余额端点响应结构未经真实 Key 验证，不要凭猜测接入
+- ZenMux 查询失败优先确认填的是**控制台 Management API Key**（普通推理 Key 一律 403 Invalid API key）；OpenCode Zen Go 查询 403 表示 Key 有效但该 workspace 没有 Go 订阅（与 401 区分）；GLM 国际版（z.ai）/ MiniMax 国际版的 Key 与国内版互不通用
 
 ### 火山方舟查询异常
 
@@ -1053,6 +1054,7 @@ cargo check
   （需含 `api-platform_serviceToken` 和 `userId`），由 coding_plan::fetch_mimo 以
   `Cookie` 头 + 浏览器 Origin/Referer/UA 发送；MiMo 的 `env_key_name` 留空表示不接管环境变量，
   且 `resolve_env_key_name` 已统一过滤空值（Gemini 同样受益）。不要给 MiMo 换回 API Key 认证。
+- 阶段 5 已实现（2026-09，对齐 cc-switch 全部用量查询实现）：ZenMux（GET /api/v1/management/subscription/detail，**仅接受控制台 Management API Key**，普通 Key 403；quota_5_hour/quota_7_day 的 usage_percentage 是 0-1 小数）、OpenCode Zen Go（GET opencode.ai/zen/go/v1/usage，Bearer；403=有 Key 无 Go 订阅；usage.rolling/weekly/monthly 的 percent 已是 0-100）、GLM 国际版 Z.AI（api.z.ai 同路径同解析，裸 key）、MiniMax 国际版（api.minimax.io 同路径同解析）、SiliconFlow 国际版（api.siliconflow.com/v1/user/info，USD），registry 现内置 20 家。注意 z.ai 无效 Key 返回 HTTP 200 + 业务层 code 401，minimax.io 返回 HTTP 200 + base_resp.status_code 1004/1008，两者都已在解析层映射为 AuthError，不要只依赖 HTTP 状态码
 - Gemini 刷新后的 access_token / 新 refresh_token 缓存进 KeyStore（键 `gemini_access_token_cache`），禁止回写用户 `~/.gemini/oauth_creds.json`；查询按「文件 token → 缓存 token → refresh」解析，过期判定留 60 秒余量
 
 ### 24. OAuth 凭据自动检测 + ChatGPT-Account-Id + Claude seven_day_opus 已接入

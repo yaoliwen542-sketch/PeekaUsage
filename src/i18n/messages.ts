@@ -37,6 +37,11 @@ export const providerNames: Record<string, Partial<Record<AppLanguage, string>>>
   mimo: { "zh-Hans": "小米 MiMo", "zh-Hant": "小米 MiMo", en: "Xiaomi MiMo" },
   moonshot: { "zh-Hans": "Kimi 开放平台", "zh-Hant": "Kimi 開放平台", en: "Kimi Platform" },
   together: { "zh-Hans": "Together AI", "zh-Hant": "Together AI", en: "Together AI" },
+  zenmux: { "zh-Hans": "ZenMux", "zh-Hant": "ZenMux", en: "ZenMux" },
+  opencode_go: { "zh-Hans": "OpenCode Zen Go", "zh-Hant": "OpenCode Zen Go", en: "OpenCode Zen Go" },
+  glm_en: { "zh-Hans": "GLM 国际版", "zh-Hant": "GLM 國際版", en: "GLM (Z.AI)" },
+  minimax_en: { "zh-Hans": "MiniMax 国际版", "zh-Hant": "MiniMax 國際版", en: "MiniMax Global" },
+  siliconflow_en: { "zh-Hans": "SiliconFlow 国际版", "zh-Hant": "SiliconFlow 國際版", en: "SiliconFlow Global" },
 };
 
 export const messages = {

@@ -2,7 +2,7 @@
 
 ## 补充更新
 
-> **2026-07-28 更新**：灵动岛功能已移除，当前只维护主窗口、边缘隐藏/展开、供应商监控和设置页。其余架构与稳健性要求以 `AGENTS.md` 为准。要点：内置供应商 15 家 + NewAPI + 自定义向导；UI 已迁移 Tailwind 4 + shadcn/ui；配置/密钥/统计走原子写入；`fetch_all_usage` 已并发化；已注册 `tauri-plugin-single-instance` 禁止双开；本地打包必须走 `npm run tauri build`（裸 `cargo build --release` 缺少 `custom-protocol` feature，产出的 exe 会误连 devUrl 显示“无法访问此页面”）。
+> **2026-07-28 更新**：灵动岛功能已移除，当前只维护主窗口、边缘隐藏/展开、供应商监控和设置页。其余架构与稳健性要求以 `AGENTS.md` 为准。要点：内置供应商 20 家 + NewAPI + 自定义向导；UI 已迁移 Tailwind 4 + shadcn/ui；配置/密钥/统计走原子写入；`fetch_all_usage` 已并发化；已注册 `tauri-plugin-single-instance` 禁止双开；本地打包必须走 `npm run tauri build`（裸 `cargo build --release` 缺少 `custom-protocol` feature，产出的 exe 会误连 devUrl 显示“无法访问此页面”）。
 
 - `src/components/settings/SettingsPanel.tsx` 的刷新设置已支持“自动刷新 / 仅手动”切换，自动模式下可自定义数值并选择按秒或按分钟
 - 刷新相关持久化字段现在是 `pollingMode`、`pollingInterval`、`pollingUnit`、`providerPollingOverridesEnabled`、`providerPollingOverrides`、`refreshOnSettingsClose`
@@ -955,4 +955,5 @@ cargo check
   （需含 `api-platform_serviceToken` 和 `userId`），由 coding_plan::fetch_mimo 以
   `Cookie` 头 + 浏览器 Origin/Referer/UA 发送；MiMo 的 `env_key_name` 留空表示不接管环境变量，
   且 `resolve_env_key_name` 已统一过滤空值（Gemini 同样受益）。不要给 MiMo 换回 API Key 认证。
+- 阶段 5 已实现（2026-09，对齐 cc-switch 全部用量查询实现）：ZenMux（GET /api/v1/management/subscription/detail，**仅接受控制台 Management API Key**，普通 Key 403；quota_5_hour/quota_7_day 的 usage_percentage 是 0-1 小数）、OpenCode Zen Go（GET opencode.ai/zen/go/v1/usage，Bearer；403=有 Key 无 Go 订阅；usage.rolling/weekly/monthly 的 percent 已是 0-100）、GLM 国际版 Z.AI（api.z.ai 同路径同解析，裸 key）、MiniMax 国际版（api.minimax.io 同路径同解析）、SiliconFlow 国际版（api.siliconflow.com/v1/user/info，USD），registry 现内置 20 家。注意 z.ai 无效 Key 返回 HTTP 200 + 业务层 code 401，minimax.io 返回 HTTP 200 + base_resp.status_code 1004/1008，两者都已在解析层映射为 AuthError，不要只依赖 HTTP 状态码
 

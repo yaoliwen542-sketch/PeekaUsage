@@ -10,7 +10,8 @@ use super::types::{window_labels, SubscriptionWindow, UsageData};
 /// 统一转成 UsageData（currency="%"，total_budget=100，total_used=最高窗口 utilization），
 /// 各窗口明细放入 UsageData.windows，供前端逐窗口展示。
 ///
-/// 支持的 provider：kimi / glm / minimax / mimo / volcengine
+/// 支持的 provider：kimi / glm / glm_en / minimax / minimax_en / mimo /
+/// zenmux / opencode_go / volcengine
 pub async fn execute_coding_plan_query(
     client: &Client,
     provider: &str,
@@ -19,14 +20,52 @@ pub async fn execute_coding_plan_query(
     match provider {
         "kimi" => fetch_kimi(client, api_key).await,
         "glm" => fetch_glm(client, api_key).await,
+        "glm_en" => fetch_glm_en(client, api_key).await,
         "minimax" => fetch_minimax(client, api_key).await,
+        "minimax_en" => fetch_minimax_en(client, api_key).await,
         "mimo" => fetch_mimo(client, api_key).await,
+        "zenmux" => fetch_zenmux(client, api_key).await,
+        "opencode_go" => fetch_opencode_go(client, api_key).await,
         "volcengine" => fetch_volcengine(client, api_key).await,
         _ => Err(ProviderError::RequestError(format!(
             "不支持的 CodingPlan 供应商: {}",
             provider
         ))),
     }
+}
+
+/// 首字母大写（套餐标注用，如 "standard" -> "Standard"）
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// 从 JSON 值提取重置时间，兼容字符串与秒/毫秒时间戳（抄 cc-switch）
+///
+/// - 字符串：直接返回（ISO 8601）
+/// - 数字：秒级（< 1e12）转毫秒后转 ISO 8601；0/负值视为无重置时间
+fn extract_reset_time(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    if let Some(s) = value.as_str() {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(trimmed.to_string());
+    }
+    if let Some(n) = value.as_i64() {
+        if n <= 0 {
+            return None;
+        }
+        let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
+        return chrono::DateTime::from_timestamp_millis(ms)
+            .filter(|dt| dt.timestamp_millis() > 0)
+            .map(|dt| dt.to_rfc3339());
+    }
+    None
 }
 
 /// 把 utilization (0-100) 组装成百分比型 UsageData（无分窗口明细的兜底）
@@ -233,11 +272,14 @@ fn json_number(value: Option<&Value>) -> Option<f64> {
         .or_else(|| value?.as_str()?.trim().parse::<f64>().ok())
 }
 
-// ===== GLM（智谱，个人版）=====
+// ===== GLM（智谱）=====
 //
-// GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
+// GET {base}/api/monitor/usage/quota/limit
 // Authorization: {key}      （裸 key，无 Bearer 前缀！）
 // Accept-Language: en-US,en
+//
+// 国内版（open.bigmodel.cn）与国际版 Z.AI（api.z.ai）同路径同响应结构
+// （端点与认证方式参照 cc-switch 实现），仅 base 不同。
 //
 // 响应：
 // {
@@ -254,14 +296,49 @@ fn json_number(value: Option<&Value>) -> Option<f64> {
 // - unit==3 -> five_hour（utilization = percentage）
 // - unit==6 -> weekly_limit（utilization = percentage）
 async fn fetch_glm(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    fetch_glm_at(client, api_key, "https://open.bigmodel.cn").await
+}
+
+/// GLM 国际版（Z.AI，api.z.ai）
+async fn fetch_glm_en(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    fetch_glm_at(client, api_key, "https://api.z.ai").await
+}
+
+async fn fetch_glm_at(
+    client: &Client,
+    api_key: &str,
+    base: &str,
+) -> Result<UsageData, ProviderError> {
     let req = client
-        .get("https://open.bigmodel.cn/api/monitor/usage/quota/limit")
+        .get(format!("{}/api/monitor/usage/quota/limit", base))
         // GLM 用裸 key（无 Bearer 前缀）
         .header("Authorization", api_key)
         .header("Accept", "application/json")
         .header("Accept-Language", "en-US,en");
 
     let json = fetch_json(req).await?;
+    parse_glm_response(&json)
+}
+
+/// 解析 GLM 额度响应为分窗口 UsageData（纯函数，国内外版共用，便于单测）
+fn parse_glm_response(json: &Value) -> Result<UsageData, ProviderError> {
+    // Key 无效时 HTTP 层可能是 200 + 业务层错误（实测 api.z.ai：
+    // {"code":401,"msg":"token expired or incorrect","success":false}），
+    // 必须先检查，否则会误报成"解析失败"而不是"认证无效"。
+    if json.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        let code = json.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+        let msg = json
+            .get("msg")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知错误");
+        if code == 401 || code == 403 {
+            return Err(ProviderError::AuthError(format!("GLM 认证失败: {}", msg)));
+        }
+        return Err(ProviderError::RequestError(format!(
+            "GLM 查询失败: {}",
+            msg
+        )));
+    }
 
     let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
@@ -303,8 +380,11 @@ async fn fetch_glm(client: &Client, api_key: &str) -> Result<UsageData, Provider
 
 // ===== MiniMax =====
 //
-// GET https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains
+// GET https://{domain}/v1/api/openplatform/coding_plan/remains
 // Authorization: Bearer {key}
+//
+// 国内版 domain 为 api.minimaxi.com，国际版为 api.minimax.io
+// （同一路径与响应结构，端点参照 cc-switch 实现）。
 //
 // 响应：
 // {
@@ -323,12 +403,29 @@ async fn fetch_glm(client: &Client, api_key: &str) -> Result<UsageData, Provider
 // - current_weekly_status==1 时 current_weekly_remaining_percent -> weekly_limit
 //   （utilization = 100 - remain）
 async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    fetch_minimax_at(client, api_key, "api.minimaxi.com").await
+}
+
+/// MiniMax 国际版（api.minimax.io）
+async fn fetch_minimax_en(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    fetch_minimax_at(client, api_key, "api.minimax.io").await
+}
+
+async fn fetch_minimax_at(
+    client: &Client,
+    api_key: &str,
+    domain: &str,
+) -> Result<UsageData, ProviderError> {
     let req = client
-        .get("https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains")
+        .get(format!(
+            "https://{}/v1/api/openplatform/coding_plan/remains",
+            domain
+        ))
         .bearer_auth(api_key)
         .header("Accept", "application/json");
 
     let json = fetch_json(req).await?;
+    check_minimax_business_error(&json)?;
 
     let mut windows: Vec<SubscriptionWindow> = Vec::new();
 
@@ -380,6 +477,36 @@ async fn fetch_minimax(client: &Client, api_key: &str) -> Result<UsageData, Prov
     }
 
     Ok(build_percent_usage_with_windows(windows))
+}
+
+/// MiniMax 业务错误：Key 无效时 HTTP 层可能是 200 + base_resp.status_code 非 0
+/// （实测国际版无效 Key：{"base_resp":{"status_code":1004,"status_msg":"cookie is missing..."}}）
+fn check_minimax_business_error(json: &Value) -> Result<(), ProviderError> {
+    let Some(base_resp) = json.get("base_resp") else {
+        return Ok(());
+    };
+    let status_code = base_resp
+        .get("status_code")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if status_code == 0 {
+        return Ok(());
+    }
+    let msg = base_resp
+        .get("status_msg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("未知错误");
+    // 1004（认证失效）/ 1008（Key 无效）归认证错误，让 validate_key 正确判"无效"
+    if status_code == 1004 || status_code == 1008 {
+        return Err(ProviderError::AuthError(format!(
+            "MiniMax 认证失败: {}",
+            msg
+        )));
+    }
+    Err(ProviderError::RequestError(format!(
+        "MiniMax 查询失败 (code {}): {}",
+        status_code, msg
+    )))
 }
 
 // ===== 小米 MiMo =====
@@ -537,13 +664,7 @@ fn parse_mimo_token_plan_detail(json: &Value) -> (Option<String>, Option<String>
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|raw| {
-            let mut chars = raw.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        });
+        .map(capitalize_first);
     let resets_at = data
         .get("currentPeriodEnd")
         .and_then(|v| v.as_str())
@@ -589,6 +710,160 @@ fn parse_mimo_balance(json: &Value) -> Result<UsageData, ProviderError> {
         windows: Vec::new(),
         plan_name: None,
     })
+}
+
+// ===== ZenMux =====
+//
+// GET https://zenmux.ai/api/v1/management/subscription/detail
+// Authorization: Bearer {key}
+//
+// 端点与响应结构来自 ZenMux 官方文档（Platform API / subscription-detail），
+// 并与 cc-switch 实现交叉验证。注意：仅接受 ZenMux 控制台创建的
+// **Management API Key**，普通推理 API Key 会 401。
+//
+// 响应：
+// {
+//   "success": true,
+//   "data": {
+//     "plan": { "tier": "pro", ... },
+//     "quota_5_hour": { "usage_percentage": 0.42, "resets_at": "...", "used_value_usd": 3.2, "max_value_usd": 8.0 },
+//     "quota_7_day":  { "usage_percentage": 0.18, "resets_at": "..." }
+//   }
+// }
+//
+// usage_percentage 是 0-1 小数（4 位小数），需 *100 转百分比。
+// 映射：quota_5_hour -> five_hour；quota_7_day -> weekly_limit。
+async fn fetch_zenmux(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    let req = client
+        .get("https://zenmux.ai/api/v1/management/subscription/detail")
+        .bearer_auth(api_key)
+        .header("Accept", "application/json");
+    let json = fetch_json(req).await?;
+    parse_zenmux_response(&json)
+}
+
+/// 解析 ZenMux 订阅详情响应（纯函数，便于单测）
+fn parse_zenmux_response(json: &Value) -> Result<UsageData, ProviderError> {
+    if json.get("success").and_then(|v| v.as_bool()) != Some(true) {
+        let msg = json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知错误");
+        return Err(ProviderError::RequestError(format!(
+            "ZenMux 查询失败: {}",
+            msg
+        )));
+    }
+    let data = json
+        .get("data")
+        .filter(|d| d.is_object())
+        .ok_or_else(|| ProviderError::ParseError("ZenMux 响应缺少 data".into()))?;
+
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
+    for (field, label) in [
+        ("quota_5_hour", window_labels::FIVE_HOUR),
+        ("quota_7_day", window_labels::WEEKLY_LIMIT),
+    ] {
+        let Some(q) = data.get(field) else {
+            continue;
+        };
+        // usage_percentage 是 0-1 小数
+        let Some(p) = json_number(q.get("usage_percentage")) else {
+            continue;
+        };
+        windows.push(SubscriptionWindow {
+            label: label.to_string(),
+            utilization: (p * 100.0).clamp(0.0, 100.0),
+            resets_at: extract_reset_time(q.get("resets_at")),
+        });
+    }
+
+    if windows.is_empty() {
+        return Err(ProviderError::ParseError(
+            "ZenMux 响应中未找到有效的 quota_5_hour/quota_7_day 窗口".into(),
+        ));
+    }
+
+    let plan_name = data
+        .get("plan")
+        .and_then(|p| p.get("tier"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(capitalize_first);
+    let mut usage = build_percent_usage_with_windows(windows);
+    usage.plan_name = plan_name;
+    Ok(usage)
+}
+
+// ===== OpenCode Zen Go =====
+//
+// GET https://opencode.ai/zen/go/v1/usage
+// Authorization: Bearer {key}
+//
+// 用量端点只认 Bearer——与推理侧 /messages 只认 x-api-key 正好相反，不能互换。
+// HTTP 403 表示 Key 本身有效（Zen 与 Go 共用 workspace Key）但该 workspace
+// 没有 Go 订阅。端点未官方文档化，响应结构来自 cc-switch 实现（有用户实测）。
+//
+// 响应：
+// {
+//   "usage": {
+//     "rolling": { "percent": 42.0, "resetsAt": "..." },
+//     "weekly":  { "percent": 10.0, "resetsAt": "..." },
+//     "monthly": { "percent": 5.0,  "resetsAt": "..." }
+//   }
+// }
+//
+// percent 已是 0-100 百分比；三个窗口分别映射 five_hour / weekly_limit / monthly。
+async fn fetch_opencode_go(client: &Client, api_key: &str) -> Result<UsageData, ProviderError> {
+    let req = client
+        .get("https://opencode.ai/zen/go/v1/usage")
+        .bearer_auth(api_key)
+        .header("Accept", "application/json");
+    let json = fetch_json(req).await?;
+    let windows = parse_opencode_go_response(&json)?;
+    if windows.is_empty() {
+        return Err(ProviderError::ParseError(
+            "OpenCode Go 响应中无有效用量窗口".into(),
+        ));
+    }
+    Ok(build_percent_usage_with_windows(windows))
+}
+
+/// 解析 OpenCode Go 用量响应 -> 窗口列表（纯函数，便于单测）
+///
+/// 未使用的窗口（percent 缺失）跳过；percent <= 0 时不带重置时间
+/// （cc-switch 同款约定：未活跃窗口的重置时间无意义）。
+fn parse_opencode_go_response(json: &Value) -> Result<Vec<SubscriptionWindow>, ProviderError> {
+    let usage = json
+        .get("usage")
+        .filter(|u| u.is_object())
+        .ok_or_else(|| ProviderError::ParseError("OpenCode Go 响应缺少 usage".into()))?;
+
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
+    for (key, label) in [
+        ("rolling", window_labels::FIVE_HOUR),
+        ("weekly", window_labels::WEEKLY_LIMIT),
+        ("monthly", window_labels::MONTHLY),
+    ] {
+        let Some(w) = usage.get(key) else {
+            continue;
+        };
+        let Some(p) = json_number(w.get("percent")) else {
+            continue;
+        };
+        let resets_at = if p > 0.0 {
+            extract_reset_time(w.get("resetsAt"))
+        } else {
+            None
+        };
+        windows.push(SubscriptionWindow {
+            label: label.to_string(),
+            utilization: p.clamp(0.0, 100.0),
+            resets_at,
+        });
+    }
+    Ok(windows)
 }
 
 // ===== 火山方舟（Volcengine）=====
@@ -1187,6 +1462,149 @@ mod tests {
         // balance 缺失 -> 解析错误
         let json = serde_json::json!({ "code": 0, "data": { "foo": 1 } });
         assert!(parse_mimo_balance(&json).is_err());
+    }
+
+    #[test]
+    fn test_zenmux_parse_normal() {
+        // 常规形态：usage_percentage 是 0-1 小数，带套餐 tier 与重置时间
+        let json = serde_json::json!({
+            "success": true,
+            "data": {
+                "plan": { "tier": "pro" },
+                "quota_5_hour": { "usage_percentage": 0.4250, "resets_at": "2026-09-24T12:00:00Z", "used_value_usd": 3.4, "max_value_usd": 8.0 },
+                "quota_7_day":  { "usage_percentage": 0.1, "resets_at": null }
+            }
+        });
+        let usage = parse_zenmux_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 42.5).abs() < 1e-6);
+        assert!(usage.windows[0].resets_at.is_some());
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+        assert!((usage.windows[1].utilization - 10.0).abs() < 1e-6);
+        assert!(usage.windows[1].resets_at.is_none());
+        assert_eq!(usage.plan_name.as_deref(), Some("Pro"));
+    }
+
+    #[test]
+    fn test_zenmux_parse_errors() {
+        // success != true -> 业务错误
+        let json = serde_json::json!({ "success": false, "message": "unauthorized" });
+        assert!(parse_zenmux_response(&json).is_err());
+
+        // 无有效窗口 -> 解析错误
+        let json = serde_json::json!({ "success": true, "data": {} });
+        assert!(parse_zenmux_response(&json).is_err());
+    }
+
+    #[test]
+    fn test_opencode_go_parse_normal() {
+        // percent 已是 0-100；percent > 0 才带 resetsAt
+        let json = serde_json::json!({
+            "usage": {
+                "rolling": { "percent": 42.0, "resetsAt": "2026-09-24T18:00:00Z" },
+                "weekly":  { "percent": 0.0,  "resetsAt": "2026-09-29T00:00:00Z" },
+                "monthly": { "percent": 7.5 }
+            }
+        });
+        let windows = parse_opencode_go_response(&json).unwrap();
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].label, "five_hour");
+        assert!((windows[0].utilization - 42.0).abs() < 1e-6);
+        assert!(windows[0].resets_at.is_some());
+        // percent == 0 时不带重置时间
+        assert_eq!(windows[1].label, "weekly_limit");
+        assert!(windows[1].resets_at.is_none());
+        assert_eq!(windows[2].label, "monthly");
+    }
+
+    #[test]
+    fn test_opencode_go_parse_missing_usage_is_error() {
+        let json = serde_json::json!({ "foo": "bar" });
+        assert!(parse_opencode_go_response(&json).is_err());
+
+        // usage 为空对象 -> 无窗口 -> fetch 层报解析错误
+        let json = serde_json::json!({ "usage": {} });
+        let windows = parse_opencode_go_response(&json).unwrap();
+        assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn test_extract_reset_time_forms() {
+        // 字符串 ISO 直接返回
+        assert_eq!(
+            extract_reset_time(Some(&serde_json::json!("2026-09-24T00:00:00Z"))).as_deref(),
+            Some("2026-09-24T00:00:00Z")
+        );
+        // 秒级时间戳自动转毫秒
+        let iso = extract_reset_time(Some(&serde_json::json!(1_784_544_841))).unwrap();
+        assert!(iso.starts_with("2026-"));
+        // 毫秒级时间戳
+        let iso = extract_reset_time(Some(&serde_json::json!(1_784_544_841_000i64))).unwrap();
+        assert!(iso.starts_with("2026-"));
+        // 0/负值/空串/缺失 -> None
+        assert!(extract_reset_time(Some(&serde_json::json!(0))).is_none());
+        assert!(extract_reset_time(Some(&serde_json::json!(-1))).is_none());
+        assert!(extract_reset_time(Some(&serde_json::json!(""))).is_none());
+        assert!(extract_reset_time(Some(&serde_json::json!(null))).is_none());
+        assert!(extract_reset_time(None).is_none());
+    }
+
+    #[test]
+    fn test_glm_parse_response_reused_for_international() {
+        // 国内版与国际版共用同一解析函数
+        let json = serde_json::json!({
+            "data": {
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 80 },
+                    { "type": "TOKENS_LIMIT", "unit": 6, "percentage": 50 }
+                ]
+            }
+        });
+        let usage = parse_glm_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+    }
+
+    #[test]
+    fn test_glm_parse_business_auth_error() {
+        // 实测 api.z.ai 无效 Key 返回 HTTP 200 + 业务层 401，必须映射 AuthError
+        let json = serde_json::json!({
+            "code": 401, "msg": "token expired or incorrect", "success": false
+        });
+        match parse_glm_response(&json) {
+            Err(ProviderError::AuthError(_)) => {}
+            other => panic!("期望 AuthError，实际 {:?}", other.err()),
+        }
+    }
+
+    #[test]
+    fn test_minimax_business_error_codes() {
+        // 实测国际版无效 Key：HTTP 200 + base_resp.status_code==1004 -> AuthError
+        let json = serde_json::json!({
+            "base_resp": { "status_code": 1004, "status_msg": "cookie is missing, log in again" }
+        });
+        match check_minimax_business_error(&json) {
+            Err(ProviderError::AuthError(_)) => {}
+            other => panic!("期望 AuthError，实际 {:?}", other.err()),
+        }
+
+        // 其他非 0 状态码 -> 普通请求错误
+        let json = serde_json::json!({
+            "base_resp": { "status_code": 1027, "status_msg": "rate limit" }
+        });
+        match check_minimax_business_error(&json) {
+            Err(ProviderError::RequestError(_)) => {}
+            other => panic!("期望 RequestError，实际 {:?}", other.err()),
+        }
+
+        // 无 base_resp 或 status_code==0 -> 通过
+        assert!(check_minimax_business_error(&serde_json::json!({ "model_remains": [] })).is_ok());
+        assert!(check_minimax_business_error(&serde_json::json!({
+            "base_resp": { "status_code": 0 }
+        }))
+        .is_ok());
     }
 
     #[test]
