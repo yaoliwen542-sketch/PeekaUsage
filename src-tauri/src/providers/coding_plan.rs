@@ -321,6 +321,17 @@ async fn fetch_glm_at(
 }
 
 /// 解析 GLM 额度响应为分窗口 UsageData（纯函数，国内外版共用，便于单测）
+///
+/// 解析对齐 cc-switch 实测行为（bigmodel.cn 与 z.ai 同后端同字段）：
+/// - 只认 type 为 TOKENS_LIMIT / CREDIT_LIMIT 的条目（大小写不敏感）
+/// - unit==3 -> five_hour，unit==6 -> weekly_limit（不绑 number 字段，
+///   实测 weekly 的 number 有 7 和 1 两种取值）
+/// - nextResetTime（毫秒时间戳）-> 各窗口重置时间
+/// - unit 缺失/不识别时兜底：无重置时间的条目优先归 five_hour（5 小时桶
+///   在 0% 等状态下可能没有 reset），其余按重置时间升序填入空缺槽位；
+///   不能用时间排序代替显式 unit（周期末尾每周窗口会比 5 小时窗口更早
+///   重置，按时间排序必然把两桶标反）
+/// - 老套餐只回 1 条 limits，自然降级为仅展示 five_hour
 fn parse_glm_response(json: &Value) -> Result<UsageData, ProviderError> {
     // Key 无效时 HTTP 层可能是 200 + 业务层错误（实测 api.z.ai：
     // {"code":401,"msg":"token expired or incorrect","success":false}），
@@ -340,38 +351,70 @@ fn parse_glm_response(json: &Value) -> Result<UsageData, ProviderError> {
         )));
     }
 
-    let mut windows: Vec<SubscriptionWindow> = Vec::new();
+    type Entry = (f64, Option<String>);
+    let mut five_hour: Option<Entry> = None;
+    let mut weekly: Option<Entry> = None;
+    let mut unclassified: Vec<Entry> = Vec::new();
 
-    // data.limits[] 中找 unit==3 和 unit==6
     if let Some(limits) = json
         .get("data")
         .and_then(|v| v.get("limits"))
         .and_then(|v| v.as_array())
     {
         for item in limits {
-            let unit = item.get("unit").and_then(|v| v.as_u64());
-            let percentage = item.get("percentage").and_then(|v| v.as_f64());
-            if let (Some(u), Some(p)) = (unit, percentage) {
-                // unit==3 -> five_hour, unit==6 -> weekly_limit
-                let label = match u {
-                    3 => Some(window_labels::FIVE_HOUR),
-                    6 => Some(window_labels::WEEKLY_LIMIT),
-                    _ => None,
-                };
-                if let Some(label) = label {
-                    windows.push(SubscriptionWindow {
-                        label: label.to_string(),
-                        utilization: p.clamp(0.0, 100.0),
-                        resets_at: None,
-                    });
-                }
+            let limit_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if !(limit_type.eq_ignore_ascii_case("TOKENS_LIMIT")
+                || limit_type.eq_ignore_ascii_case("CREDIT_LIMIT"))
+            {
+                continue;
             }
+            let Some(percentage) = item.get("percentage").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            let entry: Entry = (
+                percentage.clamp(0.0, 100.0),
+                extract_reset_time(item.get("nextResetTime")),
+            );
+            match item.get("unit").and_then(|v| v.as_i64()) {
+                Some(3) if five_hour.is_none() => five_hour = Some(entry),
+                Some(6) if weekly.is_none() => weekly = Some(entry),
+                _ => unclassified.push(entry),
+            }
+        }
+    }
+
+    // 兜底：无重置时间的条目排最前（优先归 five_hour），其余按重置时间升序
+    unclassified.sort_by(|a, b| match (a.1.is_none(), b.1.is_none()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.1.cmp(&b.1),
+    });
+    for entry in unclassified {
+        if five_hour.is_none() {
+            five_hour = Some(entry);
+        } else if weekly.is_none() {
+            weekly = Some(entry);
+        }
+        // 智谱当前最多两条 TOKENS_LIMIT，多余的忽略
+    }
+
+    let mut windows: Vec<SubscriptionWindow> = Vec::new();
+    for (label, slot) in [
+        (window_labels::FIVE_HOUR, five_hour),
+        (window_labels::WEEKLY_LIMIT, weekly),
+    ] {
+        if let Some((utilization, resets_at)) = slot {
+            windows.push(SubscriptionWindow {
+                label: label.to_string(),
+                utilization,
+                resets_at,
+            });
         }
     }
 
     if windows.is_empty() {
         return Err(ProviderError::ParseError(
-            "GLM 响应中未找到 unit==3 或 unit==6 的 limits 条目".into(),
+            "GLM 响应中未找到有效的 TOKENS_LIMIT/CREDIT_LIMIT 条目".into(),
         ));
     }
 
@@ -1556,15 +1599,63 @@ mod tests {
         let json = serde_json::json!({
             "data": {
                 "limits": [
-                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 80 },
-                    { "type": "TOKENS_LIMIT", "unit": 6, "percentage": 50 }
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 80, "nextResetTime": 1784544841000i64 },
+                    { "type": "TOKENS_LIMIT", "unit": 6, "percentage": 50, "nextResetTime": 1785081600000i64 }
                 ]
             }
         });
         let usage = parse_glm_response(&json).unwrap();
         assert_eq!(usage.windows.len(), 2);
         assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 80.0).abs() < 1e-6);
+        // 重置时间（毫秒 -> RFC3339）
+        assert!(usage.windows[0].resets_at.is_some());
+        assert!(usage.windows[0]
+            .resets_at
+            .as_deref()
+            .unwrap()
+            .starts_with("2026-"));
         assert_eq!(usage.windows[1].label, "weekly_limit");
+        assert!(usage.windows[1].resets_at.is_some());
+    }
+
+    #[test]
+    fn test_glm_parse_type_filter_and_fallback() {
+        // 非 TOKENS_LIMIT/CREDIT_LIMIT 条目跳过；unit 缺失时兜底分类：
+        // 无重置时间的条目优先归 five_hour，其余按重置时间升序
+        let json = serde_json::json!({
+            "data": {
+                "limits": [
+                    { "type": "OTHER_LIMIT", "unit": 3, "percentage": 99 },
+                    { "type": "tokens_limit", "percentage": 0 },
+                    { "type": "CREDIT_LIMIT", "percentage": 40, "nextResetTime": 1784544841000i64 }
+                ]
+            }
+        });
+        let usage = parse_glm_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        // OTHER_LIMIT 被跳过；无 reset 的 tokens_limit(0%) -> five_hour；
+        // CREDIT_LIMIT(40%) -> weekly_limit
+        assert_eq!(usage.windows[0].label, "five_hour");
+        assert!((usage.windows[0].utilization - 0.0).abs() < 1e-6);
+        assert!(usage.windows[0].resets_at.is_none());
+        assert_eq!(usage.windows[1].label, "weekly_limit");
+        assert!((usage.windows[1].utilization - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_glm_parse_single_limit_falls_back_to_five_hour() {
+        // 老套餐只回 1 条 limits -> 仅展示 five_hour
+        let json = serde_json::json!({
+            "data": {
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 25 }
+                ]
+            }
+        });
+        let usage = parse_glm_response(&json).unwrap();
+        assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.windows[0].label, "five_hour");
     }
 
     #[test]

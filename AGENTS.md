@@ -768,6 +768,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - Together AI 走 `GET https://api.together.xyz/v1/getBalance`，响应仅 `$.balance` 一个字段（USD）；该端点未收录在官方文档首页，字段变更会以解析错误透出
 - 302.AI / xAI 等的余额端点响应结构未经真实 Key 验证，不要凭猜测接入
 - ZenMux 查询失败优先确认填的是**控制台 Management API Key**（普通推理 Key 一律 403 Invalid API key）；OpenCode Zen Go 查询 403 表示 Key 有效但该 workspace 没有 Go 订阅（与 401 区分）；GLM 国际版（z.ai）/ MiniMax 国际版的 Key 与国内版互不通用
+- GLM 周限额/5 小时窗口的重置时间来自 limits 条目的 `nextResetTime`（毫秒时间戳）；条目 type 限 TOKENS_LIMIT/CREDIT_LIMIT（大小写不敏感），unit==3 -> 5 小时、unit==6 -> 周限额；0% 等状态下 5 小时桶可能没有 nextResetTime，属正常现象
 
 ### 火山方舟查询异常
 

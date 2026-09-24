@@ -328,8 +328,9 @@ fn builtin_templates() -> Vec<ProviderTemplate> {
         // === GLM（智谱，个人版，CodingPlan）===
         // GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
         // 裸 key 认证（无 Bearer 前缀）+ Accept-Language: en-US,en。
-        // 响应 data.limits[] 中 unit==3 -> 5 小时窗口，unit==6 -> 周限额窗口。
-        // 由 coding_plan::fetch_glm 解析成百分比型 UsageData。
+        // 响应 data.limits[] 中 type 为 TOKENS_LIMIT/CREDIT_LIMIT 的条目：
+        // unit==3 -> 5 小时窗口，unit==6 -> 周限额窗口，nextResetTime
+        // （毫秒）为重置时间。由 coding_plan::fetch_glm 解析成百分比型 UsageData。
         ProviderTemplate {
             id: "glm".to_string(),
             display_name: "GLM".to_string(),
