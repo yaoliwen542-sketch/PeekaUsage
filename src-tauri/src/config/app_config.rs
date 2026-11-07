@@ -56,6 +56,15 @@ pub struct AppSettings {
     pub window_size: Option<WindowSize>,
     #[serde(default = "default_provider_card_expanded")]
     pub provider_card_expanded: HashMap<String, bool>,
+    /// 代理模式：none=不使用（禁用系统代理）、system=跟随系统（reqwest 默认）、custom=自定义
+    #[serde(default)]
+    pub proxy_mode: ProxyMode,
+    /// 自定义代理地址，支持 http:// https:// socks5://
+    #[serde(default)]
+    pub proxy_url: String,
+    /// 代理 Basic 鉴权用户名（可选；密码存 KeyStore）
+    #[serde(default)]
+    pub proxy_username: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -112,6 +121,20 @@ pub enum WidgetDisplayMode {
     Compact,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    None,
+    System,
+    Custom,
+}
+
+impl Default for ProxyMode {
+    fn default() -> Self {
+        ProxyMode::System
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowPosition {
     pub x: f64,
@@ -154,6 +177,9 @@ impl Default for AppSettings {
             update_auto_check_enabled: default_update_auto_check_enabled(),
             update_check_on_launch: default_update_check_on_launch(),
             update_check_interval_hours: default_update_check_interval_hours(),
+            proxy_mode: ProxyMode::default(),
+            proxy_url: String::new(),
+            proxy_username: String::new(),
         }
     }
 }
@@ -452,4 +478,38 @@ fn provider_rank(provider_id: &str) -> usize {
         }
     }
     usize::MAX
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+
+    #[test]
+    fn 默认设置跟随系统代理() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.proxy_mode, ProxyMode::System);
+        assert_eq!(settings.proxy_url, "");
+        assert_eq!(settings.proxy_username, "");
+    }
+
+    #[test]
+    fn 旧配置缺少代理字段时回退默认() {
+        let full = serde_json::to_value(AppSettings::default()).expect("序列化默认配置");
+        let obj = full.as_object().expect("应为 JSON 对象").clone();
+        let obj: serde_json::Map<String, serde_json::Value> = obj
+            .into_iter()
+            .filter(|(k, _)| k != "proxyMode" && k != "proxyUrl" && k != "proxyUsername")
+            .collect();
+        let settings: AppSettings =
+            serde_json::from_value(obj.into()).expect("缺代理字段必须能反序列化");
+        assert_eq!(settings.proxy_mode, ProxyMode::System);
+    }
+
+    #[test]
+    fn 代理模式枚举序列化为小写() {
+        assert_eq!(
+            serde_json::to_value(ProxyMode::Custom).unwrap(),
+            serde_json::Value::String("custom".into())
+        );
+    }
 }
