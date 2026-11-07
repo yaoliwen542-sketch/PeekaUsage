@@ -6,11 +6,13 @@ mod providers;
 mod stats;
 mod tray;
 
-use config::app_config::AppConfig;
+use config::app_config::{AppConfig, ProxyMode};
 use config::encryption::KeyStore;
 use config::migration::migrate_legacy_app_data;
+use net::http_client::{HttpClientFactory, ProxyConfig};
 use providers::ProviderManager;
 use stats::UsageStatsStore;
+use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,7 +48,11 @@ pub fn run() {
             // 初始化状态
             let app_config = AppConfig::new(app_data_dir.clone());
             let key_store = KeyStore::new(app_data_dir.clone());
-            let provider_manager = ProviderManager::new();
+            // 临时占位装配：跟随系统代理的默认工厂；Task 4（真实装配）会改为
+            // 从已保存配置读取代理设置构造工厂，并支持保存后 reload 热生效
+            let provider_manager = ProviderManager::new(Arc::new(HttpClientFactory::new(
+                &ProxyConfig::from_settings(ProxyMode::System, String::new(), String::new(), None),
+            )));
             let usage_stats_store = UsageStatsStore::new(app_data_dir);
             let initial_settings = tauri::async_runtime::block_on(app_config.get_settings());
 

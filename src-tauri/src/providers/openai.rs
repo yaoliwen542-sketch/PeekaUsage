@@ -1,23 +1,21 @@
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use super::traits::{ProviderError, UsageProvider};
 use super::types::*;
+use crate::net::http_client::HttpClientFactory;
 
 pub struct OpenAIProvider {
-    client: Client,
+    id: String,
+    factory: Arc<HttpClientFactory>,
 }
 
 impl OpenAIProvider {
-    pub fn new() -> Self {
+    pub fn new(factory: Arc<HttpClientFactory>) -> Self {
         Self {
-            // 必须带超时：网络挂起时避免刷新永久卡死
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("无法创建 HTTP 客户端"),
+            id: String::from("openai"),
+            factory,
         }
     }
 
@@ -40,12 +38,12 @@ impl OpenAIProvider {
         start_timestamp: i64,
         end_timestamp: i64,
     ) -> Result<f64, ProviderError> {
+        let client = self.factory.client().await;
         let mut total_used = 0.0;
         let mut page_cursor: Option<String> = None;
 
         for page_index in 0..COSTS_MAX_PAGES {
-            let mut request = self
-                .client
+            let mut request = client
                 .get("https://api.openai.com/v1/organization/costs")
                 .bearer_auth(api_key)
                 .query(&[
@@ -155,7 +153,7 @@ struct CreditGrantsResponse {
 #[async_trait]
 impl UsageProvider for OpenAIProvider {
     fn id(&self) -> String {
-        "openai".to_string()
+        self.id.clone()
     }
 
     fn display_name(&self) -> &str {
@@ -172,9 +170,9 @@ impl UsageProvider for OpenAIProvider {
     }
 
     async fn fetch_usage(&self, api_key: &str) -> Result<UsageData, ProviderError> {
+        let client = self.factory.client().await;
         // 先尝试获取 credit grants（预付费账户）
-        let credits_result = self
-            .client
+        let credits_result = client
             .get("https://api.openai.com/v1/dashboard/billing/credit_grants")
             .bearer_auth(api_key)
             .send()
@@ -221,8 +219,7 @@ impl UsageProvider for OpenAIProvider {
             .await?;
 
         // 尝试获取 subscription 限额
-        let budget = match self
-            .client
+        let budget = match client
             .get("https://api.openai.com/v1/dashboard/billing/subscription")
             .bearer_auth(api_key)
             .send()
@@ -257,8 +254,8 @@ impl UsageProvider for OpenAIProvider {
     }
 
     async fn validate_key(&self, api_key: &str) -> Result<bool, ProviderError> {
-        let resp = self
-            .client
+        let client = self.factory.client().await;
+        let resp = client
             .get("https://api.openai.com/v1/models")
             .bearer_auth(api_key)
             .send()

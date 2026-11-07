@@ -18,6 +18,8 @@ use std::sync::Arc;
 use traits::{ProviderError, UsageProvider};
 use types::*;
 
+use crate::net::http_client::HttpClientFactory;
+
 /// 供应商管理器：通过 ProviderRegistry 路由用量/订阅查询
 ///
 /// 架构说明：
@@ -28,19 +30,19 @@ use types::*;
 pub struct ProviderManager {
     /// 旧版 provider 实例（仅 openai/anthropic/openrouter，用于 rate_limit/validate）
     legacy_providers: HashMap<String, Arc<dyn UsageProvider>>,
-    /// HTTP 客户端（Balance / Script 查询共用）
-    http_client: reqwest::Client,
+    /// HTTP 客户端工厂（Balance / Script / 订阅查询统一从这里取快照，代理保存后可热重建）
+    factory: Arc<HttpClientFactory>,
     /// 订阅查询器
     subscription_fetcher: subscription::SubscriptionFetcher,
 }
 
 impl ProviderManager {
-    pub fn new() -> Self {
+    pub fn new(factory: Arc<HttpClientFactory>) -> Self {
         let mut legacy_providers: HashMap<String, Arc<dyn UsageProvider>> = HashMap::new();
 
-        let openai = Arc::new(openai::OpenAIProvider::new());
-        let anthropic = Arc::new(anthropic::AnthropicProvider::new());
-        let openrouter = Arc::new(openrouter::OpenRouterProvider::new());
+        let openai = Arc::new(openai::OpenAIProvider::new(factory.clone()));
+        let anthropic = Arc::new(anthropic::AnthropicProvider::new(factory.clone()));
+        let openrouter = Arc::new(openrouter::OpenRouterProvider::new(factory.clone()));
 
         legacy_providers.insert(openai.id(), openai);
         legacy_providers.insert(anthropic.id(), anthropic);
@@ -48,18 +50,14 @@ impl ProviderManager {
 
         Self {
             legacy_providers,
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("无法创建 HTTP 客户端"),
-            subscription_fetcher: subscription::SubscriptionFetcher::new(),
+            subscription_fetcher: subscription::SubscriptionFetcher::new(factory.clone()),
+            factory,
         }
     }
 
-    /// 暴露 HTTP 客户端引用（供命令层调用 script_engine）
-    pub fn http_client_ref(&self) -> &reqwest::Client {
-        &self.http_client
+    /// 当前 HTTP client 快照（供命令层调用 script_engine / coding_plan / balance）
+    pub async fn http_client(&self) -> Arc<reqwest::Client> {
+        self.factory.client().await
     }
 
     /// 解析供应商模板：优先从 registry 取，找不到则返回错误
@@ -278,6 +276,7 @@ impl ProviderManager {
         custom_config: Option<&CustomProviderConfig>,
         key_store: Option<&crate::config::encryption::KeyStore>,
     ) -> Result<UsageData, ProviderError> {
+        let client = self.factory.client().await;
         match &spec.query_type {
             QueryType::Balance {
                 url,
@@ -288,18 +287,12 @@ impl ProviderManager {
                 // 通用模板只能取 [0] 且币种写死 USD，国内 CNY 账号会显示错币种。
                 // 走特化实现：优先 CNY 条目，币种取条目实际值；URL/认证仍来自模板。
                 if provider_id == "deepseek" {
-                    return balance::execute_deepseek_balance_query(
-                        &self.http_client,
-                        url,
-                        api_key,
-                    )
-                    .await;
+                    return balance::execute_deepseek_balance_query(&client, url, api_key).await;
                 }
-                balance::execute_balance_query(&self.http_client, url, auth, field_map, api_key)
-                    .await
+                balance::execute_balance_query(&client, url, auth, field_map, api_key).await
             }
             QueryType::CodingPlan { provider } => {
-                coding_plan::execute_coding_plan_query(&self.http_client, provider, api_key).await
+                coding_plan::execute_coding_plan_query(&client, provider, api_key).await
             }
             QueryType::Subscription { .. } => {
                 Err(ProviderError::RequestError("订阅查询不应走用量链路".into()))
@@ -321,7 +314,7 @@ impl ProviderManager {
                 let (access_token, user_id) =
                     resolve_script_credentials(provider_id, custom_config, key_store).await;
                 script_engine::run(
-                    &self.http_client,
+                    &client,
                     code,
                     api_key,
                     base_url,
@@ -368,12 +361,6 @@ impl ProviderManager {
             Err(e) if is_auth_error_message(&e) => Ok(false),
             Err(e) => Err(format!("无法验证 API Key: {}", e)),
         }
-    }
-}
-
-impl Default for ProviderManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

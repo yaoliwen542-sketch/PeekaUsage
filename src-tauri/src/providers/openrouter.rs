@@ -1,23 +1,21 @@
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use super::traits::{ProviderError, UsageProvider};
 use super::types::*;
+use crate::net::http_client::HttpClientFactory;
 
 pub struct OpenRouterProvider {
-    client: Client,
+    id: String,
+    factory: Arc<HttpClientFactory>,
 }
 
 impl OpenRouterProvider {
-    pub fn new() -> Self {
+    pub fn new(factory: Arc<HttpClientFactory>) -> Self {
         Self {
-            // 必须带超时：网络挂起时避免刷新永久卡死
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("无法创建 HTTP 客户端"),
+            id: String::from("openrouter"),
+            factory,
         }
     }
 }
@@ -80,7 +78,7 @@ fn rate_limit_interval_seconds(interval: Option<&str>) -> u64 {
 #[async_trait]
 impl UsageProvider for OpenRouterProvider {
     fn id(&self) -> String {
-        "openrouter".to_string()
+        self.id.clone()
     }
 
     fn display_name(&self) -> &str {
@@ -97,9 +95,9 @@ impl UsageProvider for OpenRouterProvider {
     }
 
     async fn fetch_usage(&self, api_key: &str) -> Result<UsageData, ProviderError> {
+        let client = self.factory.client().await;
         // 获取 credits 信息
-        let credits_resp = self
-            .client
+        let credits_resp = client
             .get("https://openrouter.ai/api/v1/credits")
             .bearer_auth(api_key)
             .send()
@@ -128,8 +126,7 @@ impl UsageProvider for OpenRouterProvider {
         }
 
         // 回退到 /api/v1/key
-        let key_resp = self
-            .client
+        let key_resp = client
             .get("https://openrouter.ai/api/v1/key")
             .bearer_auth(api_key)
             .send()
@@ -166,8 +163,8 @@ impl UsageProvider for OpenRouterProvider {
         &self,
         api_key: &str,
     ) -> Result<Option<RateLimitData>, ProviderError> {
-        let resp = self
-            .client
+        let client = self.factory.client().await;
+        let resp = client
             .get("https://openrouter.ai/api/v1/key")
             .bearer_auth(api_key)
             .send()
@@ -207,8 +204,8 @@ impl UsageProvider for OpenRouterProvider {
     }
 
     async fn validate_key(&self, api_key: &str) -> Result<bool, ProviderError> {
-        let resp = self
-            .client
+        let client = self.factory.client().await;
+        let resp = client
             .get("https://openrouter.ai/api/v1/key")
             .bearer_auth(api_key)
             .send()

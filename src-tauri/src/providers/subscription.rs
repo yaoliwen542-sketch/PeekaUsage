@@ -1,11 +1,12 @@
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use super::types::*;
+use crate::net::http_client::HttpClientFactory;
 
 /// 订阅用量查询器
 pub struct SubscriptionFetcher {
-    client: Client,
+    factory: Arc<HttpClientFactory>,
 }
 
 // ===== Anthropic 订阅 =====
@@ -58,15 +59,8 @@ struct OpenAIUsageWindow {
 }
 
 impl SubscriptionFetcher {
-    pub fn new() -> Self {
-        Self {
-            // 必须带超时：网络挂起时避免刷新永久卡死
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("无法创建 HTTP 客户端"),
-        }
+    pub fn new(factory: Arc<HttpClientFactory>) -> Self {
+        Self { factory }
     }
 
     /// 统一订阅查询入口，按 provider 字符串分发
@@ -95,7 +89,8 @@ impl SubscriptionFetcher {
             // account_id 参数对 Gemini 不适用（Gemini 不需要 ChatGPT-Account-Id）。
             // key_store 用于缓存刷新后的 token（修复 M8），避免每次轮询都打 token 端点。
             "gemini" => {
-                super::gemini::fetch_gemini_quota(&self.client, oauth_token, key_store).await
+                let client = self.factory.client().await;
+                super::gemini::fetch_gemini_quota(&client, oauth_token, key_store).await
             }
             _ => SubscriptionUsage {
                 plan_name: None,
@@ -109,8 +104,8 @@ impl SubscriptionFetcher {
 
     /// Anthropic OAuth 订阅查询（原 fetch_anthropic）
     async fn fetch_anthropic_oauth(&self, oauth_token: &str) -> SubscriptionUsage {
-        let resp = self
-            .client
+        let client = self.factory.client().await;
+        let resp = client
             .get("https://api.anthropic.com/api/oauth/usage")
             .header("Authorization", format!("Bearer {}", oauth_token))
             .header("Accept", "application/json")
@@ -250,6 +245,7 @@ impl SubscriptionFetcher {
         oauth_token: &str,
         account_id: Option<&str>,
     ) -> SubscriptionUsage {
+        let client = self.factory.client().await;
         // 调用方未传 account_id 时，回退到自动检测
         let resolved_account_id = match account_id {
             Some(aid) => Some(aid.to_string()),
@@ -258,8 +254,7 @@ impl SubscriptionFetcher {
                 .filter(|s| !s.is_empty()),
         };
 
-        let mut req = self
-            .client
+        let mut req = client
             .get("https://chatgpt.com/backend-api/wham/usage")
             .header("Authorization", format!("Bearer {}", oauth_token))
             .header("User-Agent", "codex-cli");

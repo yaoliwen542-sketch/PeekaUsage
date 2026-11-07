@@ -1,23 +1,21 @@
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use super::traits::{ProviderError, UsageProvider};
 use super::types::*;
+use crate::net::http_client::HttpClientFactory;
 
 pub struct AnthropicProvider {
-    client: Client,
+    id: String,
+    factory: Arc<HttpClientFactory>,
 }
 
 impl AnthropicProvider {
-    pub fn new() -> Self {
+    pub fn new(factory: Arc<HttpClientFactory>) -> Self {
         Self {
-            // 必须带超时：网络挂起时避免刷新永久卡死
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("无法创建 HTTP 客户端"),
+            id: String::from("anthropic"),
+            factory,
         }
     }
 }
@@ -37,7 +35,7 @@ struct CostEntry {
 #[async_trait]
 impl UsageProvider for AnthropicProvider {
     fn id(&self) -> String {
-        "anthropic".to_string()
+        self.id.clone()
     }
 
     fn display_name(&self) -> &str {
@@ -54,6 +52,7 @@ impl UsageProvider for AnthropicProvider {
     }
 
     async fn fetch_usage(&self, api_key: &str) -> Result<UsageData, ProviderError> {
+        let client = self.factory.client().await;
         let now = chrono::Utc::now();
         let start_date = now.format("%Y-%m-01").to_string();
         let end_date = now.format("%Y-%m-%d").to_string();
@@ -63,8 +62,7 @@ impl UsageProvider for AnthropicProvider {
             start_date, end_date
         );
 
-        let resp = self
-            .client
+        let resp = client
             .get(&url)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
@@ -128,9 +126,9 @@ impl UsageProvider for AnthropicProvider {
     }
 
     async fn validate_key(&self, api_key: &str) -> Result<bool, ProviderError> {
+        let client = self.factory.client().await;
         // 使用 cost_report 端点验证 admin key
-        let resp = self
-            .client
+        let resp = client
             .get("https://api.anthropic.com/v1/organizations/cost_report?start_date=2024-01-01&end_date=2024-01-02")
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")

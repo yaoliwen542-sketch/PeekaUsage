@@ -1213,8 +1213,9 @@ pub async fn test_custom_provider_script(
     user_id: Option<String>,
 ) -> Result<String, String> {
     // 执行脚本，返回成功/失败信息
+    let client = provider_manager.http_client().await;
     let result = crate::providers::script_engine::run(
-        provider_manager.http_client_ref(),
+        &client,
         &code,
         &api_key,
         base_url.as_deref(),
