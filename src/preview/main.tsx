@@ -41,6 +41,21 @@ mockIPC((cmd) => {
       return mockSettings;
     case "save_settings":
       return null;
+    case "test_proxy_connection": {
+      // 预览场景的测试连接 mock：?proxyTest=fail 控制失败结果，默认成功
+      if (params.get("proxyTest") === "fail") {
+        return {
+          ok: false,
+          endpoint: null,
+          error: "https://www.gstatic.com/generate_204: 连接超时（预览 mock）",
+        };
+      }
+      return {
+        ok: true,
+        endpoint: "https://www.gstatic.com/generate_204",
+        error: null,
+      };
+    }
     case "fetch_all_usage":
       return MOCK_SUMMARIES;
     case "fetch_provider_usage":
