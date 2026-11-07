@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod net;
 mod polling;
 mod providers;
 mod stats;
