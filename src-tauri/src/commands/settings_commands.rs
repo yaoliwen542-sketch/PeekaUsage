@@ -26,7 +26,27 @@ pub async fn save_settings(
     app_handle: AppHandle,
 ) -> Result<(), String> {
     let previous = app_config.get_settings().await;
-    app_config.save_settings(settings).await?;
+    let next = settings;
+
+    // 落盘前 dry-run：用即将生效的代理四要素试建一次 client，失败则直接报错不落盘，
+    // 避免坏代理配置写进 config.json 后拖垮下次启动。错误信息沿用 build_client 原文。
+    // 密码解析语义与下方 KeyStore 覆盖保持一致（传入非空用新值，否则回读旧值），
+    // 因此 dry-run 必须在覆盖 KeyStore 之前完成。
+    let dry_run_password = match proxy_password
+        .as_ref()
+        .filter(|password| !password.is_empty())
+    {
+        Some(password) => Some(password.clone()),
+        None => key_store.get_stored_key("proxy_password").await,
+    };
+    crate::net::http_client::build_client(&ProxyConfig::from_settings(
+        next.proxy_mode,
+        next.proxy_url.clone(),
+        next.proxy_username.clone(),
+        dry_run_password,
+    ))?;
+
+    app_config.save_settings(next).await?;
     let next = app_config.get_settings().await;
 
     // 语言变化时重建托盘菜单，保持托盘文案与设置页一致。

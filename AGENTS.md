@@ -623,6 +623,7 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 保存设置即热生效：`save_settings` 检测到 mode / url / username / password 任一变化就调用 `factory.reload()` 热重建，不需要重启应用
 - `test_proxy_connection` 是唯一代理诊断入口：用表单当前值临时构建 client 测试连通性，不影响已保存配置；前端未填密码时回退 KeyStore 已存值，成功时带命中端点
 - 代理密码没有清除路径：`None` / 空串 = 不修改，只有显式传入非空值才覆盖 KeyStore
+- 从 custom 切到 none/system 时 KeyStore 中密码保留不清除；切回 custom 时旧密码仍生效（无密码清除路径，重新填写即覆盖）
 - `reqwest` 已启用 `socks` feature（Cargo.toml）；没有该 feature 时 `socks5://` 会在构建时假阳性成功、运行期静默退化直连，不要移除
 - 更新器（tauri-plugin-updater）与 WebDAV 备份不走应用代理设置
 
@@ -989,6 +990,7 @@ cargo check
 - 设置页 API Key “切换环境”后，对应的系统环境变量是否更新；新开终端读取是否符合预期
 - 设置页“网络代理”：不配置时各供应商刷新行为与直连一致；跟随系统 / 自定义切换后不重启即按新代理生效（热重建）
 - 设置页“网络代理”：自定义模式填非法地址时保存/测试报“代理地址无效”，测试连接成功时带命中端点
+- 设置页“网络代理”：填一个不存在的代理地址点测试连接，错误文案包含具体端点与失败原因
 - 设置页“网络代理”：用户名/密码代理保存后重新打开设置页密码框为空、测试仍成功（KeyStore 回读）
 - 配置代理后 WebDAV 备份仍直连可用，不受代理设置影响
 

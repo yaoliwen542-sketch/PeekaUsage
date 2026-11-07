@@ -68,7 +68,23 @@ pub struct HttpClientFactory {
 
 impl HttpClientFactory {
     pub fn new(proxy: &ProxyConfig) -> Self {
-        let client = build_client(proxy).expect("无法创建 HTTP 客户端");
+        // 用户可能保存过无法构建的坏代理配置（如 custom 模式但地址为空），
+        // 启动路径绝不能 panic：构建失败时回退 system 默认 client 并输出警告，
+        // 应用照常启动，用户可在设置页修正代理配置。
+        // 只有 system 兜底构建也失败（纯环境问题，与用户配置无关）才允许 expect。
+        let client = match build_client(proxy) {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("代理配置构建 HTTP 客户端失败: {error}，已回退为系统默认代理");
+                build_client(&ProxyConfig {
+                    mode: ProxyMode::System,
+                    url: String::new(),
+                    username: String::new(),
+                    password: None,
+                })
+                .expect("系统默认 HTTP 客户端构建失败")
+            }
+        };
         Self {
             client: RwLock::new(Arc::new(client)),
         }
@@ -126,15 +142,28 @@ mod tests {
         assert!(build_client(&config(ProxyMode::Custom, "socks5://127.0.0.1:1080")).is_ok());
     }
 
+    #[test]
+    fn new_用坏配置不panic且回退system() {
+        let factory = HttpClientFactory::new(&config(ProxyMode::Custom, ""));
+        let client = tokio::runtime::Runtime::new()
+            .expect("创建运行时失败")
+            .block_on(factory.client());
+        assert!(client.get("https://example.com").try_clone().is_some());
+    }
+
     #[tokio::test]
     async fn reload_后_client_快照更新() {
         let factory = HttpClientFactory::new(&config(ProxyMode::System, ""));
+        let before = factory.client().await;
         factory
             .reload(&config(ProxyMode::Custom, "http://127.0.0.1:7890"))
             .await
             .expect("reload 应成功");
-        let client = factory.client().await;
-        // 快照 Arc 指向新构建的 client，可正常发起请求（不实际联网）
-        assert!(client.get("https://example.com").try_clone().is_some());
+        let after = factory.client().await;
+        assert_ne!(
+            Arc::as_ptr(&before),
+            Arc::as_ptr(&after),
+            "reload 后应是新 client 实例"
+        );
     }
 }

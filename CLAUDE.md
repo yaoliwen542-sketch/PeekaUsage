@@ -677,6 +677,7 @@ WidgetContainer 拖拽结束
 - 不要把 macOS 的 `app` / `dmg` 目标直接塞回主 `tauri.conf.json`，统一放在 `src-tauri/tauri.macos.conf.json`
 - 不要再新建 `reqwest::Client`；用量查询 client 只能从 `net::http_client::HttpClientFactory` 获取（WebDAV 备份是唯一例外）
 - 代理密码没有清除路径；不传或空串是不修改语义，只有显式非空才覆盖 KeyStore 的 `proxy_password`
+- 从 custom 切到 none/system 时 KeyStore 中密码保留不清除；切回 custom 时旧密码仍生效（无密码清除路径，重新填写即覆盖）
 - 不要移除 reqwest 的 `socks` feature；没有它 `socks5://` 代理会构建假阳性成功、运行期静默直连
 
 ## 常用排查入口
