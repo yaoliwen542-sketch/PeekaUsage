@@ -6,7 +6,7 @@ mod providers;
 mod stats;
 mod tray;
 
-use config::app_config::{AppConfig, ProxyMode};
+use config::app_config::AppConfig;
 use config::encryption::KeyStore;
 use config::migration::migrate_legacy_app_data;
 use net::http_client::{HttpClientFactory, ProxyConfig};
@@ -48,16 +48,23 @@ pub fn run() {
             // 初始化状态
             let app_config = AppConfig::new(app_data_dir.clone());
             let key_store = KeyStore::new(app_data_dir.clone());
-            // 临时占位装配：跟随系统代理的默认工厂；Task 4（真实装配）会改为
-            // 从已保存配置读取代理设置构造工厂，并支持保存后 reload 热生效
-            let provider_manager = ProviderManager::new(Arc::new(HttpClientFactory::new(
-                &ProxyConfig::from_settings(ProxyMode::System, String::new(), String::new(), None),
-            )));
-            let usage_stats_store = UsageStatsStore::new(app_data_dir);
+            // 真实装配：从已保存配置读取代理四要素构造工厂；密码只从 KeyStore 读，
+            // 绝不写进 config.json。保存设置后经 factory.reload() 热重建 client。
             let initial_settings = tauri::async_runtime::block_on(app_config.get_settings());
+            let proxy_password =
+                tauri::async_runtime::block_on(key_store.get_stored_key("proxy_password"));
+            let factory = Arc::new(HttpClientFactory::new(&ProxyConfig::from_settings(
+                initial_settings.proxy_mode,
+                initial_settings.proxy_url.clone(),
+                initial_settings.proxy_username.clone(),
+                proxy_password,
+            )));
+            let provider_manager = ProviderManager::new(factory.clone());
+            let usage_stats_store = UsageStatsStore::new(app_data_dir);
 
             app.manage(app_config);
             app.manage(key_store);
+            app.manage(factory);
             app.manage(provider_manager);
             app.manage(usage_stats_store);
 
