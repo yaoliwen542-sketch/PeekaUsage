@@ -8,6 +8,8 @@ import {
   normalizePollingInterval,
   type AppDataSnapshot,
   type AppLanguage,
+  type AppSettings,
+  type ProxyMode,
   type WebDavSyncConfig,
   type PollingMode,
   type PollingSettings,
@@ -28,7 +30,9 @@ import {
   importAppData,
   saveWebdavSyncPassword,
   setWindowSkipTaskbar,
+  testProxyConnection,
   uploadAppDataToWebdav,
+  type ProxyTestResult,
 } from "../../utils/ipc";
 import AppSelect, { type AppSelectGroup, type SelectOption } from "../common/AppSelect";
 import ProviderIcon from "../common/ProviderIcon";
@@ -180,6 +184,14 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     remoteRoot: settings.webdavRemoteRoot,
     autoSyncEnabled: settings.webdavAutoSyncEnabled,
   });
+  // 网络代理分区草稿：四字段打包一次保存，密码仅输入时传后端（无清除路径）
+  const [proxyModeDraft, setProxyModeDraft] = useState<ProxyMode>(settings.proxyMode);
+  const [proxyUrlDraft, setProxyUrlDraft] = useState(settings.proxyUrl);
+  const [proxyUsernameDraft, setProxyUsernameDraft] = useState(settings.proxyUsername);
+  const [proxyPasswordDraft, setProxyPasswordDraft] = useState("");
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<ProxyTestResult | null>(null);
+  const [proxySaving, setProxySaving] = useState(false);
   const dataImportInputRef = useRef<HTMLInputElement | null>(null);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
   const isWindows = useMemo(
@@ -200,6 +212,12 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   const pollingUnitOptions: Array<SelectOption<PollingUnit>> = [
     { value: "seconds", label: t("common.secondsShort") },
     { value: "minutes", label: t("common.minutesShort") },
+  ];
+
+  const proxyModeOptions: Array<{ value: ProxyMode; label: string }> = [
+    { value: "none", label: t("settings.proxy.modeNone") },
+    { value: "system", label: t("settings.proxy.modeSystem") },
+    { value: "custom", label: t("settings.proxy.modeCustom") },
   ];
 
   const sectionItems: SettingsMenuItem[] = useMemo(() => ([
@@ -837,6 +855,48 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
     }
   }
 
+  /** 代理四字段打包保存；密码仅在输入框非空时传后端覆盖 KeyStore */
+  async function handleProxySave() {
+    if (proxySaving) {
+      return;
+    }
+
+    setProxySaving(true);
+    try {
+      const next: AppSettings = {
+        ...settings,
+        proxyMode: proxyModeDraft,
+        proxyUrl: proxyModeDraft === "custom" ? proxyUrlDraft.trim() : "",
+        proxyUsername: proxyModeDraft === "custom" ? proxyUsernameDraft.trim() : "",
+      };
+      await saveSettings(next, proxyPasswordDraft || undefined);
+      setProxyPasswordDraft("");
+      setProxyTestResult(null);
+    } finally {
+      setProxySaving(false);
+    }
+  }
+
+  /** 用表单当前值测试代理连通性（后端临时构建 client，不影响已保存配置） */
+  async function handleProxyTest() {
+    if (proxyTesting) {
+      return;
+    }
+
+    setProxyTesting(true);
+    try {
+      const result = await testProxyConnection({
+        mode: proxyModeDraft,
+        url: proxyUrlDraft.trim(),
+        username: proxyUsernameDraft.trim(),
+        password: proxyPasswordDraft || undefined,
+      });
+      setProxyTestResult(result);
+    } finally {
+      setProxyTesting(false);
+    }
+  }
+
   function handleSectionSelect(sectionId: SettingsSectionId) {
     contentScrollRef.current?.scrollTo({ top: 0 });
     setActiveSection(sectionId);
@@ -881,6 +941,13 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
   useEffect(() => {
     setOpacityDraft(settings.windowOpacity);
   }, [settings.windowOpacity]);
+
+  // 代理设置保存成功回读后同步草稿（settings 变化时）
+  useEffect(() => {
+    setProxyModeDraft(settings.proxyMode);
+    setProxyUrlDraft(settings.proxyUrl);
+    setProxyUsernameDraft(settings.proxyUsername);
+  }, [settings.proxyMode, settings.proxyUrl, settings.proxyUsername]);
 
   useEffect(() => {
     setPollingIntervalDraft(String(settings.pollingInterval));
@@ -1071,6 +1138,97 @@ export default function SettingsPanel({ onBack }: SettingsPanelProps) {
               checked={settings.compactColorMarkersEnabled}
               onChange={(checked) => void saveSettings({ compactColorMarkersEnabled: checked })}
             />
+          </div>
+        </div>
+
+        {/* 网络代理：出站方式 + 自定义凭据 + 连通性测试 */}
+        <div className="flex flex-col gap-1.5">
+          <h3 className={GROUP_TITLE_CLASS}>{t("settings.proxy.title")}</h3>
+          <div className={`${GROUP_CARD_CLASS} flex flex-col gap-3 px-3.5 py-2.5`}>
+            <p className={ROW_HINT_CLASS}>{t("settings.proxy.hint")}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 gap-y-2">
+              <span className={ROW_LABEL_CLASS}>{t("settings.proxy.modeAriaLabel")}</span>
+              <div className="ml-auto flex max-w-full flex-nowrap items-center justify-end">
+                <SegmentedControl
+                  options={proxyModeOptions}
+                  value={proxyModeDraft}
+                  ariaLabel={t("settings.proxy.modeAriaLabel")}
+                  onChange={(value) => setProxyModeDraft(value)}
+                />
+              </div>
+            </div>
+            {proxyModeDraft === "custom" && (
+              <>
+                <label className="flex flex-col gap-1" htmlFor="proxy-url">
+                  <span className={ROW_LABEL_CLASS}>{t("settings.proxy.urlLabel")}</span>
+                  <input
+                    id="proxy-url"
+                    className={`${FORM_INPUT_CLASS} w-full`}
+                    type="text"
+                    inputMode="url"
+                    placeholder={t("settings.proxy.urlPlaceholder")}
+                    value={proxyUrlDraft}
+                    onChange={(event) => setProxyUrlDraft(event.target.value)}
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1" htmlFor="proxy-username">
+                    <span className={ROW_LABEL_CLASS}>{t("settings.proxy.usernameLabel")}</span>
+                    <input
+                      id="proxy-username"
+                      className={FORM_INPUT_CLASS}
+                      type="text"
+                      autoComplete="off"
+                      value={proxyUsernameDraft}
+                      onChange={(event) => setProxyUsernameDraft(event.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1" htmlFor="proxy-password">
+                    <span className={ROW_LABEL_CLASS}>{t("settings.proxy.passwordLabel")}</span>
+                    <input
+                      id="proxy-password"
+                      className={FORM_INPUT_CLASS}
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={t("settings.proxy.passwordPlaceholder")}
+                      value={proxyPasswordDraft}
+                      onChange={(event) => setProxyPasswordDraft(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                type="button"
+                disabled={proxySaving}
+                onClick={() => void handleProxySave()}
+              >
+                {proxySaving ? t("common.saving") : t("common.save")}
+              </Button>
+              <Button
+                size="sm"
+                type="button"
+                variant="softGhost"
+                disabled={proxyTesting || (proxyModeDraft === "custom" && !proxyUrlDraft.trim())}
+                onClick={() => void handleProxyTest()}
+              >
+                {proxyTesting ? t("settings.proxy.testing") : t("settings.proxy.test")}
+              </Button>
+              {proxyTestResult && (
+                <span
+                  className={`min-w-0 flex-1 text-xs leading-[1.4] break-all ${
+                    proxyTestResult.ok ? "text-success" : "text-error"
+                  }`}
+                  aria-live="polite"
+                >
+                  {proxyTestResult.ok
+                    ? t("settings.proxy.testOkVia", { endpoint: proxyTestResult.endpoint ?? "" })
+                    : `${t("settings.proxy.testFail")}: ${proxyTestResult.error ?? ""}`}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </section>

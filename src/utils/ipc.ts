@@ -11,6 +11,7 @@ import type {
 import type {
   AppDataSnapshot,
   AppSettings,
+  ProxyMode,
   WebDavSyncConfig,
 } from "../types/settings";
 import type { StatsRange, UsageStatsSnapshot } from "../types/stats";
@@ -113,8 +114,38 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 /** 保存应用设置 */
-export async function saveSettings(settings: AppSettings): Promise<void> {
-  return invoke("save_settings", { settings });
+/**
+ * 保存应用设置。
+ * @param proxyPassword 代理密码：仅在传入非空值时覆盖 KeyStore 中已存密码；
+ *                      undefined / 空串表示"不修改"（后端没有单独的清除路径）
+ */
+export async function saveSettings(
+  settings: AppSettings,
+  proxyPassword?: string,
+): Promise<void> {
+  return invoke("save_settings", { settings, proxyPassword: proxyPassword ?? null });
+}
+
+/** 代理连通性测试结果（Promise 永远 resolve，不 reject；endpoint/error 可能为 null） */
+export type ProxyTestResult = {
+  ok: boolean;
+  endpoint: string | null;
+  error: string | null;
+};
+
+/** 用表单当前值临时构建代理 client 测试连通性，不影响已保存配置 */
+export async function testProxyConnection(args: {
+  mode: ProxyMode;
+  url: string;
+  username: string;
+  password?: string;
+}): Promise<ProxyTestResult> {
+  return invoke<ProxyTestResult>("test_proxy_connection", {
+    mode: args.mode,
+    url: args.url,
+    username: args.username,
+    password: args.password ?? null,
+  });
 }
 
 /** 设置是否隐藏 Windows 任务栏图标 */

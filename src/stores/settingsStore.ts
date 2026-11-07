@@ -13,7 +13,8 @@ type SettingsStoreState = {
   settings: AppSettings;
   loaded: boolean;
   loadSettings: (force?: boolean) => Promise<void>;
-  saveSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
+  /** proxyPassword 仅在非空时覆盖 KeyStore 中的代理密码；undefined/空串表示"不修改" */
+  saveSettings: (newSettings: Partial<AppSettings>, proxyPassword?: string) => Promise<void>;
 };
 
 /** 把持久化的设置合并到默认值上并归一化。 */
@@ -69,7 +70,7 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
     }
   },
 
-  async saveSettings(newSettings: Partial<AppSettings>) {
+  async saveSettings(newSettings: Partial<AppSettings>, proxyPassword?: string) {
     const currentSettings = get().settings;
     const nextSettings = normalizeAppSettings({
       ...currentSettings,
@@ -84,6 +85,6 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       settings: nextSettings,
     });
 
-    await ipcSaveSettings(nextSettings);
+    await ipcSaveSettings(nextSettings, proxyPassword);
   },
 }));

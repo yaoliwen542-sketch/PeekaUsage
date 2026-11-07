@@ -25,6 +25,8 @@ export type PollingUnit = "seconds" | "minutes";
 export type ThemeMode = "system" | "light" | "dark";
 export type AppLanguage = "zh-Hans" | "zh-Hant" | "en";
 export type WidgetDisplayMode = "detailed" | "compact";
+/** 代理模式：none=不使用（禁用系统代理）、system=跟随系统、custom=自定义（与 Rust 侧 ProxyMode 小写序列化一致） */
+export type ProxyMode = "none" | "system" | "custom";
 
 export const DEFAULT_POLLING_INTERVAL = 5;
 export const MIN_POLLING_INTERVAL = 1;
@@ -51,6 +53,12 @@ export interface AppSettings extends PollingSettings {
   widgetDisplayMode: WidgetDisplayMode;
   alwaysOnTop: boolean;
   launchAtStartup: boolean;
+  /** 代理出站模式 */
+  proxyMode: ProxyMode;
+  /** 自定义代理地址（仅 proxyMode === "custom" 时生效，支持 http:// https:// socks5://） */
+  proxyUrl: string;
+  /** 代理 Basic 鉴权用户名（可选；密码存 KeyStore，不进配置文件） */
+  proxyUsername: string;
   updateAutoCheckEnabled: boolean;
   updateCheckOnLaunch: boolean;
   updateCheckIntervalHours: number;
@@ -108,6 +116,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetDisplayMode: "detailed",
   alwaysOnTop: true,
   launchAtStartup: false,
+  proxyMode: "system",
+  proxyUrl: "",
+  proxyUsername: "",
   updateAutoCheckEnabled: true,
   updateCheckOnLaunch: true,
   updateCheckIntervalHours: 2,
@@ -197,6 +208,9 @@ export function normalizeAppSettings(settings: AppSettings): AppSettings {
     webdavUsername: typeof settings.webdavUsername === "string" ? settings.webdavUsername : "",
     webdavRemoteRoot: typeof settings.webdavRemoteRoot === "string" ? settings.webdavRemoteRoot : "",
     webdavAutoSyncEnabled: !!settings.webdavAutoSyncEnabled,
+    proxyMode: normalizeProxyMode(settings.proxyMode),
+    proxyUrl: typeof settings.proxyUrl === "string" ? settings.proxyUrl : "",
+    proxyUsername: typeof settings.proxyUsername === "string" ? settings.proxyUsername : "",
   };
 }
 
@@ -237,4 +251,9 @@ export function normalizeWidgetDisplayMode(
   mode: WidgetDisplayMode | string | undefined,
 ): WidgetDisplayMode {
   return mode === "compact" ? "compact" : DEFAULT_SETTINGS.widgetDisplayMode;
+}
+
+/** 代理模式兜底：非法值回退默认"跟随系统"，与 Rust 侧 ProxyMode::default() 对齐 */
+export function normalizeProxyMode(mode: ProxyMode | string | undefined): ProxyMode {
+  return mode === "none" || mode === "custom" ? mode : DEFAULT_SETTINGS.proxyMode;
 }
