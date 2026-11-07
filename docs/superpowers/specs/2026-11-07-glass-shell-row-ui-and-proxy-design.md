@@ -67,10 +67,8 @@ impl HttpClientFactory {
 ```
 
 - 工厂统一施加 `timeout(30s)` + `connect_timeout(10s)`，删除各构建点的重复配置
-- 改造点（9 处，全部改为从工厂取 client，provider 结构不再自持 `reqwest::Client`）：
-  - `providers/mod.rs`（ProviderManager::http_client）
-  - `providers/openai.rs`、`anthropic.rs`、`openrouter.rs`、`subscription.rs`、`coding_plan.rs`、`balance.rs`、`script_engine.rs`、`gemini.rs`
-  - `commands/data_commands.rs`（GitHub Release 拉取）
+- 改造点核对结果（实施前实测）：自建 `Client::builder()` 的有 5 处——`providers/mod.rs`、`openai.rs`、`anthropic.rs`、`openrouter.rs`、`subscription.rs`；另有 `coding_plan.rs` / `balance.rs` / `script_engine.rs` / `gemini.rs` 以 `&Client` 参数接收调用方 client，改由工厂快照提供
+- **WebDAV 客户端（`data_commands.rs::build_webdav_client`）刻意排除**：WebDAV 通常指向局域网/NAS 端点，套 API 代理反而会破坏直连；文档注明
 - 构造链：`lib.rs` 启动时按配置创建并挂入 Tauri State；`save_settings` 命令保存代理字段后调用 `reload()`，热生效
 - client 重建会丢弃旧连接池，仅发生在用户改代理时，可接受
 
