@@ -548,6 +548,7 @@ export PATH="$PATH:$HOME/.cargo/bin"
 - `commands/update_commands.rs`：应用内更新检查、安装和版本查询
 - `config/app_config.rs`：设置、供应商启停、`provider_order`
 - `config/system_env.rs`：当前激活 API Key 到系统环境变量的同步
+- `net/http_client.rs`：统一 HTTP client 工厂（代理构建、热重建）
 - `tray/mod.rs`：托盘
 
 ### React
@@ -613,6 +614,17 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - 只有 `manage_api_key_environment = true` 的供应商，应用才会继续同步对应环境变量
 - 如果当前激活的 Key 被删除，应用要把自己管理的对应环境变量清掉
 - 当前实现优先覆盖“新开的终端 / 新启动的进程”读取场景，不要承诺已运行进程会实时切换
+
+### 代理约束
+
+- 代理持久化字段是 `proxyMode` / `proxyUrl` / `proxyUsername`（config.json，Rust 侧为 snake_case `proxy_mode` 等）；代理密码单独存 KeyStore（键 `proxy_password`），绝不落 config.json
+- 默认 `proxyMode = system`（跟随系统代理），旧配置缺少该字段时也按 `system` 兼容；`none` 是显式直连（禁用系统代理）；`custom` 支持 `http://` / `https://` / `socks5://`，用户名非空时附带 Basic 鉴权（密码从 KeyStore 回读）
+- 所有用量查询链路的 HTTP client 必须从 `net::http_client::HttpClientFactory` 获取（请求侧 `factory.client().await` 取当前快照），禁止再新建 `reqwest::Client`；唯一例外是 WebDAV 备份（`data_commands.rs::build_webdav_client`，直连 NAS，不走应用代理）
+- 保存设置即热生效：`save_settings` 检测到 mode / url / username / password 任一变化就调用 `factory.reload()` 热重建，不需要重启应用
+- `test_proxy_connection` 是唯一代理诊断入口：用表单当前值临时构建 client 测试连通性，不影响已保存配置；前端未填密码时回退 KeyStore 已存值，成功时带命中端点
+- 代理密码没有清除路径：`None` / 空串 = 不修改，只有显式传入非空值才覆盖 KeyStore
+- `reqwest` 已启用 `socks` feature（Cargo.toml）；没有该 feature 时 `socks5://` 会在构建时假阳性成功、运行期静默退化直连，不要移除
+- 更新器（tauri-plugin-updater）与 WebDAV 备份不走应用代理设置
 
 ### 下拉组件约束
 
@@ -846,6 +858,19 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - Linux / macOS 下 `~/.peekausage/env.sh` 和对应 Shell 启动文件的 source 块是否存在
 - macOS 下 `launchctl setenv` / `unsetenv` 是否执行成功
 
+### 代理异常
+
+检查：
+
+- `config.json` 的 `proxyMode` / `proxyUrl` / `proxyUsername` 是否符合预期；`proxyMode` 缺失或非法时按 `system` 兼容
+- 代理密码是否在 KeyStore（键 `proxy_password`）；设置页密码框始终为空是设计如此，非空保存才覆盖
+- 是否仍有绕过 `net::http_client::HttpClientFactory` 的 `reqwest::Client`：除 `http_client.rs` 本体和 `data_commands.rs`（WebDAV）外不应出现
+- 改代理后不重启是否立即生效：`save_settings` 是否在四要素任一变化时触发了 `factory.reload()`
+- 连通性诊断是否走 `test_proxy_connection`；失败文案应包含具体测试端点与原因（gstatic generate_204 / baidu）
+- `custom` 模式空地址应报「代理地址不能为空」、非法地址应报「代理地址无效」，两者都来自 `build_client`
+- `socks5://` 配置运行期直连时，确认 `Cargo.toml` 的 reqwest `socks` feature 未被移除
+- WebDAV 备份与 tauri-plugin-updater 不受代理设置影响，属预期行为
+
 ### 透明度异常
 
 检查：
@@ -962,6 +987,10 @@ cargo check
 - 把窗口拖到左 / 右 / 上 / 下边缘后，是否只有在对应边缘真正越过工作区边界并松手结束拖拽后才吸附收起；仅贴边时不应收起；悬停是否自动展开，移开后是否再次收起
 - 收起后刷新或重启应用，窗口是否恢复为正常展开态边界，而不是细条态
 - 设置页 API Key “切换环境”后，对应的系统环境变量是否更新；新开终端读取是否符合预期
+- 设置页“网络代理”：不配置时各供应商刷新行为与直连一致；跟随系统 / 自定义切换后不重启即按新代理生效（热重建）
+- 设置页“网络代理”：自定义模式填非法地址时保存/测试报“代理地址无效”，测试连接成功时带命中端点
+- 设置页“网络代理”：用户名/密码代理保存后重新打开设置页密码框为空、测试仍成功（KeyStore 回读）
+- 配置代理后 WebDAV 备份仍直连可用，不受代理设置影响
 
 如果改了 Linux 构建或发布链路，再额外确认：
 

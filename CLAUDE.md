@@ -29,6 +29,8 @@
 - GitHub Actions 已接入 Windows + Linux + macOS Release 自动发布，推送 `v*` 标签会构建并发布 Windows NSIS、Linux `x86_64` 的 `deb` / `AppImage`，以及 macOS `x86_64` / `arm64` 的 `app` / `dmg`
 - 发版前会校验 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处版本号一致
 - CI 现在会额外在 `ubuntu-latest` 上单独执行一次 `cargo fmt --all --check`，用于拦截 Rust 格式漂移
+- 设置页已新增“网络代理”分区；持久化字段是 `proxyMode`（默认 `system`）/ `proxyUrl` / `proxyUsername`，代理密码单独存 KeyStore（键 `proxy_password`），不落 config.json
+- 所有用量查询的 HTTP client 统一从 `src-tauri/src/net/http_client.rs` 的 `HttpClientFactory` 获取，保存设置即热重建生效；`test_proxy_connection` 是唯一代理诊断入口；更新器与 WebDAV 备份不走应用代理
 
 ## 项目概览
 
@@ -450,6 +452,9 @@ export PATH="$PATH:$HOME/.cargo/bin"
   - 检查应用更新
   - 安装应用更新
   - 获取当前版本
+- `src-tauri/src/commands/settings_commands.rs`
+  - 保存应用设置（代理变更热生效）
+  - 测试代理连通性（`test_proxy_connection`）
 
 #### 配置与密钥
 
@@ -614,6 +619,9 @@ WidgetContainer 拖拽结束
 - `updateAutoCheckEnabled`
 - `updateCheckOnLaunch`
 - `updateCheckIntervalHours`
+- `proxyMode`
+- `proxyUrl`
+- `proxyUsername`
 
 ### OAuth 凭据位置
 
@@ -667,6 +675,9 @@ WidgetContainer 拖拽结束
 - 发版结束前还要确认对应 tag 下的 `latest.json` 可访问且内容合法，否则应用内更新会直接失败
 - 不要把 Linux 的 `deb` / `appimage` 目标直接塞回主 `tauri.conf.json`，统一放在 `src-tauri/tauri.linux.conf.json`
 - 不要把 macOS 的 `app` / `dmg` 目标直接塞回主 `tauri.conf.json`，统一放在 `src-tauri/tauri.macos.conf.json`
+- 不要再新建 `reqwest::Client`；用量查询 client 只能从 `net::http_client::HttpClientFactory` 获取（WebDAV 备份是唯一例外）
+- 代理密码没有清除路径；不传或空串是不修改语义，只有显式非空才覆盖 KeyStore 的 `proxy_password`
+- 不要移除 reqwest 的 `socks` feature；没有它 `socks5://` 代理会构建假阳性成功、运行期静默直连
 
 ## 常用排查入口
 
@@ -843,6 +854,25 @@ WidgetContainer 拖拽结束
 - 当前激活项高亮和子页切换是否正常
 - 导航项配置和子页渲染映射是否仍保持同步
 
+### 代理异常
+
+先看：
+
+- `src-tauri/src/net/http_client.rs`
+- `src-tauri/src/commands/settings_commands.rs`
+- `src/components/settings/SettingsPanel.tsx`
+- 应用数据目录下的 `config.json`
+
+重点查：
+
+- `proxyMode` / `proxyUrl` / `proxyUsername` 是否符合预期；`proxyMode` 缺失或非法时按 `system` 兼容
+- 代理密码是否在 KeyStore（键 `proxy_password`）；设置页密码框为空是设计如此，非空保存才覆盖
+- 用量查询是否仍统一走 `HttpClientFactory`；除 `http_client.rs` 与 `data_commands.rs`（WebDAV）外不应出现 `reqwest::Client`
+- 改代理后不重启是否立即生效（`save_settings` 是否触发了 `factory.reload()`）
+- 连通性诊断是否走 `test_proxy_connection`；失败文案是否带具体测试端点与原因
+- `custom` 模式非法地址是否报“代理地址无效”；`socks5://` 运行期直连时确认 reqwest `socks` feature 仍在
+- WebDAV 备份与应用内更新器不走代理设置，属预期行为
+
 ## 建议验证
 
 涉及逻辑改动时至少执行：
@@ -878,6 +908,8 @@ cargo check
 - 设置页“开机自动启动”开关启用和关闭后，系统登录自启状态是否随之变化，刷新或重启后是否保持
 - 设置页切换简体中文、繁體中文、English 后，设置页与主界面文案是否即时同步
 - 设置页 API Key “切换环境”后，对应环境变量是否更新，新开终端读取是否符合预期
+- 设置页“网络代理”：不配置时刷新与直连一致；跟随系统 / 自定义切换后不重启即生效；自定义非法地址报“代理地址无效”；测试连接成功带命中端点；密码保存后密码框为空且测试仍成功（KeyStore 回读）；WebDAV 备份仍直连可用
+
 ## 补充说明
 
 ### 主界面主题入口
