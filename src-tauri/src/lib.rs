@@ -105,6 +105,7 @@ pub fn run() {
             commands::provider_commands::test_custom_provider_script,
             commands::settings_commands::get_settings,
             commands::settings_commands::save_settings,
+            commands::settings_commands::test_proxy_connection,
             commands::stats_commands::get_usage_stats_snapshot,
             commands::taskbar_commands::set_window_skip_taskbar,
             commands::window_commands::detect_oauth_tokens,
