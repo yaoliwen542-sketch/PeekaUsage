@@ -100,8 +100,7 @@ fn save_snapshot_to_directory(
     snapshot: &AppDataSnapshot,
     directory: &Path,
 ) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(directory)
-        .map_err(|error| format!("创建导出目录失败: {error}"))?;
+    std::fs::create_dir_all(directory).map_err(|error| format!("创建导出目录失败: {error}"))?;
     let content = serde_json::to_vec_pretty(snapshot)
         .map_err(|error| format!("序列化导出数据失败: {error}"))?;
     let filename = format!(
@@ -155,9 +154,7 @@ async fn import_app_data_into_stores(
         mut keys,
         usage_stats,
     } = snapshot;
-    let preserved_webdav_password = key_store
-        .get_stored_key(WEBDAV_PASSWORD_STORAGE_KEY)
-        .await;
+    let preserved_webdav_password = key_store.get_stored_key(WEBDAV_PASSWORD_STORAGE_KEY).await;
     keys.remove(WEBDAV_PASSWORD_STORAGE_KEY);
     if let Some(password) = preserved_webdav_password.filter(|value| !value.is_empty()) {
         keys.insert(WEBDAV_PASSWORD_STORAGE_KEY.to_string(), password);
@@ -207,8 +204,8 @@ async fn upload_snapshot_to_webdav_with_root(
     } else {
         normalize_webdav_endpoint(&sync_config.endpoint)?
     };
-    let payload = serde_json::to_vec(snapshot)
-        .map_err(|error| format!("序列化快照失败: {error}"))?;
+    let payload =
+        serde_json::to_vec(snapshot).map_err(|error| format!("序列化快照失败: {error}"))?;
 
     let response = client
         .put(&endpoint)
@@ -266,9 +263,7 @@ pub async fn download_app_data_from_webdav(
 }
 
 #[tauri::command]
-pub async fn get_webdav_sync_password(
-    key_store: State<'_, KeyStore>,
-) -> Result<String, String> {
+pub async fn get_webdav_sync_password(key_store: State<'_, KeyStore>) -> Result<String, String> {
     Ok(key_store
         .get_stored_key(WEBDAV_PASSWORD_STORAGE_KEY)
         .await
@@ -287,8 +282,15 @@ pub async fn save_webdav_sync_password(
 
 pub fn start_webdav_auto_sync(app_handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut ticker =
-            tokio::time::interval(Duration::from_secs(WEBDAV_AUTO_SYNC_POLL_SECONDS));
+        // stats 已改为后台加载：首次基线指纹必须等加载完成后计算，
+        // 否则首轮 tick（interval 立即触发）会拿"空统计"当基线，加载完成后的下一轮
+        // 会把真实快照误判成变更，启动后多上传一次全量备份。
+        app_handle
+            .state::<UsageStatsStore>()
+            .wait_until_loaded()
+            .await;
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(WEBDAV_AUTO_SYNC_POLL_SECONDS));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let mut synced_fingerprint: Option<Vec<u8>> = None;
@@ -354,9 +356,8 @@ pub fn start_webdav_auto_sync(app_handle: AppHandle) {
                 Err(error) => {
                     eprintln!("WebDAV 自动同步配置无效: {error}");
                     failed_fingerprint = Some(fingerprint);
-                    retry_after = Some(
-                        Instant::now() + Duration::from_secs(WEBDAV_AUTO_SYNC_RETRY_SECONDS),
-                    );
+                    retry_after =
+                        Some(Instant::now() + Duration::from_secs(WEBDAV_AUTO_SYNC_RETRY_SECONDS));
                     continue;
                 }
             };
@@ -376,9 +377,8 @@ pub fn start_webdav_auto_sync(app_handle: AppHandle) {
                 Err(error) => {
                     eprintln!("WebDAV 自动同步上传失败: {error}");
                     failed_fingerprint = Some(fingerprint);
-                    retry_after = Some(
-                        Instant::now() + Duration::from_secs(WEBDAV_AUTO_SYNC_RETRY_SECONDS),
-                    );
+                    retry_after =
+                        Some(Instant::now() + Duration::from_secs(WEBDAV_AUTO_SYNC_RETRY_SECONDS));
                 }
             }
         }
@@ -389,8 +389,8 @@ fn build_auto_sync_fingerprint(
     snapshot: &AppDataSnapshot,
     password: &str,
 ) -> Result<Vec<u8>, String> {
-    let mut fingerprint = serde_json::to_vec(snapshot)
-        .map_err(|error| format!("序列化自动同步快照失败: {error}"))?;
+    let mut fingerprint =
+        serde_json::to_vec(snapshot).map_err(|error| format!("序列化自动同步快照失败: {error}"))?;
     fingerprint.extend_from_slice(b"\0webdav-password\0");
     fingerprint.extend_from_slice(password.as_bytes());
     Ok(fingerprint)
@@ -433,10 +433,7 @@ fn webdav_remote_root_segments(remote_root: &str) -> Result<Vec<String>, String>
     Ok(segments)
 }
 
-fn append_webdav_remote_root(
-    raw_endpoint: &str,
-    remote_root: &str,
-) -> Result<String, String> {
+fn append_webdav_remote_root(raw_endpoint: &str, remote_root: &str) -> Result<String, String> {
     let trimmed_endpoint = raw_endpoint.trim();
     if remote_root.trim().is_empty() {
         return Ok(trimmed_endpoint.to_string());
@@ -577,7 +574,9 @@ mod tests {
         ))
     }
 
-    async fn start_one_shot_server(response_body: String) -> (String, tokio::task::JoinHandle<String>) {
+    async fn start_one_shot_server(
+        response_body: String,
+    ) -> (String, tokio::task::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
@@ -592,7 +591,8 @@ mod tests {
                 }
                 request.extend_from_slice(&chunk[..read]);
 
-                let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+                let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                else {
                     continue;
                 };
                 let headers_end = headers_end + 4;
@@ -713,6 +713,8 @@ mod tests {
         let app_config = AppConfig::new(data_dir.clone());
         let key_store = KeyStore::new(data_dir.clone());
         let usage_stats_store = UsageStatsStore::new(data_dir.clone());
+        // 读取路径会等后台加载完成标志，测试里直接同步执行加载
+        usage_stats_store.load_from_disk().await;
         key_store.set_key("existing", "old-value").await.unwrap();
 
         let mut snapshot = sample_snapshot();
@@ -721,14 +723,9 @@ mod tests {
         let expected_keys = snapshot.keys.clone();
         let expected_stats = snapshot.usage_stats.clone();
 
-        import_app_data_into_stores(
-            snapshot,
-            &app_config,
-            &key_store,
-            &usage_stats_store,
-        )
-        .await
-        .unwrap();
+        import_app_data_into_stores(snapshot, &app_config, &key_store, &usage_stats_store)
+            .await
+            .unwrap();
 
         assert_eq!(
             serde_json::to_value(app_config.get_snapshot().await).unwrap(),
@@ -749,6 +746,8 @@ mod tests {
         let app_config = AppConfig::new(data_dir.clone());
         let key_store = KeyStore::new(data_dir.clone());
         let usage_stats_store = UsageStatsStore::new(data_dir.clone());
+        // 读取路径会等后台加载完成标志，测试里直接同步执行加载
+        usage_stats_store.load_from_disk().await;
         key_store.set_key("existing", "keep-me").await.unwrap();
 
         let original_config = serde_json::to_value(app_config.get_snapshot().await).unwrap();
@@ -763,13 +762,9 @@ mod tests {
             "providers": []
         });
 
-        let result = import_app_data_into_stores(
-            snapshot,
-            &app_config,
-            &key_store,
-            &usage_stats_store,
-        )
-        .await;
+        let result =
+            import_app_data_into_stores(snapshot, &app_config, &key_store, &usage_stats_store)
+                .await;
 
         assert!(result.is_err());
         assert_eq!(

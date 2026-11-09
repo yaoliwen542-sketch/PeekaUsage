@@ -19,6 +19,15 @@ const FLOAT_EPSILON: f64 = 0.000_001;
 /// 修复 L12：统计落盘节流间隔。此前每次刷新都全量重写 usage_stats.json，
 /// 高频轮询下写放大明显；样本已做 5 分钟去重，30s 节流不会丢失有效数据。
 const STATS_SAVE_THROTTLE: std::time::Duration = std::time::Duration::from_secs(30);
+/// 阶段四 perf：全文件样本数硬上限（按 captured_at 丢最旧）。
+///
+/// 估算依据（Task 3 真机诊断）：180 天保留 × 无样本数上限时文件线性膨胀，
+/// 实测 3 供应商 + 5 分钟自动轮询下 140,833 样本 / 35.6MB（约 253 字节/样本）。
+/// 50,000 条 ≈ 12MB 封顶；默认轻量用法（单供应商 × 5 分钟轮询 ≈ 288 样本/天）
+/// 下 50k ≈ 173 天，180 天保留语义基本不受影响；极端高频用法以丢最旧为代价
+/// 换取体量有界。UI 快照只消费 Day/Month 区间 + 6h 预测窗口，最旧样本被裁
+/// 只影响导出/WebDAV 备份的历史长度，不影响任何展示。
+const MAX_TOTAL_SAMPLES: usize = 50_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -213,6 +222,11 @@ pub struct UsageStatsStore {
     stats_path: PathBuf,
     /// 修复 L12：落盘节流状态（dirty 标记 + 上次落盘时间）
     write_state: Arc<RwLock<StatsWriteState>>,
+    /// 阶段四 perf：后台加载完成标志。true = usage_stats.json 已读入并换入内存。
+    /// 读取类路径（快照/导出/导入/移除）先 `wait_until_loaded`，写入类路径（record）
+    /// 在加载完成前直接丢弃样本，避免把样本写进空历史后被换入的文件覆盖。
+    loaded_tx: tokio::sync::watch::Sender<bool>,
+    loaded_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 /// 修复 L12：统计落盘节流状态
@@ -223,42 +237,98 @@ struct StatsWriteState {
     last_save_at: Option<std::time::Instant>,
 }
 
+/// 从磁盘读入 usage_stats.json（损坏备份为 .bak 再回退空历史，M9 语义不变）。
+/// 纯同步函数，供后台任务 `spawn_blocking` 调用与单测直接验证。
+fn load_stats_file(stats_path: &std::path::Path) -> UsageStatsFile {
+    if !stats_path.exists() {
+        return UsageStatsFile::default();
+    }
+
+    match std::fs::read_to_string(stats_path) {
+        Ok(content) => match serde_json::from_str::<UsageStatsFile>(&content) {
+            Ok(stats) => stats,
+            Err(error) => {
+                // 修复 M9：统计文件损坏时备份为 usage_stats.json.bak 再回退空历史，
+                // 避免 180 天历史样本彻底丢失且无任何现场可查。
+                eprintln!("解析 usage_stats.json 失败: {}，回退空统计", error);
+                crate::config::atomic::backup_corrupted_file(stats_path);
+                UsageStatsFile::default()
+            }
+        },
+        Err(_) => UsageStatsFile::default(),
+    }
+}
+
 impl UsageStatsStore {
+    /// 阶段四 perf：不再同步读盘。构造只建空历史 + 未加载标志，
+    /// 真正的 usage_stats.json 解析由 [`Self::start_background_load`] 在后台完成，
+    /// 启动关键路径（setup 闭包）不再被 35MB 级文件的同步解析阻塞
+    /// （Task 3 实测该段 620-629ms，占 setup 总耗时 ~97%）。
     pub fn new(app_data_dir: PathBuf) -> Self {
         let stats_path = app_data_dir.join("usage_stats.json");
-        let mut stats = if stats_path.exists() {
-            match std::fs::read_to_string(&stats_path) {
-                Ok(content) => match serde_json::from_str::<UsageStatsFile>(&content) {
-                    Ok(stats) => stats,
-                    Err(error) => {
-                        // 修复 M9：统计文件损坏时备份为 usage_stats.json.bak 再回退空历史，
-                        // 避免 180 天历史样本彻底丢失且无任何现场可查。
-                        eprintln!("解析 usage_stats.json 失败: {}，回退空统计", error);
-                        crate::config::atomic::backup_corrupted_file(&stats_path);
-                        UsageStatsFile::default()
-                    }
-                },
-                Err(_) => UsageStatsFile::default(),
-            }
-        } else {
-            UsageStatsFile::default()
-        };
-
-        prune_stats_file(&mut stats, Utc::now());
-
+        let (loaded_tx, loaded_rx) = tokio::sync::watch::channel(false);
         Self {
-            stats: Arc::new(RwLock::new(stats)),
+            stats: Arc::new(RwLock::new(UsageStatsFile::default())),
             stats_path,
             write_state: Arc::new(RwLock::new(StatsWriteState {
                 dirty: false,
                 last_save_at: None,
             })),
+            loaded_tx,
+            loaded_rx,
         }
+    }
+
+    /// 后台加载 usage_stats.json 并换入内存（lib.rs setup 时调用一次）。
+    /// 文件读+解析放 `spawn_blocking`，不占 async worker；换入在写锁下完成，
+    /// 完成后置 loaded 标志。读取/导入/移除路径会等该标志，行为与同步加载等价。
+    pub fn start_background_load(&self) {
+        let stats = Arc::clone(&self.stats);
+        let stats_path = self.stats_path.clone();
+        let loaded_tx = self.loaded_tx.clone();
+        tauri::async_runtime::spawn(async move {
+            let handle = tauri::async_runtime::spawn_blocking(move || {
+                let mut file = load_stats_file(&stats_path);
+                prune_stats_file(&mut file, Utc::now());
+                file
+            });
+            // 读失败/损坏已回退空历史（load_stats_file 兜底），不会 panic；
+            // 无论结果如何都要换入并置标志，否则读取路径会永远等待。
+            let loaded = handle.await.unwrap_or_default();
+            {
+                let mut guard = stats.write().await;
+                *guard = loaded;
+            }
+            let _ = loaded_tx.send(true);
+        });
+    }
+
+    /// 等待后台加载完成。store 存活期间 sender 不会 drop，
+    /// `wait_for` 的 Err 分支只在 store 已销毁时出现，此时直接返回即可。
+    pub async fn wait_until_loaded(&self) {
+        if *self.loaded_rx.borrow() {
+            return;
+        }
+        let _ = self.loaded_rx.clone().wait_for(|loaded| *loaded).await;
+    }
+
+    /// 直接同步执行后台加载（供单测使用，生产路径走 [`Self::start_background_load`]）。
+    #[cfg(test)]
+    pub async fn load_from_disk(&self) {
+        let mut loaded = load_stats_file(&self.stats_path);
+        prune_stats_file(&mut loaded, Utc::now());
+        {
+            let mut guard = self.stats.write().await;
+            *guard = loaded;
+        }
+        let _ = self.loaded_tx.send(true);
     }
 
     async fn save(&self) -> Result<(), String> {
         let stats = self.stats.read().await;
-        let content = serde_json::to_string_pretty(&*stats)
+        // 阶段四 perf：compact 序列化。pretty 格式额外膨胀 ~30%（Task 3 实测 35MB），
+        // 每次 30s 节流落盘都要付出序列化+写盘代价；JSON 语义两种格式完全等价。
+        let content = serde_json::to_string(&*stats)
             .map_err(|error| format!("序列化统计数据失败: {}", error))?;
 
         if let Some(parent) = self.stats_path.parent() {
@@ -274,6 +344,17 @@ impl UsageStatsStore {
     }
 
     pub async fn record_summaries(&self, summaries: &[UsageSummary]) -> Result<(), String> {
+        // 阶段四 perf：后台加载完成前丢弃样本（选择"丢弃+日志"而非缓冲）。
+        // 启动后数秒内的采样对 180 天趋势无意义，缓冲会让写入/换入两个状态机
+        // 互相纠缠。首刷通常在加载完成后才返回（加载 ~0.1-0.6s），实际丢弃概率低。
+        if !*self.loaded_rx.borrow() {
+            eprintln!(
+                "统计历史尚未加载完成，丢弃本次 {} 条样本（启动加载窗口内的采样）",
+                summaries.len()
+            );
+            return Ok(());
+        }
+
         let now = Utc::now();
         {
             let mut stats = self.stats.write().await;
@@ -317,7 +398,9 @@ impl UsageStatsStore {
         result
     }
 
-    /// 退出前兜底落盘：仅在有未落盘修改时写入（修复 L12，由 lib.rs 退出事件调用）
+    /// 退出前兜底落盘：仅在有未落盘修改时写入（修复 L12，由 lib.rs 退出事件调用）。
+    /// 刻意不等待后台加载：加载完成前 record 一律丢弃、dirty 恒为 false，
+    /// 这里立即返回 Ok 不丢任何数据，且保证 ExitRequested 不会被加载阻塞。
     pub async fn flush_if_dirty(&self) -> Result<(), String> {
         if !self.write_state.read().await.dirty {
             return Ok(());
@@ -326,6 +409,9 @@ impl UsageStatsStore {
     }
 
     pub async fn remove_provider(&self, provider_id: &str) -> Result<(), String> {
+        // 阶段四 perf：等加载完成再删，避免"空历史上删除(无效果)+强制落盘空文件，
+        // 加载完成后被旧文件覆盖"导致被删供应商的历史复活。
+        self.wait_until_loaded().await;
         {
             let mut stats = self.stats.write().await;
             stats.providers.remove(provider_id);
@@ -339,12 +425,17 @@ impl UsageStatsStore {
         settings: &AppSettings,
         enabled_provider_ids: &[String],
     ) -> UsageStatsSnapshot {
+        // 行为契约：统计抽屉只由用户点击打开（WidgetContainer 底部按钮），
+        // 打开早于加载完成时走前端既有 loading 态，加载完成后本次 IPC 返回完整数据。
+        self.wait_until_loaded().await;
         let now = Utc::now();
         let stats = self.stats.read().await;
         build_snapshot(&stats, &range, settings, enabled_provider_ids, now)
     }
 
     pub async fn get_snapshot_json(&self) -> Result<serde_json::Value, String> {
+        // 导出/WebDAV 快照必须等加载完成，否则会把空历史当成基线/导出内容。
+        self.wait_until_loaded().await;
         let stats = self.stats.read().await;
         serde_json::to_value(&*stats).map_err(|error| format!("序列化用量历史失败: {}", error))
     }
@@ -356,6 +447,8 @@ impl UsageStatsStore {
     }
 
     pub async fn replace_all_from_json(&self, snapshot: serde_json::Value) -> Result<(), String> {
+        // 导入必须在加载完成后执行，否则后台加载的换入会把导入结果覆盖回旧文件。
+        self.wait_until_loaded().await;
         let mut snapshot = serde_json::from_value::<UsageStatsFile>(snapshot)
             .map_err(|error| format!("导入用量历史失败: {}", error))?;
         prune_stats_file(&mut snapshot, Utc::now());
@@ -580,33 +673,38 @@ fn push_extra_usage_sample(
 
 fn prune_stats_file(stats: &mut UsageStatsFile, now: DateTime<Utc>) {
     let cutoff = now - Duration::days(HISTORY_RETENTION_DAYS);
+    prune_samples_in_file(stats, |timestamp| timestamp >= cutoff);
+    enforce_sample_cap(stats, MAX_TOTAL_SAMPLES);
+}
 
+/// 按谓词裁剪全文件样本（保留谓词为 true 的样本），并清理裁空后的空序列/空供应商。
+fn prune_samples_in_file(stats: &mut UsageStatsFile, keep: impl Fn(DateTime<Utc>) -> bool) {
     stats.providers.retain(|_, provider| {
         if let Some(api_summary) = provider.api_summary.as_mut() {
-            api_summary.samples.retain(|sample| {
-                parse_timestamp(&sample.captured_at).is_some_and(|dt| dt >= cutoff)
-            });
+            api_summary
+                .samples
+                .retain(|sample| parse_timestamp(&sample.captured_at).is_some_and(&keep));
         }
 
         provider.api_keys.retain(|_, series| {
-            series.samples.retain(|sample| {
-                parse_timestamp(&sample.captured_at).is_some_and(|dt| dt >= cutoff)
-            });
+            series
+                .samples
+                .retain(|sample| parse_timestamp(&sample.captured_at).is_some_and(&keep));
             !series.samples.is_empty()
         });
 
         provider.subscriptions.retain(|_, subscription| {
             subscription.windows.retain(|_, series| {
-                series.samples.retain(|sample| {
-                    parse_timestamp(&sample.captured_at).is_some_and(|dt| dt >= cutoff)
-                });
+                series
+                    .samples
+                    .retain(|sample| parse_timestamp(&sample.captured_at).is_some_and(&keep));
                 !series.samples.is_empty()
             });
 
             if let Some(extra_usage) = subscription.extra_usage.as_mut() {
-                extra_usage.samples.retain(|sample| {
-                    parse_timestamp(&sample.captured_at).is_some_and(|dt| dt >= cutoff)
-                });
+                extra_usage
+                    .samples
+                    .retain(|sample| parse_timestamp(&sample.captured_at).is_some_and(&keep));
             }
 
             let has_extra_usage = subscription
@@ -623,6 +721,89 @@ fn prune_stats_file(stats: &mut UsageStatsFile, now: DateTime<Utc>) {
             || !provider.api_keys.is_empty()
             || !provider.subscriptions.is_empty()
     });
+}
+
+/// 阶段四 perf：全文件样本数硬上限，超限时丢最旧。
+///
+/// 做法：收集全部样本时间戳降序排序，取第 max 条的时间为分界，
+/// 一次性保留 >= 分界的样本。只在超限时才做 O(N log N) 排序，
+/// 未超限的常规路径（每次刷新的 record prune）只做 O(序列数) 计数。
+/// 分界时间点上的并列样本（同一次刷新写入的多序列同秒样本）会全部保留，
+/// 实际保留数可能超出 max 一个刷新批次的量，属可接受的有界余量。
+fn enforce_sample_cap(stats: &mut UsageStatsFile, max_total_samples: usize) {
+    if count_total_samples(stats) <= max_total_samples {
+        return;
+    }
+
+    let mut timestamps: Vec<DateTime<Utc>> = Vec::new();
+    collect_sample_timestamps(stats, &mut timestamps);
+    timestamps.sort_unstable_by(|left, right| right.cmp(left));
+
+    let Some(cutoff) = timestamps.get(max_total_samples.saturating_sub(1)).copied() else {
+        return;
+    };
+
+    prune_samples_in_file(stats, |timestamp| timestamp >= cutoff);
+}
+
+fn count_total_samples(stats: &UsageStatsFile) -> usize {
+    let mut total = 0usize;
+    for provider in stats.providers.values() {
+        if let Some(api_summary) = provider.api_summary.as_ref() {
+            total += api_summary.samples.len();
+        }
+        for series in provider.api_keys.values() {
+            total += series.samples.len();
+        }
+        for subscription in provider.subscriptions.values() {
+            for window in subscription.windows.values() {
+                total += window.samples.len();
+            }
+            if let Some(extra_usage) = subscription.extra_usage.as_ref() {
+                total += extra_usage.samples.len();
+            }
+        }
+    }
+    total
+}
+
+fn collect_sample_timestamps(stats: &UsageStatsFile, out: &mut Vec<DateTime<Utc>>) {
+    for provider in stats.providers.values() {
+        if let Some(api_summary) = provider.api_summary.as_ref() {
+            out.extend(
+                api_summary
+                    .samples
+                    .iter()
+                    .filter_map(|sample| parse_timestamp(&sample.captured_at)),
+            );
+        }
+        for series in provider.api_keys.values() {
+            out.extend(
+                series
+                    .samples
+                    .iter()
+                    .filter_map(|sample| parse_timestamp(&sample.captured_at)),
+            );
+        }
+        for subscription in provider.subscriptions.values() {
+            for window in subscription.windows.values() {
+                out.extend(
+                    window
+                        .samples
+                        .iter()
+                        .filter_map(|sample| parse_timestamp(&sample.captured_at)),
+                );
+            }
+            if let Some(extra_usage) = subscription.extra_usage.as_ref() {
+                out.extend(
+                    extra_usage
+                        .samples
+                        .iter()
+                        .filter_map(|sample| parse_timestamp(&sample.captured_at)),
+                );
+            }
+        }
+    }
 }
 
 fn build_snapshot(
@@ -1510,5 +1691,163 @@ mod tests {
         ];
 
         assert!(compute_usage_velocity(&samples, fixed_time()).is_none());
+    }
+
+    #[test]
+    fn sample_cap_drops_oldest_samples() {
+        // 8 条样本时间递增（offset -8..-1），上限 5 → 保留最新 5 条、丢最旧 3 条
+        let mut stats = UsageStatsFile::default();
+        let samples: Vec<UsageValueSample> = (0..8)
+            .map(|index| usage_sample(index - 8, index as f64, "2026-04-01"))
+            .collect();
+        stats.providers.insert(
+            "openai".to_string(),
+            ProviderStatsHistory {
+                display_name: "OpenAI".to_string(),
+                api_summary: Some(UsageSeriesHistory {
+                    label: "api".to_string(),
+                    currency: "USD".to_string(),
+                    samples,
+                }),
+                api_keys: HashMap::new(),
+                subscriptions: HashMap::new(),
+            },
+        );
+
+        enforce_sample_cap(&mut stats, 5);
+        let remaining = &stats.providers["openai"]
+            .api_summary
+            .as_ref()
+            .unwrap()
+            .samples;
+
+        assert_eq!(remaining.len(), 5);
+        assert!(nearly_equal(remaining[0].total_used, 3.0));
+        assert!(nearly_equal(remaining[4].total_used, 7.0));
+
+        // 未超限时不做任何裁剪
+        enforce_sample_cap(&mut stats, 50);
+        let remaining = &stats.providers["openai"]
+            .api_summary
+            .as_ref()
+            .unwrap()
+            .samples;
+        assert_eq!(remaining.len(), 5);
+    }
+
+    fn test_summary(provider_id: &str, total_used: f64) -> UsageSummary {
+        UsageSummary {
+            provider_id: provider_id.to_string(),
+            display_name: "OpenAI".to_string(),
+            enabled: true,
+            status: crate::providers::types::ProviderStatus::Success,
+            api_key_usages: Vec::new(),
+            usage: Some(crate::providers::types::UsageData {
+                total_used,
+                total_budget: Some(100.0),
+                remaining: Some(100.0 - total_used),
+                currency: "USD".to_string(),
+                period_start: Some("2026-04-01".to_string()),
+                period_end: Some("2026-04-30".to_string()),
+                windows: Vec::new(),
+                plan_name: None,
+            }),
+            subscriptions: Vec::new(),
+            rate_limit: None,
+            last_updated: None,
+            error_message: None,
+        }
+    }
+
+    fn temp_stats_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("peeka_stats_test_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 行为契约（阶段四 perf）：加载未就绪时 record 丢弃样本（不进内存不落盘），
+    /// 读取路径等加载完成后返回磁盘数据；加载完成后 record 正常记录。
+    #[tokio::test]
+    async fn record_before_load_is_discarded_and_served_after_load() {
+        let data_dir = temp_stats_dir("record_pending");
+        let store = UsageStatsStore::new(data_dir.clone());
+
+        // 加载未就绪：record 被丢弃
+        store
+            .record_summaries(&[test_summary("openai", 10.0)])
+            .await
+            .unwrap();
+        store.load_from_disk().await; // 磁盘从未被 record 写过 → 空历史
+
+        let json = store.get_snapshot_json().await.unwrap();
+        assert!(
+            json["providers"].as_object().unwrap().is_empty(),
+            "加载完成前的样本应被丢弃而不是写进空历史"
+        );
+
+        // 加载完成后：record 正常进内存并落盘
+        store
+            .record_summaries(&[test_summary("openai", 10.0)])
+            .await
+            .unwrap();
+        let json = store.get_snapshot_json().await.unwrap();
+        assert!(
+            json["providers"]["openai"].is_object(),
+            "加载完成后的 record 必须正常记录"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    /// 行为契约（阶段四 perf）：new() 不同步读盘（内存为空），读取路径在后台加载
+    /// 完成前等待、完成后拿到磁盘数据（换入生效）。
+    #[tokio::test]
+    async fn snapshot_waits_for_pending_background_load() {
+        let data_dir = temp_stats_dir("bg_load");
+        let mut stats = UsageStatsFile::default();
+        stats.providers.insert(
+            "kimi".to_string(),
+            ProviderStatsHistory {
+                display_name: "Kimi".to_string(),
+                api_summary: Some(UsageSeriesHistory {
+                    label: "api".to_string(),
+                    currency: "CNY".to_string(),
+                    // 必须用当前时间附近的样本：180 天保留策略会把更旧的裁掉
+                    samples: vec![UsageValueSample {
+                        captured_at: Utc::now().to_rfc3339(),
+                        total_used: 12.0,
+                        total_budget: Some(100.0),
+                        remaining: Some(88.0),
+                        period_start: Some("2026-11-01".to_string()),
+                        period_end: Some("2026-11-30".to_string()),
+                    }],
+                }),
+                api_keys: HashMap::new(),
+                subscriptions: HashMap::new(),
+            },
+        );
+        let stats_path = data_dir.join("usage_stats.json");
+        std::fs::write(&stats_path, serde_json::to_string(&stats).unwrap()).unwrap();
+
+        let store = std::sync::Arc::new(UsageStatsStore::new(data_dir.clone()));
+        // 模拟 start_background_load：加载在另一任务里异步完成
+        let background = {
+            let store = std::sync::Arc::clone(&store);
+            tokio::spawn(async move {
+                store.load_from_disk().await;
+            })
+        };
+
+        // 不等 load_from_disk 直接读：get_snapshot_json 必须等待加载完成而非返回空数据
+        let json = store.get_snapshot_json().await.unwrap();
+        assert!(
+            json["providers"]["kimi"].is_object(),
+            "读取路径必须等后台加载完成后返回磁盘数据"
+        );
+
+        background.await.unwrap();
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }

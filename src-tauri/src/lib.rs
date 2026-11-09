@@ -61,6 +61,10 @@ pub fn run() {
             )));
             let provider_manager = ProviderManager::new(factory.clone());
             let usage_stats_store = UsageStatsStore::new(app_data_dir);
+            // 统计加载已移出启动关键路径：这里只建空历史并登记后台任务，
+            // usage_stats.json 的读+解析在后台完成后换入（移植自玻璃壳分支，
+            // 实测同步解析 35MB 文件占启动耗时 ~97%）
+            usage_stats_store.start_background_load();
 
             app.manage(app_config);
             app.manage(key_store);
