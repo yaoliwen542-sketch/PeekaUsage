@@ -871,6 +871,9 @@ Rust 使用 snake_case，TS 使用 camelCase，通过 serde 做映射。
 - `custom` 模式空地址应报「代理地址不能为空」、非法地址应报「代理地址无效」，两者都来自 `build_client`
 - `socks5://` 配置运行期直连时，确认 `Cargo.toml` 的 reqwest `socks` feature 未被移除
 - WebDAV 备份与 tauri-plugin-updater 不受代理设置影响，属预期行为
+- **v2rayN 类工具（2026-11 真机实测）**：系统代理指向 10808（SOCKS 端口）时「跟随系统」会当 HTTP 代理用 → 全部请求失败；推荐「自定义」+ `socks5h://127.0.0.1:10808`——**socks5h（远程 DNS）优先于 socks5**：本地 DNS 故障/被污染时 socks5:// 必败（reqwest 本地解析后把 IP 交给代理）而 socks5h:// 把域名交给代理端解析路由，不受影响
+- **旧版 exe 副本会剥掉代理配置（2026-11 真机实锤，「经常全挂」复发根因）**：机器上若还有加代理功能之前的旧安装副本（如 D:\Software\PeekaUsage 的 v0.4.3 九月构建），它任何设置保存都会用没有 proxyMode/proxyUrl 字段的旧结构**重写整个 config.json**——代理键被剥掉后应用回退默认「跟随系统」→ 全挂。修完配置必须**替换所有在用的旧副本**（npm run tauri build 的产物；纯 `cargo build --release` 的 exe 不行——不跑 beforeBuildCommand 产出 dist，内嵌前端加载失败报「无法访问此页面」）；诊断特征：config.json 里 proxyMode/proxyUrl 键消失 + settings 键数退化到 27 个
+- OpenAI 走代理仍报「OAuth Token 无效或已过期」= 网络已通、凭据过期，重新跑 Codex 登录即可，与代理无关
 
 ### 透明度异常
 
